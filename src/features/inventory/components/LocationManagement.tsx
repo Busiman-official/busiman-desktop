@@ -1611,7 +1611,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                   p.set('create', '1');
                   p.set('movementType', MovementType.RECEIPT);
                   p.set('itemId', itemId);
-                  if (stock.variantId) p.set('variantId', stock.variantId);
+                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
                   p.set('toLocationId', selectedLocationId);
                   p.set('reasonCode', getDefaultReason('RECEIPT', 'location').defaultCode);
                   p.set('returnTab', 'locations');
@@ -1631,7 +1631,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                   p.set('create', '1');
                   p.set('movementType', MovementType.ISSUE);
                   p.set('itemId', itemId);
-                  if (stock.variantId) p.set('variantId', stock.variantId);
+                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
                   p.set('fromLocationId', selectedLocationId);
                   p.set('reasonCode', getDefaultReason('ISSUE', 'location').defaultCode);
                   p.set('returnTab', 'locations');
@@ -1651,7 +1651,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                   p.set('create', '1');
                   p.set('movementType', MovementType.TRANSFER);
                   p.set('itemId', itemId);
-                  if (stock.variantId) p.set('variantId', stock.variantId);
+                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
                   p.set('fromLocationId', selectedLocationId);
                   p.set('reasonCode', getDefaultReason('TRANSFER', 'location_from').defaultCode);
                   p.set('returnTab', 'locations');

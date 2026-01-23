@@ -37,6 +37,7 @@ export enum MovementType {
 }
 
 export enum MovementStatus {
+  DRAFT = 'DRAFT',
   PENDING = 'PENDING',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
@@ -560,11 +561,12 @@ class InventoryService {
   }
 
   // Stock
-  async getStockBalance(itemId: string, locationId: string, batchNumber?: string): Promise<StockBalance> {
+  async getStockBalance(itemId: string, locationId: string, batchNumber?: string, variantId?: string): Promise<StockBalance> {
     const params = new URLSearchParams();
     params.append('itemId', itemId);
     params.append('locationId', locationId);
     if (batchNumber) params.append('batchNumber', batchNumber);
+    if (variantId) params.append('variantId', variantId);
     const response = await api.get(`/inventory/stock/balance?${params.toString()}`);
     return extractApiData<StockBalance>(response);
   }
@@ -636,10 +638,11 @@ class InventoryService {
     return extractApiData<SerialResponse>(response);
   }
 
-  async getSerialsByItem(itemId: string, locationId?: string, status?: string): Promise<SerialResponse[]> {
+  async getSerialsByItem(itemId: string, locationId?: string, status?: string, variantId?: string): Promise<SerialResponse[]> {
     const params = new URLSearchParams();
     if (locationId) params.append('locationId', locationId);
     if (status) params.append('status', status);
+    if (variantId) params.append('variantId', variantId);
     const query = params.toString() ? `?${params.toString()}` : '';
     const response = await api.get(`/inventory/serials/item/${itemId}${query}`);
     return extractApiData<SerialResponse[]>(response);
@@ -670,6 +673,7 @@ class InventoryService {
     serialNumbers: string[];
     fromLocationId?: string;
     toLocationId?: string;
+    variantId?: string;
   }): Promise<Array<{ serialNumber: string; status: string; message?: string; allowForMovementType: boolean }>> {
     const response = await api.post('/inventory/serials/validate-batch', params);
     return extractApiData(response);
@@ -696,36 +700,93 @@ class InventoryService {
     await api.post('/inventory/expiry/dispose', data);
   }
 
-  // Stock Counts
-  async createStockCount(data: CreateStockCountRequest): Promise<StockCountResponse> {
+  // Stock Counts (CountDocument + CountLine)
+  async listCounts(filters?: {
+    countType?: CountType | string;
+    status?: CountStatus | string;
+    locationId?: string;
+    itemId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<CountDocumentSummary[]> {
+    const params = new URLSearchParams();
+    if (filters?.countType) params.append('countType', filters.countType);
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.locationId) params.append('locationId', filters.locationId);
+    if (filters?.itemId) params.append('itemId', filters.itemId);
+    if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom);
+    if (filters?.dateTo) params.append('dateTo', filters.dateTo);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await api.get(`/inventory/counts${query}`);
+    return extractApiData<CountDocumentSummary[]>(response);
+  }
+
+  async getCountDocument(id: string): Promise<CountDocumentResponse> {
+    const response = await api.get(`/inventory/counts/${id}`);
+    return extractApiData<CountDocumentResponse>(response);
+  }
+
+  async createCount(data: CreateCountRequest): Promise<CountDocumentResponse> {
     const response = await api.post('/inventory/counts', data);
-    return extractApiData<StockCountResponse>(response);
+    return extractApiData<CountDocumentResponse>(response);
   }
 
-  async submitCount(countId: string, physicalQuantity: number, varianceReason?: string): Promise<StockCountResponse> {
-    const response = await api.post(`/inventory/counts/${countId}/submit`, {
-      physicalQuantity,
-      varianceReason,
-    });
-    return extractApiData<StockCountResponse>(response);
+  async updateCountLines(
+    id: string,
+    body: {
+      lines: Array<{
+        lineNo: number;
+        physicalQuantity?: number;
+        varianceReason?: string;
+        batchNumber?: string;
+        serialNumbers?: string[];
+        manufacturingDate?: string;
+        expiryDate?: string;
+      }>;
+    }
+  ): Promise<CountDocumentResponse> {
+    const response = await api.put(`/inventory/counts/${id}/lines`, body);
+    return extractApiData<CountDocumentResponse>(response);
   }
 
-  async approveCount(countId: string): Promise<StockCountResponse> {
+  async setCountRules(
+    id: string,
+    body: { freezeMovements?: boolean; blindCount?: boolean }
+  ): Promise<CountDocumentResponse> {
+    const response = await api.put(`/inventory/counts/${id}/rules`, body);
+    return extractApiData<CountDocumentResponse>(response);
+  }
+
+  async submitCount(countId: string): Promise<CountDocumentResponse> {
+    const response = await api.post(`/inventory/counts/${countId}/submit`, {});
+    return extractApiData<CountDocumentResponse>(response);
+  }
+
+  async approveCount(countId: string): Promise<CountDocumentResponse> {
     const response = await api.post(`/inventory/counts/${countId}/approve`);
-    return extractApiData<StockCountResponse>(response);
+    return extractApiData<CountDocumentResponse>(response);
   }
 
-  async requestRecount(countId: string, reason: string): Promise<StockCountResponse> {
+  async rejectCount(countId: string, rejectionReason?: string): Promise<CountDocumentResponse> {
+    const response = await api.post(`/inventory/counts/${countId}/reject`, {
+      rejectionReason: rejectionReason ?? 'Rejected',
+    });
+    return extractApiData<CountDocumentResponse>(response);
+  }
+
+  /** Legacy: backend returns 501. Prefer rejectCount then re-enter and submit. */
+  async requestRecount(countId: string, reason: string): Promise<CountDocumentResponse> {
     const response = await api.post(`/inventory/counts/${countId}/recount`, { reason });
-    return extractApiData<StockCountResponse>(response);
+    return extractApiData<CountDocumentResponse>(response);
   }
 
+  /** @deprecated Use listCounts with dateFrom/dateTo, locationId, itemId. */
   async getCountHistory(filters?: {
     locationId?: string;
     itemId?: string;
     dateFrom?: string;
     dateTo?: string;
-  }): Promise<StockCountResponse[]> {
+  }): Promise<CountDocumentSummary[]> {
     const params = new URLSearchParams();
     if (filters?.locationId) params.append('locationId', filters.locationId);
     if (filters?.itemId) params.append('itemId', filters.itemId);
@@ -733,7 +794,7 @@ class InventoryService {
     if (filters?.dateTo) params.append('dateTo', filters.dateTo);
     const query = params.toString() ? `?${params.toString()}` : '';
     const response = await api.get(`/inventory/counts/history${query}`);
-    return extractApiData<StockCountResponse[]>(response);
+    return extractApiData<CountDocumentSummary[]>(response);
   }
 
   // Reports
@@ -985,6 +1046,90 @@ export interface ExpiryAlert {
   expiryDate: string;
   daysUntilExpiry: number;
   expiryStatus: string;
+}
+
+// Count document (multi-line) types – CountDocument + CountLine
+export enum CountType {
+  CYCLE_COUNT = 'CYCLE_COUNT',
+  FULL_COUNT = 'FULL_COUNT',
+  SPOT_CHECK = 'SPOT_CHECK',
+}
+
+export enum CountStatus {
+  DRAFT = 'DRAFT',
+  IN_PROGRESS = 'IN_PROGRESS',
+  SUBMITTED = 'SUBMITTED',
+  COMPLETED = 'COMPLETED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
+export interface CreateCountRequest {
+  countType: CountType | 'CYCLE_COUNT' | 'FULL_COUNT' | 'SPOT_CHECK';
+  locationId: string;
+  itemIds?: string[];
+  freezeMovements?: boolean;
+  blindCount?: boolean;
+}
+
+export interface CountLineDto {
+  id: string;
+  lineNo: number;
+  itemId: string;
+  variantId?: string;
+  item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; isPerishable?: boolean };
+  variant?: { id: string; code: string; name: string };
+  systemQuantity: number;
+  physicalQuantity: number;
+  variance: number;
+  varianceReason?: string;
+  physicalEntered?: boolean;
+  batchNumber?: string;
+  serialNumbers?: string[];
+  manufacturingDate?: string;
+  expiryDate?: string;
+}
+
+export interface CountDocumentResponse {
+  id: string;
+  countNumber: string;
+  countType: CountType | string;
+  locationId: string;
+  location?: { id: string; code: string; name: string };
+  status: CountStatus | string;
+  freezeMovements: boolean;
+  blindCount: boolean;
+  createdBy: { id: string; name: string; email: string };
+  submittedAt?: string;
+  submittedBy?: { id: string; name: string; email: string };
+  approvedBy?: { id: string; name: string; email: string };
+  approvedAt?: string;
+  rejectedBy?: { id: string; name: string; email: string };
+  rejectedAt?: string;
+  rejectionReason?: string;
+  adjustmentMovementDocumentId?: string;
+  lines: CountLineDto[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CountDocumentSummary {
+  id: string;
+  countNumber: string;
+  countType: CountType | string;
+  locationId: string;
+  location?: { id: string; code: string; name: string };
+  status: CountStatus | string;
+  itemSummary: string;
+  systemQuantity: number;
+  physicalQuantity: number;
+  variance: number;
+  createdBy: { id: string; name: string; email: string };
+  createdAt: string;
+  approvedBy?: { id: string; name: string; email: string };
+  approvedAt?: string;
+  rejectedBy?: { id: string; name: string; email: string };
+  rejectedAt?: string;
 }
 
 export interface CreateStockCountRequest {

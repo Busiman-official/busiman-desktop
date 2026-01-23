@@ -68,6 +68,7 @@
   text-transform: uppercase;
   color: #666;
   border-bottom: 2px solid #e0e0e0;
+  white-space: nowrap;
 }
 
 .movement-list-table td {

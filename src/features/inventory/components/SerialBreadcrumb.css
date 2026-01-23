@@ -1,0 +1,54 @@
+/**
+ * Serial Breadcrumb Styles
+ */
+
+.serial-breadcrumb {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+  margin-bottom: 16px;
+}
+
+.serial-breadcrumb-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+
+.serial-breadcrumb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.serial-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  color: var(--color-primary, #2563eb);
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.serial-breadcrumb-link:hover {
+  background-color: var(--color-bg-secondary, #f9fafb);
+  text-decoration: underline;
+}
+
+.serial-breadcrumb-current {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary, #333);
+}
+
+.serial-breadcrumb-separator {
+  color: var(--color-text-secondary, #999);
+  font-size: 14px;
+  user-select: none;
+}

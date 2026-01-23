@@ -12,11 +12,13 @@ import './MovementList.css';
 
 interface MovementListProps {
   onSelectMovement: (documentId: string) => void;
+  /** Double-click: open details panel (or Create with prefill when DRAFT). */
+  onOpenDetails?: (doc: MovementDocumentResponse) => void;
   selectedDocumentId?: string;
   onCreateMovement?: () => void;
 }
 
-export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, selectedDocumentId, onCreateMovement }) => {
+export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, onOpenDetails, selectedDocumentId, onCreateMovement }) => {
   const [documents, setDocuments] = useState<MovementDocumentResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +184,7 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, se
                 <th>Date & Time</th>
                 <th>Type</th>
                 <th>Total Lines</th>
+                <th>Variant</th>
                 <th>From Location</th>
                 <th>To Location</th>
                 <th>Total Quantity</th>
@@ -194,15 +197,23 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, se
               {documents.map((doc) => {
                 const fromLoc = getFromLocation(doc);
                 const toLoc = getToLocation(doc);
+                const variantDisplay =
+                  doc.lines.length === 1
+                    ? (doc.lines[0].variant?.code || doc.lines[0].variant?.name || '-')
+                    : new Set(doc.lines.map((l) => l.variant?.id).filter(Boolean)).size <= 1
+                    ? (doc.lines[0]?.variant?.code || doc.lines[0]?.variant?.name || '-')
+                    : 'Multiple';
                 return (
                   <tr
                     key={doc.id}
                     className={`movement-row ${selectedDocumentId === doc.id ? 'selected' : ''}`}
                     onClick={() => onSelectMovement(doc.id)}
+                    onDoubleClick={() => onOpenDetails?.(doc)}
                   >
                     <td>{new Date(doc.createdAt).toLocaleString()}</td>
                     <td>{doc.movementType}</td>
                     <td>{doc.totalLines}</td>
+                    <td>{variantDisplay}</td>
                     <td>{fromLoc ? `${fromLoc.code} - ${fromLoc.name}` : '-'}</td>
                     <td>{toLoc ? `${toLoc.code} - ${toLoc.name}` : '-'}</td>
                     <td>{doc.totalQuantity}</td>

@@ -1,0 +1,349 @@
+/**
+ * Serial Detail Panel Styles
+ */
+
+.serial-detail-drawer .side-drawer-content {
+  padding: 0;
+  overflow-y: auto;
+}
+
+.serial-detail-panel {
+  padding: 20px;
+}
+
+.serial-detail-content {
+  padding: 20px;
+}
+
+.serial-detail-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.breadcrumb-separator {
+  color: #9ca3af;
+}
+
+.breadcrumb-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: 13px;
+}
+
+.breadcrumb-link:hover {
+  color: #1d4ed8;
+}
+
+.breadcrumb-current {
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.serial-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.serial-detail-title-section {
+  flex: 1;
+}
+
+.serial-detail-title {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+}
+
+.serial-detail-title h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.5px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.expired-badge,
+.critical-badge {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.expired-badge {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.critical-badge {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.qr-placeholder {
+  font-size: 20px;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.status-update-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.status-update-modal {
+  background: white;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.status-update-modal h3 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.status-update-modal p {
+  margin: 0 0 16px 0;
+  color: #6b7280;
+}
+
+.serial-detail-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.serial-detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.serial-detail-action-btn {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.serial-detail-action-btn:hover {
+  background: #e5e7eb;
+}
+
+.serial-detail-section {
+  margin-bottom: 24px;
+}
+
+.serial-detail-section-title {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.serial-detail-card {
+  margin-bottom: 24px;
+}
+
+.serial-detail-card h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-item label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-item > div {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.detail-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: 14px;
+  text-align: left;
+}
+
+.detail-link:hover {
+  color: #1d4ed8;
+}
+
+.serial-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.serial-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.serial-detail-field.full-width {
+  grid-column: 1 / -1;
+}
+
+.serial-detail-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.serial-detail-field > div {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.serial-detail-link {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font-size: 14px;
+  text-align: left;
+}
+
+.serial-detail-link:hover {
+  color: #1d4ed8;
+}
+
+.serial-detail-expired-badge,
+.serial-detail-critical-badge {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.serial-detail-expired-badge {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.serial-detail-critical-badge {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.serial-detail-attributes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.serial-detail-attribute {
+  display: flex;
+  gap: 8px;
+}
+
+.attribute-key {
+  font-weight: 500;
+  color: #374151;
+  min-width: 120px;
+}
+
+.attribute-value {
+  color: #6b7280;
+}
+
+.serial-detail-actions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.serial-detail-error {
+  padding: 40px;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.error-message {
+  font-size: 14px;
+  color: #dc2626;
+  margin-bottom: 20px;
+}

@@ -14,11 +14,13 @@ import {
 } from '@/services/inventory.service';
 import { Button, Input, Select } from '@/shared/components/ui';
 import { Modal } from '@/shared/components/modals';
+import { LoadingState } from '@/shared/components/data-display';
 import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { MovementLinesGrid, type LineValidation, type StockMapEntry, type MovementLinesGridHandle } from './MovementLinesGrid';
 import { MovementSummaryPanel, type StockImpactEntry, type MovementSummaryPanelHandle } from './MovementSummaryPanel';
+import { getTrackingType } from '../utils/trackingUtils';
 import './CreateMovementView.css';
 
 const NEEDS_FROM: MovementType[] = [
@@ -31,6 +33,7 @@ const NEEDS_TO: MovementType[] = [
 ];
 
 interface CreateMovementViewProps {
+  editDocumentId?: string;
   onCancel: () => void;
   onSuccess: () => void;
   prefillData?: {
@@ -41,10 +44,12 @@ interface CreateMovementViewProps {
     toLocationId?: string;
     reasonCode?: string;
     reasonLocked?: boolean;
+    variantLocked?: boolean;
   };
 }
 
 export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
+  editDocumentId,
   onCancel,
   onSuccess,
   prefillData,
@@ -55,6 +60,8 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
   const [reasonCodes, setReasonCodes] = useState<Array<{ code: string; name: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [documentLoadError, setDocumentLoadError] = useState<string | null>(null);
+  const [documentLoaded, setDocumentLoaded] = useState(!editDocumentId);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
 
@@ -66,6 +73,8 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
   const urlToLocationId = searchParams.get('toLocationId');
   const urlReasonLocked = searchParams.get('reasonLocked') === '1' || searchParams.get('reasonLocked') === 'true';
   const reasonLocked = prefillData?.reasonLocked ?? urlReasonLocked;
+  const urlVariantLocked = searchParams.get('variantLocked') === '1' || searchParams.get('variantLocked') === 'true';
+  const variantLocked = prefillData?.variantLocked ?? urlVariantLocked;
 
   const [header, setHeader] = useState({
     movementType: (prefillData?.movementType || urlMovementType || MovementType.RECEIPT) as MovementType,
@@ -95,6 +104,7 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
   ]);
 
   const [stockMap, setStockMap] = useState<Record<string, StockMapEntry>>({});
+  const [variantsByItem, setVariantsByItem] = useState<Record<string, Array<{ id: string; code: string; name: string; isDefault: boolean; isActive: boolean; metadata?: Record<string, unknown> }>>>({});
   const [locationData, setLocationData] = useState<Record<string, { before: number; maxItems?: number }>>({});
   const fetchGenRef = useRef(0);
   const [batchSerialEditorOpen, setBatchSerialEditorOpen] = useState<number | null>(null);
@@ -111,6 +121,55 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
     loadItems();
     loadLocations();
   }, []);
+
+  // Load draft document when editing
+  useEffect(() => {
+    if (!editDocumentId) {
+      setDocumentLoaded(true);
+      return;
+    }
+    setDocumentLoadError(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const doc = await inventoryService.getMovementDocument(editDocumentId);
+        if (cancelled) return;
+        setHeader({
+          movementType: doc.movementType,
+          defaultFromLocationId: doc.defaultFromLocationId ?? doc.defaultFromLocation?.id ?? '',
+          defaultToLocationId: doc.defaultToLocationId ?? doc.defaultToLocation?.id ?? '',
+          reasonCode: doc.reasonCode,
+          reasonDescription: doc.reasonDescription ?? '',
+          documentNotes: doc.documentNotes ?? '',
+          requiresApproval: doc.requiresApproval,
+        });
+        setLines(
+          doc.lines.length > 0
+            ? doc.lines.map((l) => ({
+                itemId: l.itemId,
+                variantId: l.variantId,
+                fromLocationId: l.fromLocationId,
+                toLocationId: l.toLocationId,
+                quantity: l.quantity,
+                unitOfMeasure: l.unitOfMeasure || 'pcs',
+                batchNumber: l.batchNumber,
+                serialNumbers: l.serialNumbers,
+                manufacturingDate: l.manufacturingDate,
+                expiryDate: l.expiryDate,
+                lineReasonCode: l.lineReasonCode,
+              }))
+            : [{ itemId: '', quantity: 1, unitOfMeasure: 'pcs' }]
+        );
+        setDocumentLoaded(true);
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setDocumentLoadError(extractErrorMessage(err, 'Failed to load draft'));
+          logger.error('[CreateMovementView] Failed to load draft', err);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editDocumentId]);
 
   // Load reason codes from API only (DB-valid, active). Selector shows only these; default must be in list.
   useEffect(() => {
@@ -157,6 +216,38 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
     }
   };
 
+  // Load variants for items that have hasVariants; apply default/first-active to lines missing variantId
+  useEffect(() => {
+    const itemIds = [...new Set(lines.map((l) => l.itemId).filter(Boolean))] as string[];
+    const toLoad = itemIds.filter(
+      (id) => items.find((i) => i.id === id)?.hasVariants && !variantsByItem[id]
+    );
+    if (toLoad.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const itemId of toLoad) {
+        if (cancelled) return;
+        try {
+          const list = await inventoryService.getVariantsByItem(itemId, false);
+          if (cancelled) return;
+          setVariantsByItem((prev) => ({ ...prev, [itemId]: list }));
+          const vs = (list || []).filter((v) => v.isActive);
+          const defId = vs.find((v) => v.isDefault)?.id || vs[0]?.id || null;
+          if (defId && !variantLocked) {
+            setLines((prev) =>
+              prev.map((l) =>
+                l.itemId === itemId && !l.variantId ? { ...l, variantId: defId } : l
+              )
+            );
+          }
+        } catch (err) {
+          if (!cancelled) logger.error('[CreateMovementView] Failed to load variants for item', itemId, err);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [lines.map((l) => l.itemId).filter(Boolean).sort().join(','), items, variantLocked]);
+
   // Fetch stock balances and location capacity for availability and impact preview
   useEffect(() => {
     const needFrom = NEEDS_FROM.includes(header.movementType);
@@ -170,7 +261,10 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
       const effTo = line.toLocationId || defTo;
       if (effFrom) affectedLocs.add(effFrom);
       if (effTo) affectedLocs.add(effTo);
-      if (needFrom && line.itemId && effFrom) stockKeys.push(`${line.itemId}|${effFrom}`);
+      if (needFrom && line.itemId && effFrom) {
+        const v = line.variantId ?? 'na';
+        stockKeys.push(`${line.itemId}|${v}|${effFrom}`);
+      }
     }
     const locIds = Array.from(affectedLocs);
 
@@ -182,9 +276,13 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
         const [balanceEntries, locEntries] = await Promise.all([
           Promise.all(
             [...new Set(stockKeys)].map(async (k) => {
-              const [itemId, locId] = k.split('|');
+              const parts = k.split('|');
+              const itemId = parts[0];
+              const variantIdPart = parts[1];
+              const locId = parts[2];
+              const variantIdArg = variantIdPart && variantIdPart !== 'na' ? variantIdPart : undefined;
               try {
-                const b = await inventoryService.getStockBalance(itemId, locId);
+                const b = await inventoryService.getStockBalance(itemId, locId, undefined, variantIdArg);
                 return [k, { available: b.available, reserved: b.reserved, blocked: b.blocked }] as const;
               } catch {
                 return [k, { available: 0, reserved: 0, blocked: 0 }] as const;
@@ -217,9 +315,9 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
   }, [lines, header.defaultFromLocationId, header.defaultToLocationId, header.movementType]);
 
   const fetchAvailableForBatch = useCallback(
-    async (itemId: string, locationId: string, batchNumber: string): Promise<number> => {
+    async (itemId: string, locationId: string, batchNumber: string, variantId?: string): Promise<number> => {
       try {
-        const b = await inventoryService.getStockBalance(itemId, locationId, batchNumber);
+        const b = await inventoryService.getStockBalance(itemId, locationId, batchNumber, variantId);
         return b.available ?? 0;
       } catch {
         return 0;
@@ -248,29 +346,38 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
       if (lines.some((line) => !line.itemId || !line.quantity || line.quantity <= 0)) {
         throw new Error('All lines must have a valid item and quantity');
       }
-      await inventoryService.createMovementBatch(buildRequest());
+      if (editDocumentId) {
+        await inventoryService.updateDraft(editDocumentId, buildRequest());
+        await inventoryService.submitDraft(editDocumentId);
+      } else {
+        await inventoryService.createMovementBatch(buildRequest());
+      }
       onSuccess();
-    } catch (err: any) {
-      setError(extractErrorMessage(err, 'Failed to create movement'));
-      logger.error('[CreateMovementView] Failed to create movement', err);
+    } catch (err: unknown) {
+      setError(extractErrorMessage(err, editDocumentId ? 'Failed to submit draft' : 'Failed to create movement'));
+      logger.error('[CreateMovementView] Failed to submit/create movement', err);
     } finally {
       setLoading(false);
     }
-  }, [header.reasonCode, lines, buildRequest, onSuccess]);
+  }, [header.reasonCode, lines, buildRequest, onSuccess, editDocumentId]);
 
   const handleSaveDraft = useCallback(async () => {
     setError(null);
     setLoading(true);
     try {
-      await inventoryService.saveDraft({ ...buildRequest(), requiresApproval: false });
+      if (editDocumentId) {
+        await inventoryService.updateDraft(editDocumentId, buildRequest());
+      } else {
+        await inventoryService.saveDraft({ ...buildRequest(), requiresApproval: false });
+      }
       onSuccess();
-    } catch (err: any) {
+    } catch (err: unknown) {
       setError(extractErrorMessage(err, 'Failed to save draft'));
       logger.error('[CreateMovementView] Failed to save draft', err);
     } finally {
       setLoading(false);
     }
-  }, [buildRequest, onSuccess]);
+  }, [buildRequest, onSuccess, editDocumentId]);
 
   // Track dirty state
   useEffect(() => {
@@ -382,34 +489,61 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
       };
       if (!line.itemId) set('error', 'Item is required');
       if (!line.quantity || line.quantity <= 0) set('error', 'Invalid quantity');
+      if (item?.hasVariants) {
+        if (!line.variantId) set('error', 'Variant is required');
+        else {
+          const active = (variantsByItem[line.itemId] || []).filter((x) => x.isActive);
+          if (active.length === 0) set('error', 'No active variant available for this item');
+          else if (!active.some((x) => x.id === line.variantId)) set('warning', 'Variant may be inactive or removed; please reselect.');
+        }
+      }
       const effFrom = line.fromLocationId || defFrom;
       if (needFrom && line.itemId && effFrom) {
-        const sm = stockMap[`${line.itemId}|${effFrom}`];
+        const stockKey = `${line.itemId}|${line.variantId ?? 'na'}|${effFrom}`;
+        const sm = stockMap[stockKey];
         if (sm != null) {
           if ((line.quantity || 0) > sm.available) set('error', `Insufficient stock (available: ${sm.available})`);
           else if ((line.quantity || 0) === sm.available) set('warning', 'Using all available stock');
         }
       }
       const fl = item?.industryFlags;
-      if (fl?.requiresBatchTracking) {
+      const trackingType = getTrackingType(fl);
+      
+      // Only validate based on the SINGLE tracking type (mutually exclusive)
+      if (trackingType === 'BATCH') {
         if (!line.batchNumber) set('error', 'Batch number required');
         else {
-          if (fl.requiresBatchTracking && !line.manufacturingDate) set('error', 'MFG date required');
-          if (fl.hasExpiryDate && !line.expiryDate) set('error', 'Expiry date required');
+          if (!line.manufacturingDate) set('error', 'MFG date required');
+          if (fl?.hasExpiryDate && !line.expiryDate) set('error', 'Expiry date required');
           if (line.expiryDate && line.expiryDate < today) set('error', 'Expiry date in the past');
           if (line.manufacturingDate && line.manufacturingDate > today) set('error', 'MFG date in the future');
         }
-      }
-      if (fl?.requiresSerialTracking) {
+        // Batch items should NOT have serial numbers
+        if (line.serialNumbers && line.serialNumbers.length > 0) {
+          set('error', 'Serial numbers cannot be provided for batch-tracked items');
+        }
+      } else if (trackingType === 'SERIAL') {
         const q = line.quantity || 0;
         if (!line.serialNumbers || line.serialNumbers.length !== q)
           set('error', `Serial count must equal quantity (${q})`);
         else if (line.serialNumbers.length !== new Set(line.serialNumbers).size) set('error', 'Duplicate serials');
+        // Serial items should NOT have batch numbers
+        if (line.batchNumber) {
+          set('error', 'Batch number cannot be provided for serial-tracked items');
+        }
+      } else {
+        // NONE tracking: no batch or serial should be provided
+        if (line.batchNumber) {
+          set('error', 'Batch number cannot be provided for items without batch tracking');
+        }
+        if (line.serialNumbers && line.serialNumbers.length > 0) {
+          set('error', 'Serial numbers cannot be provided for items without serial tracking');
+        }
       }
       v[i] = { status, messages: msgs };
     }
     return v;
-  }, [lines, items, needFrom, defFrom, stockMap, today]);
+  }, [lines, items, needFrom, defFrom, stockMap, today, variantsByItem]);
 
   const errors: string[] = [];
   if (!header.reasonCode) errors.push('Reason code is required');
@@ -442,10 +576,14 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
     }
   };
 
+  const showForm = (!editDocumentId || documentLoaded) && !documentLoadError;
+  const showLoadError = editDocumentId && documentLoadError;
+  const showLoading = editDocumentId && !documentLoaded && !documentLoadError;
+
   return (
     <div className="create-movement-view">
       <div className="create-movement-header-bar">
-        <h2>Create Stock Movement</h2>
+        <h2>{editDocumentId ? 'Edit Draft' : 'Create Stock Movement'}</h2>
         <div className="header-actions">
           <Button
             variant="ghost"
@@ -462,7 +600,25 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {showLoadError && (
+        <div className="create-movement-content">
+          <div className="error-message">{documentLoadError}</div>
+          <div style={{ marginTop: 16 }}>
+            <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          </div>
+        </div>
+      )}
 
+      {showLoading && (
+        <div className="create-movement-content">
+          <LoadingState message="Loading draft…" />
+          <div style={{ marginTop: 16 }}>
+            <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
       <div className="create-movement-content">
         <div className="create-movement-main">
           {/* Document Header - Compact */}
@@ -619,6 +775,8 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
               onChange={setLines}
               items={items}
               locations={locations}
+              variantsByItem={variantsByItem}
+              variantLocked={variantLocked}
               defaultFromLocationId={header.defaultFromLocationId}
               defaultToLocationId={header.defaultToLocationId}
               movementType={header.movementType}
@@ -649,6 +807,7 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
           />
         </div>
       </div>
+      )}
 
       <Modal
         isOpen={shortcutsModalOpen}

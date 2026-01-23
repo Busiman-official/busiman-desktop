@@ -44,10 +44,11 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
     }
   }, [documentId]);
 
-  // ESC to close details (capture phase so it runs before other handlers)
+  // ESC to close details (use window.document to avoid shadowing the state variable "document")
   useEffect(() => {
     if (!documentId) return;
-    if (typeof document === 'undefined' || !document) return;
+    const doc = typeof window !== 'undefined' ? window.document : null;
+    if (!doc) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (showApproveDialog || showReverseDialog) return;
@@ -55,8 +56,8 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
       e.stopPropagation();
       onCloseRef.current();
     };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
+    doc.addEventListener('keydown', onKey, true);
+    return () => doc.removeEventListener('keydown', onKey, true);
   }, [documentId, showApproveDialog, showReverseDialog]);
 
   const loadDocument = async () => {
@@ -132,57 +133,58 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
 
   return (
     <div className="movement-detail-panel">
-      <div className="movement-detail-header">
-        <div>
-          <h2>Movement {document.movementNumber}</h2>
-          <div className="movement-detail-meta">
-            <span className={`status-badge status-${document.status.toLowerCase()}`}>
-              {document.status}
-            </span>
-            <span className="movement-type">{document.movementType}</span>
+      <div className="movement-detail-header-tabs">
+        <div className="movement-detail-header">
+          <div>
+            <h2>Movement {document.movementNumber}</h2>
+            <div className="movement-detail-meta">
+              <span className={`status-badge status-${document.status.toLowerCase()}`}>
+                {document.status}
+              </span>
+              <span className="movement-type">{document.movementType}</span>
+            </div>
+          </div>
+          <div className="movement-detail-actions">
+            {document.status === MovementStatus.PENDING && (
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowApproveDialog(true)}
+                >
+                  Approve
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => setShowApproveDialog(true)}
+                >
+                  Reject
+                </Button>
+              </>
+            )}
+            {document.status === MovementStatus.COMPLETED && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowReverseDialog(true)}
+              >
+                Reverse
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              title="Close (Esc)"
+              aria-label="Close"
+            >
+              ×
+            </Button>
           </div>
         </div>
-        <div className="movement-detail-actions">
-          {document.status === MovementStatus.PENDING && (
-            <>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setShowApproveDialog(true)}
-              >
-                Approve
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => setShowApproveDialog(true)}
-              >
-                Reject
-              </Button>
-            </>
-          )}
-          {document.status === MovementStatus.COMPLETED && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowReverseDialog(true)}
-            >
-              Reverse
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            title="Close (Esc)"
-            aria-label="Close"
-          >
-            ×
-          </Button>
-        </div>
-      </div>
 
-      <div className="movement-detail-tabs">
+        <div className="movement-detail-tabs">
         <button
           className={`tab-button ${activeTab === 'overview' ? 'active' : ''}`}
           onClick={() => setActiveTab('overview')}
@@ -207,6 +209,7 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
         >
           Reversal
         </button>
+      </div>
       </div>
 
       <div className="movement-detail-content">
@@ -335,7 +338,7 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
                     <tr key={line.id}>
                       <td>{line.lineNo}</td>
                       <td>{line.item?.name || line.itemId}</td>
-                      <td>{line.variant?.name || '-'}</td>
+                      <td>{line.variant?.code || line.variant?.name || '-'}</td>
                       <td>{line.fromLocation?.code || '-'}</td>
                       <td>{line.toLocation?.code || '-'}</td>
                       <td>{line.quantity}</td>

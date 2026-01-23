@@ -1,0 +1,135 @@
+/**
+ * Serial Grid Styles
+ */
+
+.serial-grid {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.serial-grid-table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.serial-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.serial-grid-table thead {
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.serial-grid-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+  background: #f9fafb;
+  user-select: none;
+}
+
+.serial-grid-sortable {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.serial-grid-sortable:hover {
+  background-color: #f3f4f6;
+}
+
+.sort-indicator {
+  margin-left: 6px;
+  color: #2563eb;
+  font-weight: bold;
+}
+
+.serial-grid-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  vertical-align: middle;
+}
+
+.serial-grid-row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.serial-grid-row:hover {
+  background-color: #f9fafb;
+}
+
+.serial-grid-row.selected {
+  background-color: #dbeafe;
+}
+
+.serial-grid-row.highlighted {
+  background-color: #fef3c7;
+  border-left: 3px solid #f59e0b;
+}
+
+.serial-grid-checkbox-col {
+  width: 40px;
+  text-align: center;
+}
+
+.serial-grid-serial-col {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.serial-grid-subtext {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.serial-grid-variant {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.serial-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.serial-grid-expired-label,
+.serial-grid-critical-label {
+  font-size: 11px;
+  color: #dc2626;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.serial-grid-footer {
+  padding: 12px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.serial-grid-count {
+  font-size: 13px;
+  color: #6b7280;
+}

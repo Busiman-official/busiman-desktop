@@ -9,6 +9,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import { getNumberGridMode } from '../utils/numberGridUtils';
 import type { BatchRow } from '../utils/numberGridUtils';
+import { getTrackingType, type TrackingType } from '../utils/trackingUtils';
 import { NumberGrid } from './NumberGrid';
 import './MovementLinesGrid.css';
 
@@ -28,18 +29,28 @@ export interface StockMapEntry {
   blocked?: number;
 }
 
+type VariantOption = { id: string; code: string; name: string; isDefault: boolean; isActive: boolean; metadata?: Record<string, unknown> };
+
 interface MovementLinesGridProps {
   lines: MovementLineRequest[];
   onChange: (lines: MovementLineRequest[]) => void;
   items: InventoryItem[];
   locations: Location[];
+  variantsByItem?: Record<string, VariantOption[]>;
+  variantLocked?: boolean;
   defaultFromLocationId?: string;
   defaultToLocationId?: string;
   movementType: MovementType;
   stockMap?: Record<string, StockMapEntry>;
   lineValidations?: Record<number, LineValidation>;
-  fetchAvailableForBatch?: (itemId: string, locationId: string, batchNumber: string) => Promise<number>;
+  fetchAvailableForBatch?: (itemId: string, locationId: string, batchNumber: string, variantId?: string) => Promise<number>;
   onBatchSerialOpenChange?: (index: number | null) => void;
+}
+
+function resolveDefaultVariantId(variants: VariantOption[]): string | null {
+  if (!variants.length) return null;
+  const v = variants.find((x) => x.isDefault && x.isActive) || variants.find((x) => x.isActive);
+  return v?.id ?? null;
 }
 
 function MovementLinesGridInner(
@@ -48,6 +59,8 @@ function MovementLinesGridInner(
     onChange,
     items,
     locations,
+    variantsByItem = {},
+    variantLocked = false,
     defaultFromLocationId,
     defaultToLocationId,
     movementType,
@@ -141,9 +154,15 @@ function MovementLinesGridInner(
 
   // Sync Select refs after render
   useEffect(() => {
-    lines.forEach((_, rowIndex) => {
-      [1, 3, 4].forEach((colIndex) => {
-        if ((colIndex === 1) || (colIndex === 3 && needsFromLocation(movementType)) || (colIndex === 4 && needsToLocation(movementType))) {
+    lines.forEach((line, rowIndex) => {
+      [1, 2, 3, 4].forEach((colIndex) => {
+        const item = items.find((i) => i.id === line?.itemId);
+        const use =
+          colIndex === 1 ||
+          (colIndex === 2 && item?.hasVariants) ||
+          (colIndex === 3 && needsFromLocation(movementType)) ||
+          (colIndex === 4 && needsToLocation(movementType));
+        if (use) {
           const selectEl = document.querySelector(`select[data-row="${rowIndex}"][data-col="${colIndex}"]`) as HTMLSelectElement | null;
           if (selectEl) {
             const key = `r-${rowIndex}-c-${colIndex}`;
@@ -153,7 +172,7 @@ function MovementLinesGridInner(
         }
       });
     });
-  }, [lines, movementType]);
+  }, [lines, movementType, items]);
 
   // Fetch availableSerials for NumberGrid when mode is SELECT and trackingType is SERIAL
   useEffect(() => {
@@ -171,7 +190,7 @@ function MovementLinesGridInner(
       return;
     }
     inventoryService
-      .getSerialsByItem(ln.itemId, locId, serialStatus)
+      .getSerialsByItem(ln.itemId, locId, serialStatus, ln.variantId)
       .then(setAvailableSerialsForSelect)
       .catch(() => setAvailableSerialsForSelect([]));
   }, [batchSerialLineIndex, lines, movementType, items, defaultFromLocationId]);
@@ -233,21 +252,50 @@ function MovementLinesGridInner(
   const getEffectiveToId = (line: MovementLineRequest) =>
     line.toLocationId || defaultToLocationId || '';
   const getStockKey = (line: MovementLineRequest) =>
-    `${line.itemId || ''}|${getEffectiveFromId(line)}`;
+    `${line.itemId || ''}|${line.variantId ?? 'na'}|${getEffectiveFromId(line)}`;
+
+  const getTrackingTypeForItem = (item: InventoryItem | undefined): TrackingType => {
+    if (!item) return 'NONE';
+    return getTrackingType(item.industryFlags);
+  };
+
+  const getColumnHeaderForTracking = (lines: MovementLineRequest[], items: InventoryItem[]): string => {
+    const trackingTypes = new Set<TrackingType>();
+    lines.forEach((line) => {
+      const item = items.find((i) => i.id === line.itemId);
+      trackingTypes.add(getTrackingTypeForItem(item));
+    });
+    
+    if (trackingTypes.size === 0 || (trackingTypes.size === 1 && trackingTypes.has('NONE'))) {
+      return 'Batch/Serial';
+    }
+    if (trackingTypes.size === 1) {
+      const type = Array.from(trackingTypes)[0];
+      return type === 'BATCH' ? 'Batch' : 'Serial';
+    }
+    // Mixed types
+    return 'Batch/Serial';
+  };
 
   const getBatchSerialSummary = (line: MovementLineRequest, item: InventoryItem | undefined): string => {
     if (!item) return '-';
-    if (line.batchNumber) {
-      const p = [`B: ${line.batchNumber}`];
-      if (line.expiryDate) p.push(`exp ${line.expiryDate.slice(0, 7)}`);
-      return p.join(', ');
+    const trackingType = getTrackingTypeForItem(item);
+    
+    if (trackingType === 'BATCH') {
+      if (line.batchNumber) {
+        const p = [`B: ${line.batchNumber}`];
+        if (line.expiryDate) p.push(`exp ${line.expiryDate.slice(0, 7)}`);
+        return p.join(', ');
+      }
+      return '— Click to enter batch';
+    } else if (trackingType === 'SERIAL') {
+      if (line.serialNumbers && line.serialNumbers.length > 0) {
+        return `S: ${line.serialNumbers.length} serials`;
+      }
+      return '— Click to enter serials';
     }
-    if (line.serialNumbers && line.serialNumbers.length > 0) {
-      return `S: ${line.serialNumbers.length} serials`;
-    }
-    if (item?.industryFlags?.requiresBatchTracking || item?.industryFlags?.requiresSerialTracking) {
-      return '— Click to enter';
-    }
+    
+    // NONE tracking
     return '-';
   };
 
@@ -595,13 +643,13 @@ function MovementLinesGridInner(
                 />
               </th>
               <th>Item *</th>
-              <th>Variant</th>
+              <th>{lines.some((l) => items.find((i) => i.id === l.itemId)?.hasVariants) ? 'Variant *' : 'Variant'}</th>
               {needsFromLocation(movementType) && <th>From Location</th>}
               {needsToLocation(movementType) && <th>To Location</th>}
               {needsFromLocation(movementType) && <th>Available</th>}
               <th>Quantity *</th>
               <th>UoM</th>
-              <th>Batch/Serial</th>
+              <th>{getColumnHeaderForTracking(lines, items)}</th>
               <th>Line Reason</th>
               <th style={{ width: '36px' }}>Status</th>
               <th style={{ width: '80px' }}>Actions</th>
@@ -661,15 +709,18 @@ function MovementLinesGridInner(
                         value={line.itemId}
                         onChange={handleSelectChange(index, 1, (value) => {
                           const selectedItem = items.find((i) => i.id === value);
+                          const defId = selectedItem?.hasVariants ? resolveDefaultVariantId(variantsByItem[value] || []) : null;
+                          const trackingType = getTrackingType(selectedItem?.industryFlags);
                           const updates: Partial<MovementLineRequest> = {
                             itemId: value,
+                            variantId: defId || undefined,
                             unitOfMeasure: selectedItem?.unitOfMeasure || 'pcs',
                           };
-                          // Clear serial/batch/date fields when the new item does not require them
-                          if (!selectedItem?.industryFlags?.requiresSerialTracking) {
+                          // Clear tracking data that doesn't match the item's tracking type
+                          if (trackingType !== 'SERIAL') {
                             updates.serialNumbers = undefined;
                           }
-                          if (!selectedItem?.industryFlags?.requiresBatchTracking) {
+                          if (trackingType !== 'BATCH') {
                             updates.batchNumber = undefined;
                             updates.manufacturingDate = undefined;
                             updates.expiryDate = undefined;
@@ -695,19 +746,65 @@ function MovementLinesGridInner(
                     </div>
                   </td>
                   <td>
-                    <span
-                      ref={(el) => { cellRefs.current[getCellKey(index, 2)] = el; }}
-                      tabIndex={0}
-                      role="textbox"
-                      aria-readonly="true"
-                      onKeyDown={(e) => handleKeyDown(e, index, 2)}
-                      onFocus={() => { setFocusedRow(index); setFocusedCol(2); }}
-                      data-row={index}
-                      data-col={2}
-                      style={{ cursor: 'default' }}
-                    >
-                      -
-                    </span>
+                    {item?.hasVariants ? (
+                      <div
+                        ref={(el) => {
+                          if (el) {
+                            const selectEl = el.querySelector('select') as HTMLSelectElement | null;
+                            if (selectEl) {
+                              cellRefs.current[getCellKey(index, 2)] = selectEl;
+                              selectRefs.current[getCellKey(index, 2)] = selectEl;
+                            }
+                          }
+                        }}
+                        onKeyDownCapture={(e) => {
+                          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleKeyDown(e, index, 2);
+                          }
+                        }}
+                      >
+                        <Select
+                          value={line.variantId || ''}
+                          onChange={handleSelectChange(index, 2, (value) => {
+                            updateLine(index, {
+                              variantId: value || undefined,
+                              batchNumber: undefined,
+                              serialNumbers: undefined,
+                              manufacturingDate: undefined,
+                              expiryDate: undefined,
+                            });
+                          })}
+                          onKeyDown={handleSelectKeyDown(index, 2)}
+                          onFocus={() => { setFocusedRow(index); setFocusedCol(2); }}
+                          disabled={variantLocked}
+                          style={{ width: '160px' }}
+                          data-row={index}
+                          data-col={2}
+                          title={variantLocked ? 'Variant is locked' : undefined}
+                        >
+                          <option value="">Select...</option>
+                          {(variantsByItem[line.itemId] || []).filter((v) => v.isActive).map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.code} - {v.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    ) : (
+                      <span
+                        ref={(el) => { cellRefs.current[getCellKey(index, 2)] = el; }}
+                        tabIndex={-1}
+                        onKeyDown={(e) => handleKeyDown(e, index, 2)}
+                        onFocus={() => { setFocusedRow(index); setFocusedCol(2); }}
+                        data-row={index}
+                        data-col={2}
+                        style={{ cursor: 'default' }}
+                      >
+                        -
+                      </span>
+                    )}
                   </td>
                   {needsFromLocation(movementType) && (
                     <td>
@@ -828,8 +925,8 @@ function MovementLinesGridInner(
                   </td>
                   <td className="batch-serial-cell">
                     {(() => {
-                      const mode = getBatchSerialMode(item);
-                      if (!mode) {
+                      const trackingType = getTrackingTypeForItem(item);
+                      if (trackingType === 'NONE') {
                         return (
                           <span
                             ref={(el) => { cellRefs.current[getCellKey(index, 8)] = el; }}
@@ -838,12 +935,14 @@ function MovementLinesGridInner(
                             onFocus={() => { setFocusedRow(index); setFocusedCol(8); }}
                             data-row={index}
                             data-col={8}
+                            title="No tracking required"
                           >
                             -
                           </span>
                         );
                       }
                       const summary = getBatchSerialSummary(line, item);
+                      const trackingLabel = trackingType === 'BATCH' ? 'Batch' : 'Serial';
                       return (
                         <button
                           type="button"
@@ -857,7 +956,11 @@ function MovementLinesGridInner(
                           onFocus={() => { setFocusedRow(index); setFocusedCol(8); }}
                           data-row={index}
                           data-col={8}
+                          title={`Tracking: ${trackingLabel}`}
                         >
+                          <span style={{ fontSize: '10px', color: '#666', marginRight: '4px' }}>
+                            [{trackingLabel}]
+                          </span>
                           {summary}
                         </button>
                       );

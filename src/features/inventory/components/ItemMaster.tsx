@@ -22,6 +22,7 @@ import {
   UpdateInventoryItemRequest,
   IndustryType,
   MovementType,
+  SerialResponse,
 } from '@/services/inventory.service';
 import { getDefaultReason } from '../constants/movementReasonMapping';
 import { Button, Input, Card, Select, ImageUpload } from '@/shared/components/ui';
@@ -31,6 +32,8 @@ import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { ResizableSplitPane } from '@/shared/components/layout';
 import { VariantManagement } from './VariantManagement';
+import { SerialGrid } from './SerialGrid';
+import { SerialDetailPanel } from './SerialDetailPanel';
 import {
   ItemSubTab,
   validateWizardSteps,
@@ -143,11 +146,12 @@ export const ItemMaster: React.FC = () => {
   const [disposeReason, setDisposeReason] = useState('');
   
   // Serial lookup state
-  const [serials, setSerials] = useState<any[]>([]);
-  const [serialSearchInput, setSerialSearchInput] = useState('');
-  const [selectedSerial, setSelectedSerial] = useState<any | null>(null);
-  const [serialHistory, setSerialHistory] = useState<any[]>([]);
+  const [serials, setSerials] = useState<SerialResponse[]>([]);
   const [serialLoading, setSerialLoading] = useState(false);
+  const [serialSortColumn, setSerialSortColumn] = useState<string | null>(null);
+  const [serialSortDirection, setSerialSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [serialFilters, setSerialFilters] = useState<{ status?: string; locationId?: string }>({});
+  const [selectedSerialIds, setSelectedSerialIds] = useState<Set<string>>(new Set());
   
   // Expiry monitoring state
   const [expiryAlerts, setExpiryAlerts] = useState<any[]>([]);
@@ -279,13 +283,21 @@ export const ItemMaster: React.FC = () => {
       setSelectedItemId(itemId);
       setViewMode('details');
       
+      // Check for serialNumber param - if present, switch to tracking tab
+      const serialNumber = searchParams.get('serialNumber');
+      if (serialNumber) {
+        setItemSubTab('tracking');
+        setTrackingSubView('serials');
+      }
+      
       // Set sub-tab and variant ID
       if (subTab && ['overview', 'edit', 'variants', 'stock', 'tracking', 'history'].includes(subTab)) {
         setItemSubTab(subTab);
       } else if (variantId) {
         setItemSubTab('variants');
         setSelectedVariantId(variantId);
-      } else {
+      } else if (!serialNumber) {
+        // Only set to overview if no serialNumber (serialNumber already sets to tracking)
         setItemSubTab('overview');
       }
       
@@ -821,33 +833,30 @@ export const ItemMaster: React.FC = () => {
     }
   }, [historyFilters, itemSubTab, selectedItemId]);
   
-  const handleSerialSearch = async () => {
-    if (!serialSearchInput.trim()) {
-      setError('Please enter a serial number');
-      return;
+  // Handle serial click - open detail panel via URL
+  const handleSerialClick = useCallback((serial: SerialResponse) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('serialNumber', serial.serialNumber);
+    if (selectedItemId) {
+      params.set('itemId', selectedItemId);
     }
-    
-    setSerialLoading(true);
-    setError(null);
-    try {
-      const serialData = await inventoryService.getSerialByNumber(serialSearchInput.trim());
-      setSelectedSerial(serialData);
-      
-      // Load history
-      try {
-        const historyData = await inventoryService.getSerialHistory(serialSearchInput.trim());
-        setSerialHistory(historyData);
-      } catch (err: any) {
-        logger.warn('[ItemMaster] Failed to load serial history', err);
-      }
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to find serial number');
-      setError(message);
-      logger.error('[ItemMaster] Failed to search serial', err);
-    } finally {
-      setSerialLoading(false);
+    if (selectedVariantId) {
+      params.set('variantId', selectedVariantId);
     }
-  };
+    params.set('itemSubTab', 'tracking');
+    setSearchParams(params, { replace: false });
+  }, [selectedItemId, selectedVariantId, searchParams, setSearchParams]);
+
+  // Handle serial sort
+  const handleSerialSort = useCallback((column: string, direction: 'asc' | 'desc') => {
+    setSerialSortColumn(column);
+    setSerialSortDirection(direction);
+  }, []);
+
+  // Handle serial filter change
+  const handleSerialFilterChange = useCallback((newFilters: { status?: string; locationId?: string }) => {
+    setSerialFilters(newFilters);
+  }, []);
 
   const loadVariants = async (itemId: string) => {
     try {
@@ -2620,7 +2629,7 @@ export const ItemMaster: React.FC = () => {
                 p.set('create', '1');
                 p.set('movementType', MovementType.RECEIPT);
                 p.set('itemId', selectedItem.id);
-                if (selectedVariantId) p.set('variantId', selectedVariantId);
+                if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                 p.set('reasonCode', getDefaultReason('RECEIPT', 'item').defaultCode);
                 p.set('returnTab', 'items');
                 p.set('returnItemId', selectedItem.id);
@@ -2640,7 +2649,7 @@ export const ItemMaster: React.FC = () => {
                 p.set('create', '1');
                 p.set('movementType', MovementType.ISSUE);
                 p.set('itemId', selectedItem.id);
-                if (selectedVariantId) p.set('variantId', selectedVariantId);
+                if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                 p.set('reasonCode', getDefaultReason('ISSUE', 'item').defaultCode);
                 p.set('returnTab', 'items');
                 p.set('returnItemId', selectedItem.id);
@@ -2660,7 +2669,7 @@ export const ItemMaster: React.FC = () => {
                 p.set('create', '1');
                 p.set('movementType', MovementType.TRANSFER);
                 p.set('itemId', selectedItem.id);
-                if (selectedVariantId) p.set('variantId', selectedVariantId);
+                if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                 p.set('reasonCode', getDefaultReason('TRANSFER', 'item').defaultCode);
                 p.set('returnTab', 'items');
                 p.set('returnItemId', selectedItem.id);
@@ -3117,7 +3126,7 @@ export const ItemMaster: React.FC = () => {
                               p.set('create', '1');
                               p.set('movementType', MovementType.RECEIPT);
                               p.set('itemId', selectedItem!.id);
-                              if (selectedVariantId) p.set('variantId', selectedVariantId);
+                              if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                               p.set('toLocationId', locStock.location.id);
                               p.set('reasonCode', getDefaultReason('RECEIPT', 'item').defaultCode);
                               p.set('returnTab', 'items');
@@ -3137,7 +3146,7 @@ export const ItemMaster: React.FC = () => {
                               p.set('create', '1');
                               p.set('movementType', MovementType.ISSUE);
                               p.set('itemId', selectedItem!.id);
-                              if (selectedVariantId) p.set('variantId', selectedVariantId);
+                              if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                               p.set('fromLocationId', locStock.location.id);
                               p.set('reasonCode', getDefaultReason('ISSUE', 'item').defaultCode);
                               p.set('returnTab', 'items');
@@ -3157,7 +3166,7 @@ export const ItemMaster: React.FC = () => {
                               p.set('create', '1');
                               p.set('movementType', MovementType.TRANSFER);
                               p.set('itemId', selectedItem!.id);
-                              if (selectedVariantId) p.set('variantId', selectedVariantId);
+                              if (selectedVariantId) { p.set('variantId', selectedVariantId); p.set('variantLocked', '1'); }
                               p.set('fromLocationId', locStock.location.id);
                               p.set('reasonCode', getDefaultReason('TRANSFER', 'item').defaultCode);
                               p.set('returnTab', 'items');
@@ -3446,118 +3455,42 @@ export const ItemMaster: React.FC = () => {
 
         {trackingSubView === 'serials' && hasSerials && (
           <div className="serials-content">
-            <div className="serial-search-section">
-              <div className="search-input-group">
-                <Input
-                  placeholder="Search serial number..."
-                  value={serialSearchInput}
-                  onChange={(e) => setSerialSearchInput(e.target.value.toUpperCase())}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter') {
-                      handleSerialSearch();
+            <div className="serials-list-section">
+              {serialLoading ? (
+                <LoadingState message="Loading serials..." />
+              ) : serials.length === 0 ? (
+                <EmptyState message="No serials found for this item. Use Global Search (Ctrl+K) to find serials." />
+              ) : (
+                <SerialGrid
+                  serials={serials}
+                  selectedSerials={selectedSerialIds}
+                  onSerialClick={handleSerialClick}
+                  onSerialSelect={(serialId, selected) => {
+                    const newSelected = new Set(selectedSerialIds);
+                    if (selected) {
+                      newSelected.add(serialId);
+                    } else {
+                      newSelected.delete(serialId);
+                    }
+                    setSelectedSerialIds(newSelected);
+                  }}
+                  onSelectAll={(selected) => {
+                    if (selected) {
+                      setSelectedSerialIds(new Set(serials.map(s => s.id)));
+                    } else {
+                      setSelectedSerialIds(new Set());
                     }
                   }}
-                  style={{ flex: 1 }}
+                  sortColumn={serialSortColumn}
+                  sortDirection={serialSortDirection}
+                  onSort={handleSerialSort}
+                  filters={serialFilters}
+                  onFilterChange={handleSerialFilterChange}
+                  loading={serialLoading}
+                  selectedSerialId={searchParams.get('serialNumber') || null}
                 />
-                <Button variant="primary" onClick={handleSerialSearch} disabled={serialLoading}>
-                  Search
-                </Button>
-              </div>
+              )}
             </div>
-            
-            {selectedSerial ? (
-              <div className="serial-details-section">
-                <h4>Serial Details</h4>
-                <div className="details-grid">
-                  <div>
-                    <label>Serial Number</label>
-                    <div>{selectedSerial.serialNumber}</div>
-                  </div>
-                  <div>
-                    <label>Current Location</label>
-                    <div>
-                      {selectedSerial.currentLocation
-                        ? `${selectedSerial.currentLocation.code} - ${selectedSerial.currentLocation.name}`
-                        : selectedSerial.currentLocationId}
-                    </div>
-                  </div>
-                  <div>
-                    <label>Status</label>
-                    <div>
-                      <span className={`status-badge status-${selectedSerial.currentStatus?.toLowerCase()}`}>
-                        {selectedSerial.currentStatus}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                
-                {serialHistory.length > 0 && (
-                  <div className="serial-history-section">
-                    <h4>Movement History</h4>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Movement Type</th>
-                          <th>From Location</th>
-                          <th>To Location</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {serialHistory.map((entry, idx) => (
-                          <tr key={idx}>
-                            <td>{new Date(entry.date).toLocaleDateString()}</td>
-                            <td>{entry.movementType}</td>
-                            <td>{entry.fromLocation ? `${entry.fromLocation.code} - ${entry.fromLocation.name}` : '-'}</td>
-                            <td>{entry.toLocation ? `${entry.toLocation.code} - ${entry.toLocation.name}` : '-'}</td>
-                            <td>{entry.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="serials-list-section">
-                {serialLoading ? (
-                  <LoadingState message="Loading serials..." />
-                ) : serials.length === 0 ? (
-                  <EmptyState message="No serials found for this item. Use search to find a specific serial." />
-                ) : (
-                  <div className="serials-table">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Serial Number</th>
-                          <th>Location</th>
-                          <th>Status</th>
-                          <th>Batch</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {serials.map((serial) => (
-                          <tr key={serial.id} onClick={() => {
-                            setSelectedSerial(serial);
-                            inventoryService.getSerialHistory(serial.serialNumber).then(setSerialHistory).catch(() => {});
-                          }}>
-                            <td>{serial.serialNumber}</td>
-                            <td>{serial.currentLocation ? `${serial.currentLocation.code} - ${serial.currentLocation.name}` : '-'}</td>
-                            <td>
-                              <span className={`status-badge status-${serial.currentStatus?.toLowerCase()}`}>
-                                {serial.currentStatus}
-                              </span>
-                            </td>
-                            <td>{serial.batchNumber || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
@@ -4323,6 +4256,23 @@ export const ItemMaster: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Serial Detail Panel - Opens when serialNumber is in URL */}
+        <SerialDetailPanel
+          isOpen={!!searchParams.get('serialNumber')}
+          onClose={() => {
+            const params = new URLSearchParams(searchParams);
+            params.delete('serialNumber');
+            setSearchParams(params, { replace: true });
+          }}
+          serialNumber={searchParams.get('serialNumber')}
+          onStatusUpdate={() => {
+            // Refresh serial list when status is updated
+            if (selectedItemId) {
+              loadSerials(selectedItemId);
+            }
+          }}
+        />
       </div>
     );
   };

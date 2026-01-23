@@ -12,8 +12,6 @@ import {
   MovementStatus,
   InventoryItem,
   Location,
-  StockCountResponse,
-  CreateStockCountRequest,
 } from '@/services/inventory.service';
 import { Button, Input, Card, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
@@ -24,61 +22,26 @@ import { ResizableSplitPane } from '@/shared/components/layout';
 import { MovementList } from './MovementList';
 import { MovementDetailPanel } from './MovementDetailPanel';
 import { CreateMovementView } from './CreateMovementView';
+import { StockCountingView } from './StockCountingView';
 import './MovementManagement.css';
 
 type ViewMode = 'list' | 'create' | 'details' | 'approve';
-type MovementSubTab = 'transactions' | 'counting' | 'adjustments';
+type MovementSubTab = 'transactions' | 'counting';
 
 export const MovementManagement: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [movements, setMovements] = useState<StockMovementResponse[]>([]);
-  const [adjustmentDocuments, setAdjustmentDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [movementSubTab, setMovementSubTab] = useState<MovementSubTab>('transactions');
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
-  
-  // Stock counting state
-  const [counts, setCounts] = useState<StockCountResponse[]>([]);
-  const [countLoading, setCountLoading] = useState(false);
-  const [selectedCountId, setSelectedCountId] = useState<string | null>(null);
-  const [selectedCount, setSelectedCount] = useState<StockCountResponse | null>(null);
-  const [countViewMode, setCountViewMode] = useState<'list' | 'create' | 'details'>('list');
-  const [countForm, setCountForm] = useState<CreateStockCountRequest>({
-    countType: 'CYCLE_COUNT',
-    locationId: '',
-    itemId: '',
-  });
-  const [submitForm, setSubmitForm] = useState({
-    physicalQuantity: 0,
-    varianceReason: '',
-  });
-  const [showApproveCountDialog, setShowApproveCountDialog] = useState(false);
-  const [countToApprove, setCountToApprove] = useState<string | null>(null);
-  
-  // Load functions - defined before useEffects to avoid TDZ errors
-  const loadCountDetails = async () => {
-    if (!selectedCountId) return;
-    setCountLoading(true);
-    setError(null);
-    try {
-      const data = await inventoryService.getCountHistory();
-      const count = data.find((c) => c.id === selectedCountId);
-      if (count) {
-        setSelectedCount(count);
-      }
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to load count details');
-      setError(message);
-      logger.error('[MovementManagement] Failed to load count details', err);
-    } finally {
-      setCountLoading(false);
-    }
-  };
+  const [detailsPanelOpen, setDetailsPanelOpen] = useState(false);
+  const [editDraftId, setEditDraftId] = useState<string | null>(null);
 
+  // Load functions - defined before useEffects to avoid TDZ errors
   const loadMovements = async () => {
     setLoading(true);
     setError(null);
@@ -141,26 +104,6 @@ export const MovementManagement: React.FC = () => {
     }
   };
 
-  const loadCounts = async () => {
-    setCountLoading(true);
-    setError(null);
-    try {
-      const data = await inventoryService.getCountHistory();
-      setCounts(data);
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to load stock counts');
-      setError(message);
-      logger.error('[MovementManagement] Failed to load counts', err);
-    } finally {
-      setCountLoading(false);
-    }
-  };
-  
-  useEffect(() => {
-    if (selectedCountId && countViewMode === 'details') {
-      loadCountDetails();
-    }
-  }, [selectedCountId, countViewMode]);
   const [selectedMovementId, setSelectedMovementId] = useState<string | null>(null);
   const [selectedMovement, setSelectedMovement] = useState<StockMovementResponse | null>(null);
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -195,17 +138,6 @@ export const MovementManagement: React.FC = () => {
   const [serialAttributes, setSerialAttributes] = useState<Record<string, Record<string, any>>>({});
   const [attributeTemplate, setAttributeTemplate] = useState<any | null>(null);
 
-  const loadAdjustmentMovements = async () => {
-    try {
-      const data = await inventoryService.getAllMovements({
-        movementType: MovementType.ADJUSTMENT,
-      });
-      setAdjustmentMovements(data);
-    } catch (err: any) {
-      logger.error('[MovementManagement] Failed to load adjustment movements', err);
-    }
-  };
-
   const handleCreateMovement = useCallback(() => {
     const p = new URLSearchParams(searchParams);
     p.set('create', '1');
@@ -218,20 +150,28 @@ export const MovementManagement: React.FC = () => {
     loadItems();
     loadLocations();
     loadReasonCodes();
-    if (movementSubTab === 'adjustments') {
-      loadAdjustmentMovements();
-    }
   }, []);
 
   useEffect(() => {
     if (viewMode === 'list' && movementSubTab === 'transactions') {
       loadMovements();
-    } else if (movementSubTab === 'counting') {
-      loadCounts();
-    } else if (movementSubTab === 'adjustments') {
-      loadAdjustmentMovements();
     }
   }, [movementSubTab, filters, viewMode]);
+
+  // Handle movementId from URL params (for deep linking)
+  useEffect(() => {
+    const urlMovementId = searchParams.get('movementId');
+    if (urlMovementId && urlMovementId !== selectedMovementId) {
+      setSelectedMovementId(urlMovementId);
+      setViewMode('details');
+      setDetailsPanelOpen(true);
+      setMovementSubTab('transactions');
+      // Remove movementId from URL after setting it
+      const params = new URLSearchParams(searchParams);
+      params.delete('movementId');
+      setSearchParams(params, { replace: true });
+    }
+  }, [searchParams, selectedMovementId, setSearchParams]);
 
   useEffect(() => {
     const handleQuickReceipt = () => {
@@ -265,11 +205,12 @@ export const MovementManagement: React.FC = () => {
     };
   }, [searchParams]);
 
-  // Open Create when URL has create=1
+  // Open Create when URL has create=1; close details panel when switching to create
   useEffect(() => {
     if (searchParams.get('create') === '1') {
       setMovementSubTab('transactions');
       setViewMode('create');
+      setDetailsPanelOpen(false);
     }
   }, [searchParams.get('create')]);
 
@@ -430,67 +371,6 @@ export const MovementManagement: React.FC = () => {
     return items.find((item) => item.id === formData.itemId);
   };
   
-  const handleCreateCount = async () => {
-    setError(null);
-    setSuccess(null);
-    try {
-      await inventoryService.createStockCount(countForm);
-      setSuccess('Stock count created successfully');
-      setCountViewMode('list');
-      setCountForm({
-        countType: 'CYCLE_COUNT',
-        locationId: '',
-        itemId: '',
-      });
-      loadCounts();
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to create stock count');
-      setError(message);
-      logger.error('[MovementManagement] Failed to create count', err);
-    }
-  };
-  
-  const handleSubmitCount = async () => {
-    if (!selectedCountId) return;
-    setError(null);
-    setSuccess(null);
-    try {
-      await inventoryService.submitCount(
-        selectedCountId,
-        submitForm.physicalQuantity,
-        submitForm.varianceReason || undefined
-      );
-      setSuccess('Count submitted successfully');
-      setSubmitForm({ physicalQuantity: 0, varianceReason: '' });
-      loadCountDetails();
-      loadCounts();
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to submit count');
-      setError(message);
-      logger.error('[MovementManagement] Failed to submit count', err);
-    }
-  };
-  
-  const handleApproveCount = async () => {
-    if (!countToApprove) return;
-    setError(null);
-    setSuccess(null);
-    try {
-      await inventoryService.approveCount(countToApprove);
-      setSuccess('Count approved successfully');
-      setShowApproveCountDialog(false);
-      setCountToApprove(null);
-      loadCounts();
-      if (selectedCountId === countToApprove) {
-        loadCountDetails();
-      }
-    } catch (err: any) {
-      const message = extractErrorMessage(err, 'Failed to approve count');
-      setError(message);
-      logger.error('[MovementManagement] Failed to approve count', err);
-    }
-  };
-
   const renderList = () => (
     <div className="movement-management-list">
       <div className="movement-management-toolbar">
@@ -1484,259 +1364,6 @@ export const MovementManagement: React.FC = () => {
     );
   };
 
-  const renderCountingView = () => {
-    if (countViewMode === 'create') {
-      return (
-        <Card className="counting-form">
-          <h2>Create Stock Count</h2>
-          {error && <div className="error-message">{error}</div>}
-          {success && <div className="success-message">{success}</div>}
-
-          <div className="form-group">
-            <label>Count Type *</label>
-            <Select
-              value={countForm.countType}
-              onChange={(e) =>
-                setCountForm({
-                  ...countForm,
-                  countType: e.target.value as 'CYCLE_COUNT' | 'FULL_COUNT' | 'SPOT_CHECK',
-                })
-              }
-            >
-              <option value="CYCLE_COUNT">Cycle Count</option>
-              <option value="FULL_COUNT">Full Count</option>
-              <option value="SPOT_CHECK">Spot Check</option>
-            </Select>
-          </div>
-
-          {countForm.countType !== 'FULL_COUNT' && (
-            <>
-              <div className="form-group">
-                <label>Location</label>
-                <Select
-                  value={countForm.locationId}
-                  onChange={(e) => setCountForm({ ...countForm, locationId: e.target.value })}
-                >
-                  <option value="">Select Location</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.code} - {loc.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="form-group">
-                <label>Item</label>
-                <Select
-                  value={countForm.itemId}
-                  onChange={(e) => setCountForm({ ...countForm, itemId: e.target.value })}
-                >
-                  <option value="">Select Item</option>
-                  {items.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.sku} - {item.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </>
-          )}
-
-          <div className="form-actions">
-            <Button variant="secondary" onClick={() => setCountViewMode('list')}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={handleCreateCount}>
-              Create Count
-            </Button>
-          </div>
-        </Card>
-      );
-    }
-
-    if (countViewMode === 'details' && selectedCount) {
-      return (
-        <Card className="counting-details">
-          <div className="details-header">
-            <h2>Stock Count Details</h2>
-            <div className="details-actions">
-              <Button variant="secondary" onClick={() => setCountViewMode('list')}>
-                Back to List
-              </Button>
-            </div>
-          </div>
-
-          <div className="details-content">
-            <div className="details-section">
-              <h3>Count Information</h3>
-              <div className="details-grid">
-                <div>
-                  <label>Count Number</label>
-                  <div>{selectedCount.countNumber}</div>
-                </div>
-                <div>
-                  <label>Type</label>
-                  <div>{selectedCount.countType}</div>
-                </div>
-                <div>
-                  <label>Location</label>
-                  <div>{selectedCount.location ? `${selectedCount.location.code} - ${selectedCount.location.name}` : '-'}</div>
-                </div>
-                <div>
-                  <label>Item</label>
-                  <div>{selectedCount.item ? `${selectedCount.item.sku} - ${selectedCount.item.name}` : '-'}</div>
-                </div>
-                <div>
-                  <label>System Quantity</label>
-                  <div>{selectedCount.systemQuantity}</div>
-                </div>
-                <div>
-                  <label>Physical Quantity</label>
-                  <div>{selectedCount.physicalQuantity}</div>
-                </div>
-                <div>
-                  <label>Variance</label>
-                  <div>
-                    <span className={selectedCount.variance === 0 ? 'variance-zero' : selectedCount.variance > 0 ? 'variance-positive' : 'variance-negative'}>
-                      {selectedCount.variance > 0 ? '+' : ''}{selectedCount.variance}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <label>Status</label>
-                  <div>
-                    <span className={`status-${selectedCount.status.toLowerCase()}`}>
-                      {selectedCount.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {selectedCount.status === 'PENDING' && (
-              <div className="details-section">
-                <h3>Submit Count</h3>
-                <div className="form-group">
-                  <label>Physical Quantity *</label>
-                  <Input
-                    type="number"
-                    value={submitForm.physicalQuantity}
-                    onChange={(e) => setSubmitForm({ ...submitForm, physicalQuantity: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Variance Reason</label>
-                  <Input
-                    value={submitForm.varianceReason}
-                    onChange={(e) => setSubmitForm({ ...submitForm, varianceReason: e.target.value })}
-                    placeholder="Reason for variance (if any)"
-                  />
-                </div>
-                <div className="form-actions">
-                  <Button variant="primary" onClick={handleSubmitCount}>
-                    Submit Count
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      );
-    }
-
-    return (
-      <div className="counting-list">
-        <div className="counting-toolbar">
-          <Button variant="primary" onClick={() => setCountViewMode('create')}>
-            Create Stock Count
-          </Button>
-        </div>
-
-        {error && <div className="error-message">{error}</div>}
-        {success && <div className="success-message">{success}</div>}
-
-        {countLoading ? (
-          <LoadingState message="Loading stock counts..." />
-        ) : counts.length === 0 ? (
-          <EmptyState message="No stock counts found" />
-        ) : (
-          <div className="counting-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Count #</th>
-                  <th>Type</th>
-                  <th>Location</th>
-                  <th>Item</th>
-                  <th>System Qty</th>
-                  <th>Physical Qty</th>
-                  <th>Variance</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {counts.map((count) => (
-                  <tr
-                    key={count.id}
-                    onClick={() => {
-                      setSelectedCountId(count.id);
-                      setCountViewMode('details');
-                      loadCountDetails();
-                    }}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <td>{count.countNumber}</td>
-                    <td>{count.countType}</td>
-                    <td>{count.location?.code || '-'}</td>
-                    <td>{count.item?.name || '-'}</td>
-                    <td>{count.systemQuantity}</td>
-                    <td>{count.physicalQuantity}</td>
-                    <td>
-                      <span className={count.variance === 0 ? 'variance-zero' : count.variance > 0 ? 'variance-positive' : 'variance-negative'}>
-                        {count.variance > 0 ? '+' : ''}{count.variance}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`status-${count.status.toLowerCase()}`}>
-                        {count.status}
-                      </span>
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedCountId(count.id);
-                          setCountViewMode('details');
-                          loadCountDetails();
-                        }}
-                      >
-                        View
-                      </Button>
-                      {count.status === 'COMPLETED' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setCountToApprove(count.id);
-                            setShowApproveCountDialog(true);
-                          }}
-                        >
-                          Approve
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   return (
     <div className="movement-management">
       {/* Sub-tabs */}
@@ -1754,12 +1381,6 @@ export const MovementManagement: React.FC = () => {
           >
             Counting
           </button>
-          <button
-            className={`movement-sub-tab ${movementSubTab === 'adjustments' ? 'active' : ''}`}
-            onClick={() => setMovementSubTab('adjustments')}
-          >
-            Adjustments
-          </button>
         </div>
       )}
 
@@ -1771,6 +1392,17 @@ export const MovementManagement: React.FC = () => {
               <div style={{ flex: 1, overflow: 'auto' }}>
                 <MovementList
                   onSelectMovement={setSelectedDocumentId}
+                  onOpenDetails={(doc) => {
+                    if (doc.status === MovementStatus.DRAFT) {
+                      setEditDraftId(doc.id);
+                      setViewMode('create');
+                      setSelectedDocumentId(null);
+                      setDetailsPanelOpen(false);
+                    } else {
+                      setSelectedDocumentId(doc.id);
+                      setDetailsPanelOpen(true);
+                    }
+                  }}
                   selectedDocumentId={selectedDocumentId || undefined}
                   onCreateMovement={handleCreateMovement}
                 />
@@ -1780,109 +1412,37 @@ export const MovementManagement: React.FC = () => {
           right={
             <MovementDetailPanel
               documentId={selectedDocumentId}
-              onClose={() => setSelectedDocumentId(null)}
+              onClose={() => {
+                setSelectedDocumentId(null);
+                setDetailsPanelOpen(false);
+              }}
               onRefresh={() => setSelectedDocumentId(null)}
             />
           }
           storageKey="movement-list-detail-split"
-          defaultLeftPercent={90}
+          defaultLeftPercent={60}
           leftMaxPercent={100}
           leftMin={300}
           rightMin={100}
+          rightCollapsed={!detailsPanelOpen}
+          onRightCollapsedChange={(collapsed) => setDetailsPanelOpen(!collapsed)}
         />
       )}
-      {viewMode === 'list' && movementSubTab === 'counting' && renderCountingView()}
-      {viewMode === 'list' && movementSubTab === 'adjustments' && (
-        <div className="adjustments-view">
-          <div className="adjustments-header">
-            <div>
-              <h3>Manual Adjustments</h3>
-              <p className="adjustments-description">
-                Adjustments correct recorded quantity to match physical or process needs. All changes are made via ADJUSTMENT movements and are auditable.
-              </p>
-            </div>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setMovementSubTab('transactions');
-                const p = new URLSearchParams(searchParams);
-                p.set('create', '1');
-                p.set('movementType', MovementType.ADJUSTMENT);
-                p.set('reasonCode', 'ADJUSTMENT');
-                setSearchParams(p);
-                setViewMode('create');
-              }}
-            >
-              Create Adjustment Movement
-            </Button>
-          </div>
-
-          <div className="adjustments-recent">
-            <h4>Recent ADJUSTMENT Movements</h4>
-            {loading ? (
-              <LoadingState message="Loading adjustments..." />
-            ) : adjustmentDocuments.length === 0 ? (
-              <EmptyState message="No adjustment movements found" />
-            ) : (
-              <div className="adjustments-table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Movement #</th>
-                      <th>Date</th>
-                      <th>Lines</th>
-                      <th>From</th>
-                      <th>To</th>
-                      <th>Total Quantity</th>
-                      <th>Status</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adjustmentDocuments.slice(0, 20).map((doc) => (
-                        <tr
-                          key={doc.id}
-                          onClick={() => {
-                            setSelectedDocumentId(doc.id);
-                            setMovementSubTab('transactions');
-                          }}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <td>{doc.movementNumber}</td>
-                          <td>{new Date(doc.createdAt).toLocaleDateString()}</td>
-                          <td>{doc.totalLines}</td>
-                          <td>{doc.defaultFromLocation?.code || doc.lines[0]?.fromLocation?.code || '-'}</td>
-                          <td>{doc.defaultToLocation?.code || doc.lines[0]?.toLocation?.code || '-'}</td>
-                          <td>{doc.totalQuantity}</td>
-                          <td>
-                            <span className={`status-${doc.status.toLowerCase()}`}>
-                              {doc.status}
-                            </span>
-                          </td>
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedDocumentId(doc.id);
-                                setMovementSubTab('transactions');
-                              }}
-                            >
-                              View
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
+      {viewMode === 'list' && movementSubTab === 'counting' && (
+        <StockCountingView
+          onViewMovementDocument={(id) => {
+            setSelectedDocumentId(id);
+            setMovementSubTab('transactions');
+            setDetailsPanelOpen(true);
+          }}
+        />
       )}
+
       {viewMode === 'create' && (
         <CreateMovementView
+          editDocumentId={editDraftId ?? undefined}
           onCancel={() => {
+            setEditDraftId(null);
             setViewMode('list');
             setSelectedDocumentId(null);
             const returnTab = searchParams.get('returnTab');
@@ -1905,6 +1465,7 @@ export const MovementManagement: React.FC = () => {
             setSearchParams(p);
           }}
           onSuccess={() => {
+            setEditDraftId(null);
             setViewMode('list');
             setSelectedDocumentId(null);
             const returnTab = searchParams.get('returnTab');
@@ -1934,22 +1495,11 @@ export const MovementManagement: React.FC = () => {
             toLocationId: searchParams.get('toLocationId') || undefined,
             reasonCode: searchParams.get('reasonCode') || undefined,
             reasonLocked: searchParams.get('reasonLocked') === '1' || searchParams.get('reasonLocked') === 'true',
+            variantLocked: searchParams.get('variantLocked') === '1' || searchParams.get('variantLocked') === 'true',
           }}
         />
       )}
       {viewMode === 'details' && renderDetails()}
-
-      <ConfirmDialog
-        isOpen={showApproveCountDialog}
-        title="Approve Stock Count"
-        message="Are you sure you want to approve this stock count? This will create an adjustment movement."
-        onConfirm={() => handleApproveCount()}
-        onCancel={() => {
-          setShowApproveCountDialog(false);
-          setCountToApprove(null);
-        }}
-        variant="primary"
-      />
 
       <ConfirmDialog
         isOpen={showApproveDialog}

@@ -31,6 +31,80 @@ export function parseSerialInput(text: string): string[] {
 }
 
 /**
+ * Smart paste parser: detects CSV, TSV, or newline-separated format.
+ * Returns array of serial numbers.
+ */
+export function parsePastedData(pastedText: string): string[] {
+  const trimmed = pastedText.trim();
+  if (!trimmed) return [];
+
+  // Try TSV (tab-separated) first
+  if (trimmed.includes('\t')) {
+    return trimmed
+      .split('\n')
+      .flatMap((line) => line.split('\t').map((cell) => cell.trim().toUpperCase()))
+      .filter(Boolean);
+  }
+
+  // Try CSV (comma-separated, handle quoted values)
+  if (trimmed.includes(',') && !trimmed.match(/^\d+$/)) {
+    return trimmed
+      .split('\n')
+      .flatMap((line) => {
+        // Simple CSV parsing (handles quoted values)
+        const cells: string[] = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            cells.push(current.trim().toUpperCase());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        cells.push(current.trim().toUpperCase());
+        return cells;
+      })
+      .filter(Boolean);
+  }
+
+  // Default: newline or semicolon separated
+  return parseSerialInput(trimmed);
+}
+
+/**
+ * Parse batch table data from CSV/TSV paste.
+ * Returns array of BatchRow objects.
+ */
+export function parseBatchTableData(pastedText: string, hasMfg: boolean, hasExpiry: boolean): BatchRow[] {
+  const trimmed = pastedText.trim();
+  if (!trimmed) return [];
+
+  const rows: BatchRow[] = [];
+  const lines = trimmed.split('\n').filter(Boolean);
+
+  for (const line of lines) {
+    const cells = line.includes('\t') ? line.split('\t') : line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+    if (cells.length < 2) continue;
+
+    const batchCode = cells[0]?.trim().toUpperCase() || '';
+    const quantity = parseFloat(cells[1]?.trim() || '0') || 0;
+    const mfg = hasMfg ? (cells[2]?.trim() || '') : undefined;
+    const expiry = hasExpiry ? (cells[hasMfg ? 3 : 2]?.trim() || '') : undefined;
+
+    if (batchCode && quantity > 0) {
+      rows.push({ batchCode, quantity, manufacturingDate: mfg, expiryDate: expiry });
+    }
+  }
+
+  return rows;
+}
+
+/**
  * Return duplicate serials in array (O(n) with Set).
  */
 export function getDuplicateSerials(arr: string[]): string[] {
@@ -211,6 +285,7 @@ export type SerialValidationStatus =
   | 'NEW'
   | 'NOT_FOUND'
   | 'NOT_IN_LOCATION'
+  | 'WRONG_VARIANT'
   | 'BLOCKED'
   | 'USED'
   | 'ALREADY_EXISTS'
@@ -225,7 +300,7 @@ export interface SerialValidationItem {
 
 /** True if status blocks Apply. */
 export function isBlockingSerialStatus(s: SerialValidationStatus): boolean {
-  return ['NOT_FOUND', 'NOT_IN_LOCATION', 'BLOCKED', 'USED', 'ALREADY_EXISTS', 'DUPLICATE'].includes(s);
+  return ['NOT_FOUND', 'NOT_IN_LOCATION', 'WRONG_VARIANT', 'BLOCKED', 'USED', 'ALREADY_EXISTS', 'DUPLICATE'].includes(s);
 }
 
 /** Status to display label (ERP semantics). Never show "valid" unless backend confirmed. */
@@ -236,6 +311,7 @@ export function serialStatusToLabel(s: SerialValidationStatus): string {
     NEW: '🟦 New',
     NOT_FOUND: '❌ Not Found',
     NOT_IN_LOCATION: '⚠ Wrong Location',
+    WRONG_VARIANT: '⚠ Wrong Variant',
     BLOCKED: '🔒 Blocked',
     USED: '♻ Already Used',
     ALREADY_EXISTS: '❌ Exists',

@@ -11,6 +11,8 @@ import { LocationManagement } from '@/features/inventory/components/LocationMana
 import { MovementManagement } from '@/features/inventory/components/MovementManagement';
 import { InventoryReports } from '@/features/inventory/components/InventoryReports';
 import { InventorySettings } from '@/features/inventory/components/InventorySettings';
+import { useGlobalSearch } from '@/features/inventory/components/GlobalSearch';
+import { SerialDetailPanel } from '@/features/inventory/components/SerialDetailPanel';
 import './InventoryPage.css';
 
 type InventoryTab = 'items' | 'locations' | 'movements' | 'reports' | 'settings';
@@ -20,6 +22,7 @@ export const InventoryPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<InventoryTab>('items');
   const isUpdatingTabRef = React.useRef(false);
   const lastTabRef = React.useRef<string | null>(null);
+  const { open: openSearch } = useGlobalSearch();
 
   useEffect(() => {
     // Prevent loops during tab updates
@@ -165,6 +168,14 @@ export const InventoryPage: React.FC = () => {
           >
             Quick Transfer
           </Button>
+          <Button
+            variant="secondary"
+            onClick={openSearch}
+            title="Global Search (Ctrl+K)"
+            style={{ minWidth: 'auto', padding: '8px 12px' }}
+          >
+            🔍 Search
+          </Button>
         </div>
       </div>
 
@@ -241,6 +252,17 @@ export const InventoryPage: React.FC = () => {
         {activeTab === 'reports' && <InventoryReports />}
         {activeTab === 'settings' && <InventorySettings />}
       </div>
+
+      {/* Serial Detail Panel - Global, opens from URL param or GlobalSearch */}
+      <SerialDetailPanel
+        isOpen={!!searchParams.get('serialNumber')}
+        onClose={() => {
+          const params = new URLSearchParams(searchParams);
+          params.delete('serialNumber');
+          setSearchParams(params, { replace: true });
+        }}
+        serialNumber={searchParams.get('serialNumber')}
+      />
     </div>
   );
 };
