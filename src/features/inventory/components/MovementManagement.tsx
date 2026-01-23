@@ -176,7 +176,7 @@ export const MovementManagement: React.FC = () => {
   useEffect(() => {
     const handleQuickReceipt = () => {
       setMovementSubTab('transactions');
-      const p = new URLSearchParams(searchParams);
+      const p = new URLSearchParams(searchParams); 
       p.set('tab', 'movements');
       p.set('create', '1');
       p.set('movementType', MovementType.RECEIPT);
