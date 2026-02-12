@@ -205,7 +205,7 @@ export const MovementManagement: React.FC = () => {
     };
   }, [searchParams]);
 
-  // Open Create when URL has create=1; close details panel when switching to create
+  // Open Create when URL has
   useEffect(() => {
     if (searchParams.get('create') === '1') {
       setMovementSubTab('transactions');
