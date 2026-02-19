@@ -66,12 +66,16 @@ export interface InventoryItem {
   name: string;
   description?: string;
   category?: string;
+  barcode?: string;
   unitOfMeasure: string;
   unitConversions: UnitConversion[];
   industryFlags: IndustryFlags;
   branchId: string;
   hasVariants: boolean; // Flag indicating if item has variants
   isActive: boolean;
+  costPrice?: number;
+  sellingPrice?: number;
+  margin?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -187,6 +191,9 @@ export interface CreateInventoryItemRequest {
   unitOfMeasure: string;
   unitConversions?: UnitConversion[];
   industryFlags: IndustryFlags;
+  costPrice?: number;
+  sellingPrice?: number;
+  margin?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -217,6 +224,9 @@ export interface UpdateInventoryItemRequest {
   unitConversions?: UnitConversion[];
   industryFlags?: Partial<IndustryFlags>;
   isActive?: boolean;
+  costPrice?: number;
+  sellingPrice?: number;
+  margin?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -316,6 +326,47 @@ export interface LocationHierarchyResponse extends Location {
   children?: LocationHierarchyResponse[];
 }
 
+export type ReasonCodeCategory =
+  | 'MOVEMENT'
+  | 'ADJUSTMENT'
+  | 'DAMAGE'
+  | 'WASTE'
+  | 'LOSS'
+  | 'BLOCK';
+
+export interface ReasonCodeResponse {
+  id: string;
+  code: string;
+  name: string;
+  category: ReasonCodeCategory;
+  description?: string;
+  requiresApproval: boolean;
+  requiresAttachment: boolean;
+  isActive: boolean;
+  branchId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateReasonCodeRequest {
+  code: string;
+  name: string;
+  category: ReasonCodeCategory;
+  description?: string;
+  requiresApproval?: boolean;
+  requiresAttachment?: boolean;
+  branchId?: string;
+}
+
+export interface UpdateReasonCodeRequest {
+  name?: string;
+  category?: ReasonCodeCategory;
+  description?: string;
+  requiresApproval?: boolean;
+  requiresAttachment?: boolean;
+  isActive?: boolean;
+}
+
 class InventoryService {
   // Items
   async getAllItems(filters?: {
@@ -340,6 +391,13 @@ class InventoryService {
   async getItemById(id: string): Promise<InventoryItem> {
     const response = await api.get(`/inventory/items/${id}`);
     return extractApiData<InventoryItem>(response);
+  }
+
+  async checkSkuAvailable(sku: string): Promise<{ available: boolean }> {
+    const response = await api.get('/inventory/items/check-sku', {
+      params: { sku: sku.trim().toUpperCase() },
+    });
+    return extractApiData<{ available: boolean }>(response);
   }
 
   async createItem(data: CreateInventoryItemRequest): Promise<InventoryItem> {
@@ -542,22 +600,52 @@ class InventoryService {
   }
 
   // Reason Codes
-  async getReasonCodes(): Promise<Array<{ code: string; name: string; category: string }>> {
+  async getReasonCodes(): Promise<ReasonCodeResponse[]> {
     const response = await api.get('/inventory/reason-codes');
-    return extractApiData<Array<{ code: string; name: string; category: string }>>(response);
+    return extractApiData<ReasonCodeResponse[]>(response);
   }
 
-  async getReasonCodesByCategory(category: string): Promise<Array<{ code: string; name: string; category: string }>> {
+  async getReasonCodesByCategory(category: string): Promise<ReasonCodeResponse[]> {
     const response = await api.get(`/inventory/reason-codes/category/${category}`);
-    return extractApiData<Array<{ code: string; name: string; category: string }>>(response);
+    return extractApiData<ReasonCodeResponse[]>(response);
   }
 
   async getReasonCodesForMovementType(movementType: string): Promise<{
-    allowed: Array<{ code: string; name: string; category: string }>;
+    allowed: ReasonCodeResponse[];
     defaultCode: string;
   }> {
     const response = await api.get(`/inventory/reason-codes/for-movement-type?movementType=${encodeURIComponent(movementType)}`);
-    return extractApiData<{ allowed: Array<{ code: string; name: string; category: string }>; defaultCode: string }>(response);
+    return extractApiData<{ allowed: ReasonCodeResponse[]; defaultCode: string }>(response);
+  }
+
+  async getAllReasonCodesIncludingInactive(): Promise<ReasonCodeResponse[]> {
+    const response = await api.get('/inventory/reason-codes/all');
+    return extractApiData<ReasonCodeResponse[]>(response);
+  }
+
+  async getReasonCodeById(id: string): Promise<ReasonCodeResponse> {
+    const response = await api.get(`/inventory/reason-codes/${id}`);
+    return extractApiData<ReasonCodeResponse>(response);
+  }
+
+  async createReasonCode(body: CreateReasonCodeRequest): Promise<ReasonCodeResponse> {
+    const response = await api.post('/inventory/reason-codes', body);
+    return extractApiData<ReasonCodeResponse>(response);
+  }
+
+  async updateReasonCode(id: string, body: UpdateReasonCodeRequest): Promise<ReasonCodeResponse> {
+    const response = await api.put(`/inventory/reason-codes/${id}`, body);
+    return extractApiData<ReasonCodeResponse>(response);
+  }
+
+  async deactivateReasonCode(id: string): Promise<ReasonCodeResponse> {
+    const response = await api.patch(`/inventory/reason-codes/${id}/deactivate`);
+    return extractApiData<ReasonCodeResponse>(response);
+  }
+
+  async initializeReasonCodes(): Promise<void> {
+    const response = await api.post('/inventory/reason-codes/initialize');
+    extractApiData<unknown>(response);
   }
 
   // Stock

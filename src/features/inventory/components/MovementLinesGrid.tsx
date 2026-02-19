@@ -236,6 +236,8 @@ function MovementLinesGridInner(
       MovementType.WASTE,
       MovementType.LOSS,
       MovementType.BLOCK,
+      MovementType.ADJUSTMENT,
+      MovementType.COUNT_ADJUSTMENT,
     ].includes(type);
   };
 

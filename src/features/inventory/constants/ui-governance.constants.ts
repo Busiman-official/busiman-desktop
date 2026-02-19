@@ -66,6 +66,9 @@ export const WIZARD_STEP_KEYS = [
   'dimensions',
   'industry',
   'tags',
+  'pricing',
+  'unitsDimensions',
+  'variants',
 ] as const;
 
 export type WizardStepKey = typeof WIZARD_STEP_KEYS[number];

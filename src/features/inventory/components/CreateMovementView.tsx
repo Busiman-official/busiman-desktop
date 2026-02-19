@@ -26,6 +26,7 @@ import './CreateMovementView.css';
 const NEEDS_FROM: MovementType[] = [
   MovementType.TRANSFER, MovementType.ISSUE, MovementType.DAMAGE,
   MovementType.WASTE, MovementType.LOSS, MovementType.BLOCK,
+  MovementType.ADJUSTMENT, MovementType.COUNT_ADJUSTMENT,
 ];
 
 const NEEDS_TO: MovementType[] = [
@@ -346,6 +347,10 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
       if (lines.some((line) => !line.itemId || !line.quantity || line.quantity <= 0)) {
         throw new Error('All lines must have a valid item and quantity');
       }
+      const needFromSubmit = NEEDS_FROM.includes(header.movementType);
+      if (needFromSubmit && lines.some((l) => l.itemId) && !header.defaultFromLocationId && lines.some((l) => l.itemId && !l.fromLocationId)) {
+        throw new Error('From location is required for adjustment and count adjustment');
+      }
       if (editDocumentId) {
         await inventoryService.updateDraft(editDocumentId, buildRequest());
         await inventoryService.submitDraft(editDocumentId);
@@ -359,7 +364,7 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [header.reasonCode, lines, buildRequest, onSuccess, editDocumentId]);
+  }, [header.movementType, header.reasonCode, header.defaultFromLocationId, lines, buildRequest, onSuccess, editDocumentId]);
 
   const handleSaveDraft = useCallback(async () => {
     setError(null);
@@ -548,6 +553,9 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
   const errors: string[] = [];
   if (!header.reasonCode) errors.push('Reason code is required');
   if (lines.length === 0) errors.push('At least one line is required');
+  if (needFrom && lines.some((l) => l.itemId) && !header.defaultFromLocationId && lines.some((l) => l.itemId && !l.fromLocationId)) {
+    errors.push('From location is required for adjustment and count adjustment');
+  }
   Object.entries(lineValidations).forEach(([i, v]) => {
     if (v.status === 'error') v.messages.forEach((m) => errors.push(`Line ${Number(i) + 1}: ${m}`));
   });
@@ -649,12 +657,7 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
                 </Select>
               </div>
 
-              {(header.movementType === MovementType.TRANSFER ||
-                header.movementType === MovementType.ISSUE ||
-                header.movementType === MovementType.DAMAGE ||
-                header.movementType === MovementType.WASTE ||
-                header.movementType === MovementType.LOSS ||
-                header.movementType === MovementType.BLOCK) && (
+              {NEEDS_FROM.includes(header.movementType) && (
                 <div className="form-group-inline">
                   <label>From</label>
                   <Select

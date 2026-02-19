@@ -1,0 +1,127 @@
+.reason-code-management {
+  width: 100%;
+}
+
+.reason-code-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.reason-code-toolbar h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.reason-code-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reason-code-filter {
+  min-width: 160px;
+}
+
+.reason-code-message {
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.reason-code-error {
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.reason-code-success {
+  background-color: #f0fdf4;
+  color: #15803d;
+}
+
+.reason-code-table-wrap {
+  overflow-x: auto;
+}
+
+.reason-code-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.reason-code-table thead {
+  background-color: #f5f5f5;
+}
+
+.reason-code-table th {
+  padding: 12px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.reason-code-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 14px;
+}
+
+.reason-code-table tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+.reason-code-code {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  background-color: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.reason-code-status-active {
+  color: #15803d;
+  font-weight: 500;
+}
+
+.reason-code-status-inactive {
+  color: #6b7280;
+}
+
+.reason-code-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.reason-code-form .form-group {
+  margin-bottom: 16px;
+}
+
+.reason-code-form .form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.reason-code-form .form-group-checkbox {
+  margin-bottom: 12px;
+}
+
+.reason-code-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}

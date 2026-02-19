@@ -34,6 +34,7 @@ import { ResizableSplitPane } from '@/shared/components/layout';
 import { VariantManagement } from './VariantManagement';
 import { SerialGrid } from './SerialGrid';
 import { SerialDetailPanel } from './SerialDetailPanel';
+import { ProductCreationWizard } from './ProductCreationWizard/ProductCreationWizard';
 import {
   ItemSubTab,
   validateWizardSteps,
@@ -198,6 +199,9 @@ export const ItemMaster: React.FC = () => {
     dimensions: undefined,
     weight: undefined,
     tags: [],
+    costPrice: undefined,
+    sellingPrice: undefined,
+    margin: undefined,
   });
 
   // Variants removed from wizard - variants should be created in Product Details after item creation
@@ -639,7 +643,7 @@ export const ItemMaster: React.FC = () => {
         name: selectedItem.name,
         description: selectedItem.description || '',
         category: selectedItem.category || '',
-        barcode: (selectedItem as any).barcode || '',
+        barcode: selectedItem.barcode || '',
         unitOfMeasure: selectedItem.unitOfMeasure,
         unitConversions: selectedItem.unitConversions,
         industryFlags: selectedItem.industryFlags,
@@ -647,6 +651,9 @@ export const ItemMaster: React.FC = () => {
         dimensions: selectedItem.dimensions,
         weight: selectedItem.weight,
         tags: selectedItem.tags || [],
+        costPrice: selectedItem.costPrice,
+        sellingPrice: selectedItem.sellingPrice,
+        margin: selectedItem.margin,
       });
       setHasUnsavedChanges(false);
     } else if (itemSubTab === 'variants' && selectedItem.hasVariants) {
@@ -1239,6 +1246,11 @@ export const ItemMaster: React.FC = () => {
     }
 
     try {
+      const costPrice = formData.costPrice;
+      const sellingPrice = formData.sellingPrice;
+      const margin = costPrice != null && costPrice > 0 && sellingPrice != null
+        ? ((sellingPrice - costPrice) / costPrice) * 100
+        : formData.margin;
       const updateData: UpdateInventoryItemRequest = {
         name: formData.name,
         description: formData.description,
@@ -1251,6 +1263,9 @@ export const ItemMaster: React.FC = () => {
         dimensions: formData.dimensions,
         weight: formData.weight,
         tags: formData.tags,
+        costPrice: formData.costPrice,
+        sellingPrice: formData.sellingPrice,
+        margin,
       };
       await inventoryService.updateItem(selectedItemId, updateData);
       setSuccess('Item updated successfully');
@@ -1293,7 +1308,7 @@ export const ItemMaster: React.FC = () => {
       name: selectedItem.name,
       description: selectedItem.description || '',
       category: selectedItem.category || '',
-      barcode: (selectedItem as any).barcode || '',
+      barcode: selectedItem.barcode || '',
       unitOfMeasure: selectedItem.unitOfMeasure,
       unitConversions: selectedItem.unitConversions,
       industryFlags: selectedItem.industryFlags,
@@ -1301,6 +1316,9 @@ export const ItemMaster: React.FC = () => {
       dimensions: selectedItem.dimensions,
       weight: selectedItem.weight,
       tags: selectedItem.tags || [],
+      costPrice: selectedItem.costPrice,
+      sellingPrice: selectedItem.sellingPrice,
+      margin: selectedItem.margin,
     });
     setViewMode('edit');
   };
@@ -2709,22 +2727,24 @@ export const ItemMaster: React.FC = () => {
     if (!selectedItem) return null;
 
     // UI Governance: Define collapsible sections - Maximum 5 sections allowed
-    // Current sections: basic-info, industry-flags, description (conditional)
-    // DO NOT ADD MORE THAN 5 SECTIONS - Use modals or add to existing sections instead
+    const hasPricing = selectedItem.costPrice != null || selectedItem.sellingPrice != null || selectedItem.margin != null;
+    const hasDimensionsOrWeight = !!(selectedItem.dimensions) || !!(selectedItem.weight && selectedItem.weight.value);
     const overviewSectionIds = [
       'basic-info',
+      ...(hasPricing ? ['pricing'] : []),
       'industry-flags',
-      ...(selectedItem.description ? ['description'] : []),
+      ...(hasDimensionsOrWeight ? ['dimensions-weight'] : []),
+      'description-tags-images',
     ];
-    
-    // UI Governance: Runtime validation of collapsible sections limit
     if (process.env.NODE_ENV === 'development') {
       validateCollapsibleSections(overviewSectionIds.length);
     }
 
     const isBasicInfoCollapsed = collapsedSections.has('basic-info');
+    const isPricingCollapsed = collapsedSections.has('pricing');
     const isIndustryFlagsCollapsed = collapsedSections.has('industry-flags');
-    const isDescriptionCollapsed = collapsedSections.has('description');
+    const isDimensionsWeightCollapsed = collapsedSections.has('dimensions-weight');
+    const isDescriptionTagsImagesCollapsed = collapsedSections.has('description-tags-images');
 
     return (
       <div className="overview-content">
@@ -2745,12 +2765,10 @@ export const ItemMaster: React.FC = () => {
                 <label>SKU</label>
                 <div>{selectedItem.sku}</div>
               </div>
-              {(selectedItem as any).barcode && (
-                <div>
-                  <label>Barcode</label>
-                  <div>{(selectedItem as any).barcode}</div>
-                </div>
-              )}
+              <div>
+                <label>Barcode</label>
+                <div>{selectedItem.barcode || '—'}</div>
+              </div>
               <div className="inline-edit-field">
                 <label>Name</label>
                 {editingField === 'name' ? (
@@ -2832,9 +2850,58 @@ export const ItemMaster: React.FC = () => {
                   </div>
                 )}
               </div>
+              {selectedItem.unitConversions && selectedItem.unitConversions.length > 0 && (
+                <div>
+                  <label>Unit conversions</label>
+                  <div>
+                    {selectedItem.unitConversions.map((conv, idx) => (
+                      <div key={idx} style={{ marginTop: idx > 0 ? 4 : 0 }}>
+                        1 {conv.fromUnit} = {conv.conversionFactor} {conv.toUnit}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Pricing Section */}
+        {hasPricing && (
+          <div className="collapsible-section">
+            <div
+              className="collapsible-section-header"
+              onClick={() => toggleSectionCollapse('pricing')}
+            >
+              <h3>Pricing</h3>
+              <span className="collapsible-section-icon">
+                {isPricingCollapsed ? '▶' : '▼'}
+              </span>
+            </div>
+            {!isPricingCollapsed && (
+              <div className="collapsible-section-content">
+                {selectedItem.costPrice != null && (
+                  <div>
+                    <label>Purchase price (cost)</label>
+                    <div>{typeof selectedItem.costPrice === 'number' ? selectedItem.costPrice.toFixed(2) : selectedItem.costPrice}</div>
+                  </div>
+                )}
+                {selectedItem.sellingPrice != null && (
+                  <div>
+                    <label>Selling price</label>
+                    <div>{typeof selectedItem.sellingPrice === 'number' ? selectedItem.sellingPrice.toFixed(2) : selectedItem.sellingPrice}</div>
+                  </div>
+                )}
+                {selectedItem.margin != null && (
+                  <div>
+                    <label>Margin %</label>
+                    <div>{typeof selectedItem.margin === 'number' ? `${selectedItem.margin.toFixed(1)}%` : selectedItem.margin}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Industry Flags Section */}
         <div className="collapsible-section">
@@ -2877,20 +2944,68 @@ export const ItemMaster: React.FC = () => {
           )}
         </div>
 
-        {/* Description Section */}
-        {selectedItem.description && (
+        {/* Dimensions & weight Section */}
+        {hasDimensionsOrWeight && (
           <div className="collapsible-section">
             <div
               className="collapsible-section-header"
-              onClick={() => toggleSectionCollapse('description')}
+              onClick={() => toggleSectionCollapse('dimensions-weight')}
             >
-              <h3>Description</h3>
+              <h3>Dimensions & weight</h3>
               <span className="collapsible-section-icon">
-                {isDescriptionCollapsed ? '▶' : '▼'}
+                {isDimensionsWeightCollapsed ? '▶' : '▼'}
               </span>
             </div>
-            {!isDescriptionCollapsed && (
-              <div className="collapsible-section-content" style={{ gridTemplateColumns: '1fr' }}>
+            {!isDimensionsWeightCollapsed && (
+              <div className="collapsible-section-content">
+                {selectedItem.dimensions && (
+                  <>
+                    <div>
+                      <label>Length</label>
+                      <div>{selectedItem.dimensions.length} {selectedItem.dimensions.unit}</div>
+                    </div>
+                    <div>
+                      <label>Width</label>
+                      <div>{selectedItem.dimensions.width} {selectedItem.dimensions.unit}</div>
+                    </div>
+                    <div>
+                      <label>Height</label>
+                      <div>{selectedItem.dimensions.height} {selectedItem.dimensions.unit}</div>
+                    </div>
+                    {(selectedItem.dimensions.length * selectedItem.dimensions.width * selectedItem.dimensions.height) > 0 && (
+                      <div>
+                        <label>Volume</label>
+                        <div>{(selectedItem.dimensions.length * selectedItem.dimensions.width * selectedItem.dimensions.height).toFixed(2)} cubic {selectedItem.dimensions.unit}</div>
+                      </div>
+                    )}
+                  </>
+                )}
+                {selectedItem.weight && selectedItem.weight.value > 0 && (
+                  <div>
+                    <label>Weight</label>
+                    <div>{selectedItem.weight.value} {selectedItem.weight.unit}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Description, tags & images Section */}
+        <div className="collapsible-section">
+          <div
+            className="collapsible-section-header"
+            onClick={() => toggleSectionCollapse('description-tags-images')}
+          >
+            <h3>Description, tags & images</h3>
+            <span className="collapsible-section-icon">
+              {isDescriptionTagsImagesCollapsed ? '▶' : '▼'}
+            </span>
+          </div>
+          {!isDescriptionTagsImagesCollapsed && (
+            <div className="collapsible-section-content" style={{ gridTemplateColumns: '1fr' }}>
+              <div>
+                <label>Description</label>
                 {editingField === 'description' ? (
                   <div className="inline-edit-input-wrapper">
                     <textarea
@@ -2929,16 +3044,41 @@ export const ItemMaster: React.FC = () => {
                   </div>
                 ) : (
                   <div className="inline-edit-display" onClick={() => startInlineEdit('description', selectedItem.description || '')}>
-                    <p>{selectedItem.description || 'No description'}</p>
+                    <p>{selectedItem.description || '—'}</p>
                     <span className="edit-icon" title="Click to edit">✏️</span>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* Stock Levels Section */}
+              <div>
+                <label>Tags</label>
+                <div>
+                  {selectedItem.tags && selectedItem.tags.length > 0
+                    ? selectedItem.tags.join(', ')
+                    : '—'}
+                </div>
+              </div>
+              <div>
+                <label>Images</label>
+                {selectedItem.images && selectedItem.images.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                    {selectedItem.images.map((img, idx) => (
+                      <div key={img.publicId || idx} style={{ flex: '0 0 auto' }}>
+                        <img
+                          src={img.url}
+                          alt={img.isPrimary ? 'Primary' : `Image ${idx + 1}`}
+                          style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 4, border: img.isPrimary ? '2px solid #2563eb' : '1px solid #e0e0e0' }}
+                        />
+                        {img.isPrimary && <span style={{ fontSize: 10, display: 'block', marginTop: 2 }}>Primary</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div>—</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -3588,7 +3728,7 @@ export const ItemMaster: React.FC = () => {
             <div className="form-group">
               <label>Barcode</label>
               <Input
-                value={(selectedItem as any).barcode || ''}
+                value={formData.barcode || ''}
                 onChange={(e) => {
                   setFormData({ ...formData, barcode: e.target.value });
                   setHasUnsavedChanges(true);
@@ -3661,6 +3801,51 @@ export const ItemMaster: React.FC = () => {
                   <option value="pack">pack (Packs)</option>
                   <option value="carton">carton (Cartons)</option>
                 </Select>
+              </div>
+            </div>
+          </div>
+
+          {/* Pricing Section */}
+          <div className="form-section">
+            <h3 className="form-section-title">Pricing</h3>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Purchase price (cost)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={formData.costPrice ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value ? parseFloat(e.target.value) : undefined;
+                    setFormData({ ...formData, costPrice: v });
+                    setHasUnsavedChanges(true);
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Selling price</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={formData.sellingPrice ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value ? parseFloat(e.target.value) : undefined;
+                    setFormData({ ...formData, sellingPrice: v });
+                    setHasUnsavedChanges(true);
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="form-group">
+                <label>Margin %</label>
+                <div style={{ padding: '8px 0', fontSize: 14 }}>
+                  {formData.costPrice != null && formData.costPrice > 0 && formData.sellingPrice != null
+                    ? `${(((formData.sellingPrice - formData.costPrice) / formData.costPrice) * 100).toFixed(1)}%`
+                    : '—'}
+                </div>
               </div>
             </div>
           </div>
@@ -4279,7 +4464,29 @@ export const ItemMaster: React.FC = () => {
 
   return (
     <div className="item-master">
-      {viewMode === 'add' && renderForm()}
+      {viewMode === 'add' && (
+        <ProductCreationWizard
+          onSuccess={(createdItemId, saveAndNew) => {
+            if (saveAndNew) {
+              loadItems();
+            } else {
+              if (createdItemId) {
+                setSelectedItemId(createdItemId);
+                setViewMode('details');
+                setSearchParams((p) => {
+                  const next = new URLSearchParams(p);
+                  next.set('itemId', createdItemId);
+                  return next;
+                });
+              } else {
+                setViewMode('list');
+              }
+              loadItems();
+            }
+          }}
+          onCancel={() => setViewMode('list')}
+        />
+      )}
       {viewMode === 'edit' && renderForm()}
       {(viewMode === 'list' || viewMode === 'details') && (
         <div className={`item-master-container ${selectedItemId && viewMode === 'details' ? 'split-view' : 'full-view'}`}>

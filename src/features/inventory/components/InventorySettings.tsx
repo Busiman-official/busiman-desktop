@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { SerialAttributeTemplateManagement } from './SerialAttributeTemplateManagement';
 import { BulkOperations } from './BulkOperations';
+import { ReasonCodeManagement } from './ReasonCodeManagement';
 import './InventorySettings.css';
 
 type SettingsSubTab = 'templates' | 'bulk' | 'reason-codes' | 'preferences';
@@ -49,12 +50,7 @@ export const InventorySettings: React.FC = () => {
       <div className="settings-content">
         {activeSubTab === 'templates' && <SerialAttributeTemplateManagement />}
         {activeSubTab === 'bulk' && <BulkOperations />}
-        {activeSubTab === 'reason-codes' && (
-          <div className="settings-placeholder">
-            <h3>Reason Codes</h3>
-            <p>Reason code management coming soon...</p>
-          </div>
-        )}
+        {activeSubTab === 'reason-codes' && <ReasonCodeManagement />}
         {activeSubTab === 'preferences' && (
           <div className="settings-placeholder">
             <h3>Inventory Preferences</h3>
