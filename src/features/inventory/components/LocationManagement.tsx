@@ -18,6 +18,8 @@ import {
   StockByLocation,
   StockMovementResponse,
   MovementType,
+  CreateMovementBatchRequest,
+  MovementLineRequest,
 } from '@/services/inventory.service';
 import { getDefaultReason } from '../constants/movementReasonMapping';
 import { Button, Input, Card, Select } from '@/shared/components/ui';
@@ -25,7 +27,7 @@ import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-d
 import { DataTable, ColumnDef } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
-import { ConfirmDialog, SideDrawer } from '@/shared/components/modals';
+import { ConfirmDialog, Modal, SideDrawer } from '@/shared/components/modals';
 import './LocationManagement.css';
 
 type TopSection = 'workspace' | 'settings';
@@ -90,6 +92,8 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     productId: '',
   });
   const [stockStatusFilter, setStockStatusFilter] = useState<string>('');
+  const [stockProductSearchQuery, setStockProductSearchQuery] = useState<string>('');
+  const [stockLocationSectionsExpanded, setStockLocationSectionsExpanded] = useState<Set<string>>(new Set());
   const [collapsedOverviewSections, setCollapsedOverviewSections] = useState<Set<string>>(new Set());
   const [locationCapacityMap, setLocationCapacityMap] = useState<Record<string, {
     usedWeight: number;
@@ -127,6 +131,16 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
   const [success, setSuccess] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [locationToDelete, setLocationToDelete] = useState<string | null>(null);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
+  const [locationToDeletePermanent, setLocationToDeletePermanent] = useState<string | null>(null);
+  const [showStockBlockDialog, setShowStockBlockDialog] = useState(false);
+  const [stockBlockShiftTargetId, setStockBlockShiftTargetId] = useState<string>('');
+  const [showStockBlockShiftStep, setShowStockBlockShiftStep] = useState(false);
+  const [showClearStockConfirm, setShowClearStockConfirm] = useState(false);
+  const [stockBlockActionLoading, setStockBlockActionLoading] = useState(false);
+  const [stockBlockError, setStockBlockError] = useState<string | null>(null);
+  const [stockBlockLocationBranchId, setStockBlockLocationBranchId] = useState<string | null>(null);
+  const [shiftTargetLocations, setShiftTargetLocations] = useState<Location[]>([]);
   
   // Refs to prevent concurrent loading
   const loadingStockRef = useRef(false);
@@ -202,9 +216,10 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     setError(null);
     try {
       // Get warehouses (no parent) - use undefined instead of null to avoid 400 errors
+      // Do not pass isActive so backend returns both active and inactive (tree shows all)
       const data = await inventoryService.getAllLocations({ parentLocationId: null });
       setLocations(data);
-      setLoadedChildren({ root: data });
+      setLoadedChildren(prev => ({ ...prev, root: data }));
       
       // Load child counts for roots
       const counts: Record<string, number> = {};
@@ -235,6 +250,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     loadedChildrenRef.current.add(parentId);
     
     try {
+      // Do not pass isActive so backend returns both active and inactive (tree shows all)
       const children = await inventoryService.getAllLocations({ parentLocationId: parentId });
       setLoadedChildren(prev => ({ ...prev, [parentId]: children }));
       
@@ -290,7 +306,10 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     loadingStockRef.current = true;
     setLoading(true);
     try {
-      const data = await inventoryService.getStockByLocation(selectedLocationId);
+      const hasChildren = (childCounts[selectedLocationId] ?? 0) > 0;
+      const data = await inventoryService.getStockByLocation(selectedLocationId, {
+        includeDescendants: hasChildren,
+      });
       setStockData(data);
     } catch (err: any) {
       logger.error('[LocationManagement] Failed to load stock data', err);
@@ -298,7 +317,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       setLoading(false);
       loadingStockRef.current = false;
     }
-  }, [selectedLocationId]);
+  }, [selectedLocationId, childCounts]);
 
   const loadChildrenData = useCallback(async () => {
     if (!selectedLocationId) return;
@@ -395,6 +414,26 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       }
     }
   }, [showCreateWizard, createStep]);
+  
+  // When stock-block dialog opens, load location branch for target list
+  useEffect(() => {
+    if (showStockBlockDialog && locationToDeletePermanent) {
+      inventoryService.getLocationById(locationToDeletePermanent)
+        .then((loc) => setStockBlockLocationBranchId(loc.branchId))
+        .catch(() => setStockBlockLocationBranchId(null));
+    } else {
+      setStockBlockLocationBranchId(null);
+    }
+  }, [showStockBlockDialog, locationToDeletePermanent]);
+  
+  // When entering shift step, load all locations for target dropdown (same-branch filter applied in UI)
+  useEffect(() => {
+    if (showStockBlockShiftStep && locationToDeletePermanent) {
+      inventoryService.getAllLocations({}).then(setShiftTargetLocations).catch(() => setShiftTargetLocations([]));
+    } else {
+      setShiftTargetLocations([]);
+    }
+  }, [showStockBlockShiftStep, locationToDeletePermanent]);
   
   // Handle deep linking from URL or prop
   useEffect(() => {
@@ -501,6 +540,45 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     return result;
   }, [stockData, stockStatusFilter]);
 
+  const stockFilteredByProduct = useMemo(() => {
+    if (!stockProductSearchQuery.trim()) return filteredStockData;
+    const q = stockProductSearchQuery.trim().toLowerCase();
+    return filteredStockData.filter((stock) => {
+      const sku = stock.item?.sku?.toLowerCase() ?? '';
+      const name = stock.item?.name?.toLowerCase() ?? '';
+      const variantCode = stock.variant?.code?.toLowerCase() ?? '';
+      const variantName = stock.variant?.name?.toLowerCase() ?? '';
+      return (
+        sku.includes(q) || name.includes(q) || variantCode.includes(q) || variantName.includes(q)
+      );
+    });
+  }, [filteredStockData, stockProductSearchQuery]);
+
+  const isMultiLocationStock = stockData.some((s) => s.locationId != null);
+  const stockGroupedByLocation = useMemo(() => {
+    if (!selectedLocationId || !isMultiLocationStock) return null;
+    const groups: Record<string, StockByLocation[]> = {};
+    for (const row of stockFilteredByProduct) {
+      const locId = row.locationId ?? selectedLocationId;
+      if (!groups[locId]) groups[locId] = [];
+      groups[locId].push(row);
+    }
+    const otherIds = Object.keys(groups).filter((id) => id !== selectedLocationId);
+    otherIds.sort((a, b) => {
+      const aCode = groups[a]?.[0]?.location?.code ?? a;
+      const bCode = groups[b]?.[0]?.location?.code ?? b;
+      return String(aCode).localeCompare(String(bCode));
+    });
+    const order = [selectedLocationId, ...otherIds];
+    return { groups, order };
+  }, [stockFilteredByProduct, isMultiLocationStock, selectedLocationId]);
+
+  useEffect(() => {
+    if (stockGroupedByLocation?.order?.length) {
+      setStockLocationSectionsExpanded(new Set(stockGroupedByLocation.order));
+    }
+  }, [stockGroupedByLocation?.order?.length]);
+
   // Filtered movements for History tab - computed at top level to avoid hooks in render functions
   const filteredMovements = useMemo(() => {
     let result = movementHistory;
@@ -539,23 +617,27 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       setShowCreateWizard(false);
       resetCreateForm();
       
-      // Switch to Tree mode and open new location
+      // Switch to Tree mode and refresh hierarchy so the new location appears
       setWorkspaceMode('tree');
       await loadRootLocations();
-      
-      // Load location path to expand tree
+
+      // Expand to new location: clear parent caches so refetch includes the new node, then expand and load
       try {
         const path = await inventoryService.getLocationPath(created.id);
         const parentIds = path.slice(0, -1).map(loc => loc.id);
+        parentIds.forEach(pid => loadedChildrenRef.current.delete(pid));
+        setLoadedChildren(prev => {
+          const next = { ...prev };
+          parentIds.forEach(pid => { delete next[pid]; });
+          return next;
+        });
         setExpandedNodes(prev => {
           const next = new Set(prev);
           parentIds.forEach(id => next.add(id));
           return next;
         });
-        
-        // Load children for each parent
-        for (const parentId of parentIds) {
-          await loadLocationChildren(parentId);
+        for (const pid of parentIds) {
+          await loadLocationChildren(pid);
         }
       } catch (err) {
         logger.error('[LocationManagement] Failed to load path for new location', err);
@@ -621,7 +703,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     
     try {
       await inventoryService.deleteLocation(locationToDelete);
-      setSuccess('Location deleted successfully');
+      setSuccess('Location deactivated');
       setShowDeleteConfirm(false);
       setLocationToDelete(null);
       if (selectedLocationId === locationToDelete) {
@@ -651,6 +733,330 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
     }
   };
   
+  const handleDeletePermanent = async () => {
+    if (!locationToDeletePermanent) return;
+    setError(null);
+    setSuccess(null);
+    let parentId: string | null = null;
+    try {
+      const loc = await inventoryService.getLocationById(locationToDeletePermanent);
+      parentId = loc.parentLocationId || null;
+    } catch {
+      // continue
+    }
+    try {
+      await inventoryService.deleteLocationPermanent(locationToDeletePermanent);
+      setSuccess('Location permanently deleted');
+      setShowPermanentDeleteConfirm(false);
+      setLocationToDeletePermanent(null);
+      if (selectedLocationId === locationToDeletePermanent) {
+        setSelectedLocationId(null);
+        setSelectedLocation(null);
+      }
+      if (parentId) {
+        loadedChildrenRef.current.delete(parentId);
+        setLoadedChildren(prev => {
+          const next = { ...prev };
+          delete next[parentId!];
+          return next;
+        });
+      }
+      // Refresh Children tab so the permanently deleted location disappears from the list
+      if (selectedLocationId) {
+        await loadChildrenData();
+      }
+      if (workspaceMode === 'tree') {
+        await loadRootLocations();
+      } else {
+        await loadLocations();
+      }
+    } catch (err: any) {
+      const message = extractErrorMessage(err, 'Failed to permanently delete location');
+      if (message.toLowerCase().includes('existing stock')) {
+        setShowPermanentDeleteConfirm(false);
+        setShowStockBlockDialog(true);
+        setStockBlockError(null);
+      } else {
+        setError(message);
+      }
+      logger.error('[LocationManagement] Failed to permanently delete location', err);
+    }
+  };
+  
+  const handleStockBlockCancel = () => {
+    setShowStockBlockDialog(false);
+    setShowStockBlockShiftStep(false);
+    setStockBlockShiftTargetId('');
+    setShowClearStockConfirm(false);
+    setLocationToDeletePermanent(null);
+    setStockBlockError(null);
+    setStockBlockLocationBranchId(null);
+  };
+  
+  const handleShiftStock = async () => {
+    if (!locationToDeletePermanent || !stockBlockShiftTargetId) return;
+    if (stockBlockShiftTargetId === locationToDeletePermanent) {
+      setStockBlockError('Target location must be different from the current location.');
+      return;
+    }
+    setStockBlockError(null);
+    setStockBlockActionLoading(true);
+    try {
+      const stockRows = await inventoryService.getStockByLocation(locationToDeletePermanent);
+      if (stockRows.length === 0) {
+        setStockBlockError('No stock found at this location. You can retry permanent delete.');
+        setStockBlockActionLoading(false);
+        return;
+      }
+      const effectiveItemId = (r: StockByLocation) => r.item?.id ?? r.itemId;
+      const itemIds = [...new Set(stockRows.map((r) => effectiveItemId(r)).filter(Boolean))];
+      const items = await Promise.all(itemIds.map((id) => inventoryService.getItemById(id)));
+      const itemMap = new Map(items.map((i) => [i.id, i]));
+      const lines: MovementLineRequest[] = [];
+      let skippedSerialCount = 0;
+      for (const row of stockRows.filter((r) => r.onHandQuantity > 0)) {
+        const itemId = effectiveItemId(row);
+        if (!itemId || !/^[0-9a-fA-F]{24}$/.test(itemId)) continue;
+        const item = itemMap.get(itemId);
+        const requiresSerial = item?.industryFlags?.requiresSerialTracking === true;
+        const unitOfMeasure = item?.unitOfMeasure ?? 'EA';
+        if (requiresSerial) {
+          const serials = await inventoryService.getSerialsByItem(
+            itemId,
+            locationToDeletePermanent,
+            undefined,
+            row.variantId
+          );
+          const serialNumbers = serials
+            .filter((s) => s.currentLocationId === locationToDeletePermanent)
+            .slice(0, row.onHandQuantity)
+            .map((s) => s.serialNumber);
+          if (serialNumbers.length === 0) {
+            skippedSerialCount += 1;
+            continue;
+          }
+          lines.push({
+            itemId,
+            variantId: row.variantId,
+            fromLocationId: locationToDeletePermanent,
+            toLocationId: stockBlockShiftTargetId,
+            quantity: serialNumbers.length,
+            unitOfMeasure,
+            serialNumbers,
+          });
+        } else {
+          lines.push({
+            itemId,
+            variantId: row.variantId,
+            fromLocationId: locationToDeletePermanent,
+            toLocationId: stockBlockShiftTargetId,
+            quantity: row.onHandQuantity,
+            unitOfMeasure,
+            batchNumber: row.batchNumber,
+          });
+        }
+      }
+      if (lines.length === 0) {
+        setStockBlockError(
+          skippedSerialCount > 0
+            ? `No transferable stock. ${skippedSerialCount} serial-tracked line(s) have no serials at this location or were skipped.`
+            : 'No transferable stock lines.'
+        );
+        setStockBlockActionLoading(false);
+        return;
+      }
+      if (skippedSerialCount > 0) {
+        setSuccess(
+          `${skippedSerialCount} serial-tracked line(s) skipped (no serials at location). Transferring ${lines.length} line(s).`
+        );
+      }
+      const { defaultCode } = await inventoryService.getReasonCodesForMovementType('TRANSFER');
+      const payload: CreateMovementBatchRequest = {
+        movementType: MovementType.TRANSFER,
+        defaultFromLocationId: locationToDeletePermanent,
+        defaultToLocationId: stockBlockShiftTargetId,
+        reasonCode: defaultCode,
+        reasonDescription: 'Stock moved before location permanent delete',
+        allowInactiveFromLocation: true,
+        lines,
+      };
+      await inventoryService.createMovementBatch(payload);
+      setSuccess('Stock moved successfully. You can now permanently delete the location.');
+      setShowStockBlockDialog(false);
+      setShowStockBlockShiftStep(false);
+      setStockBlockShiftTargetId('');
+      if (workspaceMode === 'tree') {
+        await loadRootLocations();
+      } else {
+        await loadLocations();
+      }
+      if (selectedLocationId === locationToDeletePermanent) {
+        setStockData([]);
+      }
+    } catch (err: any) {
+      const msg = extractErrorMessage(err, 'Failed to shift stock');
+      setStockBlockError(msg);
+      logger.error('[LocationManagement] Shift stock failed', err);
+    } finally {
+      setStockBlockActionLoading(false);
+    }
+  };
+  
+  const handleClearStock = async () => {
+    if (!locationToDeletePermanent) return;
+    setStockBlockError(null);
+    setStockBlockActionLoading(true);
+    try {
+      const stockRows = await inventoryService.getStockByLocation(locationToDeletePermanent);
+      if (stockRows.length === 0) {
+        setStockBlockError('No stock found at this location. You can retry permanent delete.');
+        setStockBlockActionLoading(false);
+        setShowClearStockConfirm(false);
+        return;
+      }
+      const effectiveItemId = (r: StockByLocation) => r.item?.id ?? r.itemId;
+      const itemIds = [...new Set(stockRows.map((r) => effectiveItemId(r)).filter(Boolean))];
+      const items = await Promise.all(itemIds.map((id) => inventoryService.getItemById(id)));
+      const itemMap = new Map(items.map((i) => [i.id, i]));
+      const clearLines: MovementLineRequest[] = [];
+      let skippedSerialClearCount = 0;
+      for (const row of stockRows.filter((r) => r.onHandQuantity > 0)) {
+        const itemId = effectiveItemId(row);
+        if (!itemId || !/^[0-9a-fA-F]{24}$/.test(itemId)) continue;
+        const item = itemMap.get(itemId);
+        const requiresSerial = item?.industryFlags?.requiresSerialTracking === true;
+        const unitOfMeasure = item?.unitOfMeasure ?? 'EA';
+        if (requiresSerial) {
+          const serials = await inventoryService.getSerialsByItem(
+            itemId,
+            locationToDeletePermanent,
+            undefined,
+            row.variantId
+          );
+          const serialNumbers = serials
+            .filter((s) => s.currentLocationId === locationToDeletePermanent)
+            .slice(0, row.onHandQuantity)
+            .map((s) => s.serialNumber);
+          if (serialNumbers.length === 0) {
+            skippedSerialClearCount += 1;
+            continue;
+          }
+          clearLines.push({
+            itemId,
+            variantId: row.variantId,
+            fromLocationId: locationToDeletePermanent,
+            quantity: -serialNumbers.length,
+            unitOfMeasure,
+            serialNumbers,
+          });
+        } else {
+          clearLines.push({
+            itemId,
+            variantId: row.variantId,
+            fromLocationId: locationToDeletePermanent,
+            quantity: -row.onHandQuantity,
+            unitOfMeasure,
+            batchNumber: row.batchNumber,
+          });
+        }
+      }
+      if (clearLines.length === 0) {
+        setShowClearStockConfirm(false);
+        if (skippedSerialClearCount > 0 && locationToDeletePermanent) {
+          setStockBlockError(
+            'No serials found at this location (stock may already have been moved). Attempting permanent delete…'
+          );
+          try {
+            let parentId: string | null = null;
+            try {
+              const loc = await inventoryService.getLocationById(locationToDeletePermanent);
+              parentId = loc.parentLocationId || null;
+            } catch {
+              // continue
+            }
+            await inventoryService.deleteLocationPermanent(locationToDeletePermanent);
+            setSuccess('Location permanently deleted.');
+            setShowStockBlockDialog(false);
+            setStockBlockError(null);
+            setLocationToDeletePermanent(null);
+            if (selectedLocationId === locationToDeletePermanent) {
+              setSelectedLocationId(null);
+              setSelectedLocation(null);
+            }
+            if (parentId) {
+              loadedChildrenRef.current.delete(parentId);
+              setLoadedChildren(prev => {
+                const next = { ...prev };
+                delete next[parentId!];
+                return next;
+              });
+            }
+            if (selectedLocationId) {
+              await loadChildrenData();
+            }
+            if (workspaceMode === 'tree') {
+              await loadRootLocations();
+            } else {
+              await loadLocations();
+            }
+            if (selectedLocationId === locationToDeletePermanent) {
+              setStockData([]);
+            }
+          } catch (permErr: any) {
+            const permMsg = extractErrorMessage(permErr, 'Permanent delete failed');
+            if (permMsg.toLowerCase().includes('existing stock')) {
+              setStockBlockError(
+                `Stock ledger still shows stock at this location. ${skippedSerialClearCount} serial-tracked line(s) had no serials here (they may have been moved). Try "Shift stock to another location" again, or move/clear the remaining stock from Stock Movements.`
+              );
+            } else {
+              setStockBlockError(permMsg);
+            }
+          }
+        } else {
+          setStockBlockError(
+            skippedSerialClearCount > 0
+              ? `No stock to clear. ${skippedSerialClearCount} serial-tracked line(s) have no serials at this location or were skipped.`
+              : 'No stock lines to clear.'
+          );
+        }
+        setStockBlockActionLoading(false);
+        return;
+      }
+      if (skippedSerialClearCount > 0) {
+        setSuccess(
+          `${skippedSerialClearCount} serial-tracked line(s) skipped. Clearing ${clearLines.length} line(s).`
+        );
+      }
+      const lines = clearLines;
+      const { defaultCode } = await inventoryService.getReasonCodesForMovementType('ADJUSTMENT');
+      const payload: CreateMovementBatchRequest = {
+        movementType: MovementType.ADJUSTMENT,
+        defaultFromLocationId: locationToDeletePermanent,
+        reasonCode: defaultCode,
+        reasonDescription: 'Stock cleared before location permanent delete',
+        lines,
+      };
+      await inventoryService.createMovementBatch(payload);
+      setSuccess('Stock cleared. You can now permanently delete the location.');
+      setShowStockBlockDialog(false);
+      setShowClearStockConfirm(false);
+      if (workspaceMode === 'tree') {
+        await loadRootLocations();
+      } else {
+        await loadLocations();
+      }
+      if (selectedLocationId === locationToDeletePermanent) {
+        setStockData([]);
+      }
+    } catch (err: any) {
+      const msg = extractErrorMessage(err, 'Failed to clear stock');
+      setStockBlockError(msg);
+      logger.error('[LocationManagement] Clear stock failed', err);
+    } finally {
+      setStockBlockActionLoading(false);
+    }
+  };
+  
   const resetCreateForm = () => {
     setCreateFormData({
       code: '',
@@ -673,7 +1079,6 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       });
     } else {
       setExpandedNodes(prev => new Set(prev).add(locationId));
-      // Clear cache for this parent to force reload on expand
       loadedChildrenRef.current.delete(locationId);
       setLoadedChildren(prev => {
         const next = { ...prev };
@@ -683,29 +1088,46 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       loadLocationChildren(locationId);
     }
   };
+
+  /** Tree row click: select location and toggle expand/collapse when node has children */
+  const handleTreeNodeClick = useCallback((id: string, hasChildren: boolean, isExpanded: boolean) => {
+    setSelectedLocationId(id);
+    setLocationSubTab('overview');
+    setSearchParams({ locationId: id }, { replace: true });
+    if (hasChildren) {
+      if (isExpanded) {
+        setExpandedNodes(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        setExpandedNodes(prev => new Set(prev).add(id));
+        loadedChildrenRef.current.delete(id);
+        setLoadedChildren(prev => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        loadLocationChildren(id);
+      }
+    }
+  }, [loadLocationChildren]);
   
   const handleLocationSelect = (id: string) => {
     setSelectedLocationId(id);
     setLocationSubTab('overview');
     setSearchParams({ locationId: id }, { replace: true });
-    
-    // Auto-expand if location has children and is not already expanded
     const hasChildren = childCounts[id] > 0;
     const isExpanded = expandedNodes.has(id);
-    
     if (hasChildren && !isExpanded) {
-      // Expand the node
       setExpandedNodes(prev => new Set(prev).add(id));
-      
-      // Clear cache to force reload (ensures fresh data)
       loadedChildrenRef.current.delete(id);
       setLoadedChildren(prev => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
-      
-      // Load children
       loadLocationChildren(id);
     }
   };
@@ -888,7 +1310,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       {
         id: 'actions',
         header: 'Actions',
-        width: 150,
+        width: 220,
         accessor: (loc) => (
           <div className="list-row-actions" onClick={(e) => e.stopPropagation()}>
             <Button
@@ -898,25 +1320,30 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
             >
               View
             </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={async () => {
-                if (!confirm(`Delete location ${loc.code}? This action cannot be undone.`)) return;
-                setLoading(true);
-                try {
-                  await inventoryService.deleteLocation(loc.id);
-                  setSuccess('Location deleted successfully');
-                  await loadLocations();
-                } catch (err: any) {
-                  setError(extractErrorMessage(err, 'Failed to delete location'));
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
-              Delete
-            </Button>
+            {loc.isActive ? (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setLocationToDelete(loc.id);
+                  setShowDeleteConfirm(true);
+                }}
+              >
+                Deactivate
+              </Button>
+            ) : (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setLocationToDeletePermanent(loc.id);
+                  setShowPermanentDeleteConfirm(true);
+                }}
+                title="Remove from database permanently"
+              >
+                Delete permanently
+              </Button>
+            )}
           </div>
         ),
       },
@@ -1015,7 +1442,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                     Deactivate
                   </Button>
                   <Button variant="danger" size="sm" onClick={async () => {
-                    if (!confirm(`Delete ${selectedItems.size} location(s)? This action cannot be undone.`)) return;
+                    if (!confirm(`Deactivate ${selectedItems.size} location(s)? They can be activated again later.`)) return;
                     setLoading(true);
                     setError(null);
                     try {
@@ -1024,19 +1451,19 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                       );
                       const failed = results.filter(r => r.status === 'rejected').length;
                       if (failed === 0) {
-                        setSuccess(`${selectedItems.size} location(s) deleted`);
+                        setSuccess(`${selectedItems.size} location(s) deactivated`);
                       } else {
-                        setError(`${failed} location(s) could not be deleted (may have children or stock)`);
+                        setError(`${failed} location(s) could not be deactivated (may have children or stock)`);
                       }
                       setSelectedItems(new Set());
                       await loadLocations();
                     } catch (err: any) {
-                      setError(extractErrorMessage(err, 'Failed to delete locations'));
+                      setError(extractErrorMessage(err, 'Failed to deactivate locations'));
                     } finally {
                       setLoading(false);
                     }
                   }}>
-                    Delete
+                    Deactivate
                   </Button>
                 </div>
               )}
@@ -1121,16 +1548,27 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       <div key={location.id} className={`tree-node ${isSelected ? 'selected' : ''} ${!location.isActive ? 'inactive' : ''}`}>
         <div
           className={`tree-node-content ${!location.isActive ? 'tree-node-inactive' : ''}`}
-          onClick={() => handleLocationSelect(location.id)}
+          onClick={() => handleTreeNodeClick(location.id, hasChildren, isExpanded)}
           style={{ paddingLeft: `${level * 20 + 8}px`, opacity: location.isActive ? 1 : 0.6 }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleTreeNodeClick(location.id, hasChildren, isExpanded);
+            }
+          }}
         >
           {hasChildren && (
             <button
+              type="button"
               className="tree-expand-btn"
               onClick={(e) => {
                 e.stopPropagation();
                 handleTreeExpand(location.id);
               }}
+              aria-expanded={isExpanded}
+              aria-label={isExpanded ? 'Collapse' : 'Expand'}
             >
               {isExpanded ? '▼' : '▶'}
             </button>
@@ -1199,8 +1637,6 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
   // Render Location Detail Workspace
   const renderLocationDetail = () => {
     if (!selectedLocation) return <LoadingState message="Loading location details..." />;
-    
-    const canDelete = !childCounts[selectedLocation.id] && stockData.length === 0;
     
     return (
       <div className="location-detail-workspace">
@@ -1320,32 +1756,37 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
                   isActive: !selectedLocation.isActive,
                 });
                 await loadLocationDetails();
-                
-                // Clear children cache for parent location to force reload on next expand
-                if (selectedLocation.parentLocationId) {
-                  loadedChildrenRef.current.delete(selectedLocation.parentLocationId);
-                  setLoadedChildren(prev => {
-                    const next = { ...prev };
-                    delete next[selectedLocation.parentLocationId!];
-                    return next;
-                  });
+                setSuccess(selectedLocation.isActive ? 'Location deactivated' : 'Location activated');
+                // Refresh hierarchy map so tree reflects active/inactive and structure
+                if (workspaceMode === 'tree') {
+                  await loadRootLocations();
+                  if (selectedLocation.parentLocationId) {
+                    loadedChildrenRef.current.delete(selectedLocation.parentLocationId);
+                    setLoadedChildren(prev => {
+                      const next = { ...prev };
+                      delete next[selectedLocation.parentLocationId!];
+                      return next;
+                    });
+                    await loadLocationChildren(selectedLocation.parentLocationId);
+                  }
                 }
               }}
             >
               {selectedLocation.isActive ? 'Deactivate' : 'Activate'}
             </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => {
-                setLocationToDelete(selectedLocation.id);
-                setShowDeleteConfirm(true);
-              }}
-              disabled={!canDelete}
-              title={!canDelete ? 'Cannot delete location with children or stock' : 'Delete location'}
-            >
-              Delete
-            </Button>
+            {!selectedLocation.isActive && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setLocationToDeletePermanent(selectedLocation.id);
+                  setShowPermanentDeleteConfirm(true);
+                }}
+                title="Remove from database permanently"
+              >
+                Delete permanently
+              </Button>
+            )}
           </div>
         </div>
         
@@ -1544,129 +1985,143 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
   
   // Render Stock Tab
   const renderStockTab = () => {
-    const stockColumns: ColumnDef<StockByLocation>[] = [
-      {
-        id: 'sku',
-        header: 'SKU',
-        width: 120,
-        accessor: (stock) => stock.item.sku,
-      },
-      {
-        id: 'name',
-        header: 'Product Name',
-        minWidth: 200,
-        accessor: (stock) => stock.item.name,
-      },
-      {
-        id: 'variant',
-        header: 'Variant',
-        width: 150,
-        accessor: (stock) => stock.variant ? `${stock.variant.code} - ${stock.variant.name}` : '-',
-      },
-      {
-        id: 'onHand',
-        header: 'On Hand',
-        width: 100,
-        accessor: (stock) => stock.onHandQuantity,
-      },
-      {
-        id: 'reserved',
-        header: 'Reserved',
-        width: 100,
-        accessor: (stock) => stock.reservedQuantity,
-      },
-      {
-        id: 'blocked',
-        header: 'Blocked',
-        width: 100,
-        accessor: (stock) => stock.blockedQuantity,
-      },
-      {
-        id: 'damaged',
-        header: 'Damaged',
-        width: 100,
-        accessor: (stock) => stock.damagedQuantity,
-      },
-      {
-        id: 'available',
-        header: 'Available',
-        width: 100,
-        accessor: (stock) => stock.availableQuantity,
-      },
-      {
-        id: 'actions',
-        header: 'Actions',
-        width: 200,
-        accessor: (stock) => {
-          const itemId = stock.item?.id || stock.itemId;
-          if (!itemId || !selectedLocationId) return null;
-          return (
-            <div className="stock-row-actions" onClick={(e) => e.stopPropagation()}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const p = new URLSearchParams(searchParams);
-                  p.set('tab', 'movements');
-                  p.set('create', '1');
-                  p.set('movementType', MovementType.RECEIPT);
-                  p.set('itemId', itemId);
-                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
-                  p.set('toLocationId', selectedLocationId);
-                  p.set('reasonCode', getDefaultReason('RECEIPT', 'location').defaultCode);
-                  p.set('returnTab', 'locations');
-                  p.set('returnLocationId', selectedLocationId);
-                  p.set('returnSubTab', 'stock');
-                  setSearchParams(p);
-                }}
-              >
-                Receive
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const p = new URLSearchParams(searchParams);
-                  p.set('tab', 'movements');
-                  p.set('create', '1');
-                  p.set('movementType', MovementType.ISSUE);
-                  p.set('itemId', itemId);
-                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
-                  p.set('fromLocationId', selectedLocationId);
-                  p.set('reasonCode', getDefaultReason('ISSUE', 'location').defaultCode);
-                  p.set('returnTab', 'locations');
-                  p.set('returnLocationId', selectedLocationId);
-                  p.set('returnSubTab', 'stock');
-                  setSearchParams(p);
-                }}
-              >
-                Issue
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  const p = new URLSearchParams(searchParams);
-                  p.set('tab', 'movements');
-                  p.set('create', '1');
-                  p.set('movementType', MovementType.TRANSFER);
-                  p.set('itemId', itemId);
-                  if (stock.variantId) { p.set('variantId', stock.variantId); p.set('variantLocked', '1'); }
-                  p.set('fromLocationId', selectedLocationId);
-                  p.set('reasonCode', getDefaultReason('TRANSFER', 'location_from').defaultCode);
-                  p.set('returnTab', 'locations');
-                  p.set('returnLocationId', selectedLocationId);
-                  p.set('returnSubTab', 'stock');
-                  setSearchParams(p);
-                }}
-              >
-                Transfer
-              </Button>
-            </div>
-          );
+    const hasChildren = (childCounts[selectedLocationId ?? ''] ?? 0) > 0;
+    const effectiveLocationId = (stock: StockByLocation) => stock.locationId ?? selectedLocationId ?? '';
+
+    const buildStockColumns = (showLocationColumn: boolean): ColumnDef<StockByLocation>[] => {
+      const cols: ColumnDef<StockByLocation>[] = [];
+      if (showLocationColumn) {
+        cols.push({
+          id: 'location',
+          header: 'Location',
+          width: 140,
+          accessor: (stock) =>
+            stock.location
+              ? `${stock.location.code} ${stock.location.name}`
+              : selectedLocation?.code ?? selectedLocation?.name ?? '-',
+        });
+      }
+      cols.push(
+        { id: 'sku', header: 'SKU', width: 120, accessor: (stock) => stock.item?.sku ?? '' },
+        { id: 'name', header: 'Product Name', minWidth: 200, accessor: (stock) => stock.item?.name ?? '' },
+        {
+          id: 'variant',
+          header: 'Variant',
+          width: 150,
+          accessor: (stock) => (stock.variant ? `${stock.variant.code} - ${stock.variant.name}` : '-'),
         },
-      },
-    ];
+        { id: 'onHand', header: 'On Hand', width: 100, accessor: (stock) => stock.onHandQuantity },
+        { id: 'reserved', header: 'Reserved', width: 100, accessor: (stock) => stock.reservedQuantity },
+        { id: 'blocked', header: 'Blocked', width: 100, accessor: (stock) => stock.blockedQuantity },
+        { id: 'damaged', header: 'Damaged', width: 100, accessor: (stock) => stock.damagedQuantity },
+        { id: 'available', header: 'Available', width: 100, accessor: (stock) => stock.availableQuantity },
+        {
+          id: 'actions',
+          header: 'Actions',
+          width: 200,
+          accessor: (stock) => {
+            const itemId = stock.item?.id || stock.itemId;
+            const locId = effectiveLocationId(stock);
+            if (!itemId || !locId) return null;
+            return (
+              <div className="stock-row-actions" onClick={(e) => e.stopPropagation()}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const p = new URLSearchParams(searchParams);
+                    p.set('tab', 'movements');
+                    p.set('create', '1');
+                    p.set('movementType', MovementType.RECEIPT);
+                    p.set('itemId', itemId);
+                    if (stock.variantId) {
+                      p.set('variantId', stock.variantId);
+                      p.set('variantLocked', '1');
+                    }
+                    p.set('toLocationId', locId);
+                    p.set('reasonCode', getDefaultReason('RECEIPT', 'location').defaultCode);
+                    p.set('returnTab', 'locations');
+                    p.set('returnLocationId', selectedLocationId ?? '');
+                    p.set('returnSubTab', 'stock');
+                    setSearchParams(p);
+                  }}
+                >
+                  Receive
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const p = new URLSearchParams(searchParams);
+                    p.set('tab', 'movements');
+                    p.set('create', '1');
+                    p.set('movementType', MovementType.ISSUE);
+                    p.set('itemId', itemId);
+                    if (stock.variantId) {
+                      p.set('variantId', stock.variantId);
+                      p.set('variantLocked', '1');
+                    }
+                    p.set('fromLocationId', locId);
+                    p.set('reasonCode', getDefaultReason('ISSUE', 'location').defaultCode);
+                    p.set('returnTab', 'locations');
+                    p.set('returnLocationId', selectedLocationId ?? '');
+                    p.set('returnSubTab', 'stock');
+                    setSearchParams(p);
+                  }}
+                >
+                  Issue
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const p = new URLSearchParams(searchParams);
+                    p.set('tab', 'movements');
+                    p.set('create', '1');
+                    p.set('movementType', MovementType.TRANSFER);
+                    p.set('itemId', itemId);
+                    if (stock.variantId) {
+                      p.set('variantId', stock.variantId);
+                      p.set('variantLocked', '1');
+                    }
+                    p.set('fromLocationId', locId);
+                    p.set('reasonCode', getDefaultReason('TRANSFER', 'location_from').defaultCode);
+                    p.set('returnTab', 'locations');
+                    p.set('returnLocationId', selectedLocationId ?? '');
+                    p.set('returnSubTab', 'stock');
+                    setSearchParams(p);
+                  }}
+                >
+                  Transfer
+                </Button>
+              </div>
+            );
+          },
+        }
+      );
+      return cols;
+    };
+
+    const handleStockRowClick = (stock: StockByLocation) => {
+      const itemId = stock.item?.id || stock.itemId;
+      if (!itemId) return;
+      const newParams = new URLSearchParams();
+      newParams.set('tab', 'items');
+      newParams.set('itemId', itemId);
+      if (stock.variantId) {
+        newParams.set('itemSubTab', 'variants');
+        newParams.set('variantId', stock.variantId);
+      } else {
+        newParams.set('itemSubTab', 'stock');
+        if (selectedLocationId) newParams.set('locationId', selectedLocationId);
+      }
+      navigate(`/inventory?${newParams.toString()}`);
+    };
+
+    const emptyMessage =
+      hasChildren
+        ? (stockData.length === 0 ? 'No stock at this location or any sub-location' : 'No stock matches the filter')
+        : (stockData.length === 0 ? 'No stock found at this location' : 'No stock matches the filter');
 
     return (
       <div className="stock-tab">
@@ -1682,47 +2137,91 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
             <option value="blocked">Blocked</option>
             <option value="expired">Expired</option>
           </Select>
+          <Input
+            type="text"
+            placeholder="Search by SKU or product name..."
+            value={stockProductSearchQuery}
+            onChange={(e) => setStockProductSearchQuery(e.target.value)}
+            className="stock-tab-search-input"
+          />
         </div>
+
+        {hasChildren && stockFilteredByProduct.length > 0 && (
+          <div className="stock-summary-strip">
+            <span className="stock-summary-item">
+              <strong>Total on hand:</strong> {stockFilteredByProduct.reduce((s, r) => s + r.onHandQuantity, 0)}
+            </span>
+            <span className="stock-summary-item">
+              <strong>Items:</strong>{' '}
+              {new Set(stockFilteredByProduct.map((r) => `${r.itemId}|${r.variantId ?? ''}`)).size}
+            </span>
+            <span className="stock-summary-item">
+              <strong>Locations with stock:</strong>{' '}
+              {new Set(stockFilteredByProduct.map((r) => r.locationId ?? selectedLocationId).filter(Boolean)).size}
+            </span>
+          </div>
+        )}
+
         {loading ? (
           <LoadingState message="Loading stock data..." />
-        ) : filteredStockData.length === 0 ? (
-          <EmptyState message={stockData.length === 0 ? "No stock found at this location" : "No stock matches the filter"} />
+        ) : stockFilteredByProduct.length === 0 ? (
+          <EmptyState message={emptyMessage} />
+        ) : hasChildren && stockGroupedByLocation && stockGroupedByLocation.order.length > 0 ? (
+          <div className="stock-by-location-sections">
+            {stockGroupedByLocation.order.map((locId) => {
+              const rows = stockGroupedByLocation.groups[locId] ?? [];
+              if (rows.length === 0) return null;
+              const first = rows[0];
+              const loc = first.location ?? (locId === selectedLocationId ? selectedLocation : null);
+              const code = loc?.code ?? locId;
+              const name = loc?.name ?? '';
+              const type = loc?.type ?? '';
+              const sumOnHand = rows.reduce((s, r) => s + r.onHandQuantity, 0);
+              const isExpanded = stockLocationSectionsExpanded.has(locId);
+              return (
+                <div key={locId} className="stock-location-section">
+                  <button
+                    type="button"
+                    className="stock-location-section-header"
+                    onClick={() =>
+                      setStockLocationSectionsExpanded((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(locId)) next.delete(locId);
+                        else next.add(locId);
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="stock-section-toggle">{isExpanded ? '▼' : '▶'}</span>
+                    <span className="stock-section-location">{code}</span>
+                    <span className="stock-section-name">{name}</span>
+                    {type && <span className={`location-type-badge type-${(type as string).toLowerCase()}`}>{type}</span>}
+                    <span className="stock-section-meta">
+                      {rows.length} line(s) · {sumOnHand} on hand
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div className="stock-location-section-body">
+                      <DataTable
+                        data={rows}
+                        columns={buildStockColumns(false)}
+                        searchable={false}
+                        onRowClick={handleStockRowClick}
+                        getRowId={(stock) => `${stock.locationId ?? locId}-${stock.itemId}-${stock.variantId || 'none'}-${stock.batchNumber || 'none'}`}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <DataTable
-            data={filteredStockData}
-            columns={stockColumns}
-            searchable={true}
-            searchPlaceholder="Search by SKU or product name..."
-            searchFields={(stock) => [stock.item.sku, stock.item.name, stock.variant?.code || '', stock.variant?.name || '']}
-            onRowClick={(stock) => {
-              // Use item.id as primary source, fallback to itemId if item is populated
-              const itemId = stock.item?.id || stock.itemId;
-              
-              if (!itemId) {
-                console.error('[LocationManagement] No itemId found in stock data', stock);
-                return;
-              }
-              
-              // Build URL params for navigation to Item Master
-              const newParams = new URLSearchParams();
-              newParams.set('tab', 'items');
-              newParams.set('itemId', itemId);
-              
-              // If variant exists, navigate to variants tab and highlight that variant
-              if (stock.variantId) {
-                newParams.set('itemSubTab', 'variants');
-                newParams.set('variantId', stock.variantId);
-              } else {
-                // If no variant, navigate to stock tab with location filter
-                newParams.set('itemSubTab', 'stock');
-                if (selectedLocationId) {
-                  newParams.set('locationId', selectedLocationId);
-                }
-              }
-              
-              navigate(`/inventory?${newParams.toString()}`);
-            }}
-            getRowId={(stock) => `${stock.itemId}-${stock.variantId || 'none'}-${stock.batchNumber || 'none'}`}
+            data={stockFilteredByProduct}
+            columns={buildStockColumns(false)}
+            searchable={false}
+            onRowClick={handleStockRowClick}
+            getRowId={(stock) => `${stock.locationId ?? selectedLocationId ?? ''}-${stock.itemId}-${stock.variantId || 'none'}-${stock.batchNumber || 'none'}`}
           />
         )}
       </div>
@@ -1788,22 +2287,36 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       {
         id: 'actions',
         header: 'Actions',
-        width: 150,
+        width: 220,
         accessor: (loc) => (
           <div className="cell-actions">
             <Button variant="ghost" size="sm" onClick={() => handleLocationSelect(loc.id)}>
               View
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setLocationToDelete(loc.id);
-                setShowDeleteConfirm(true);
-              }}
-            >
-              Delete
-            </Button>
+            {loc.isActive ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setLocationToDelete(loc.id);
+                  setShowDeleteConfirm(true);
+                }}
+              >
+                Deactivate
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setLocationToDeletePermanent(loc.id);
+                  setShowPermanentDeleteConfirm(true);
+                }}
+                title="Remove from database permanently"
+              >
+                Delete permanently
+              </Button>
+            )}
           </div>
         ),
       },
@@ -2749,16 +3262,161 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       {/* Edit Drawer */}
       {showEditDrawer && renderEditDrawer()}
       
-      {/* Delete Confirmation */}
+      {/* Deactivate (soft delete) Confirmation */}
       <ConfirmDialog
         isOpen={showDeleteConfirm}
-        title="Delete Location"
-        message="Are you sure you want to delete this location? This action cannot be undone."
+        title="Deactivate location"
+        message="This location will be deactivated and hidden from active lists. You can activate it again later."
+        confirmLabel="Deactivate"
         onConfirm={handleDelete}
         onCancel={() => {
           setShowDeleteConfirm(false);
           setLocationToDelete(null);
         }}
+        variant="danger"
+      />
+      
+      {/* Permanent delete Confirmation */}
+      <ConfirmDialog
+        isOpen={showPermanentDeleteConfirm}
+        title="Delete permanently"
+        message="This will remove the location from the database and cannot be undone. Only do this if you are sure you no longer need this location."
+        confirmLabel="Delete permanently"
+        onConfirm={handleDeletePermanent}
+        onCancel={() => {
+          setShowPermanentDeleteConfirm(false);
+          setLocationToDeletePermanent(null);
+        }}
+        variant="danger"
+      />
+      
+      {/* Stock block dialog: location has existing stock */}
+      <Modal
+        isOpen={showStockBlockDialog}
+        onClose={handleStockBlockCancel}
+        title="Location has existing stock"
+        size="md"
+      >
+        <div className="stock-block-dialog">
+          {!showStockBlockShiftStep ? (
+            <>
+              <p className="stock-block-message">
+                This location cannot be permanently deleted until all stock is moved or cleared.
+                Choose an option below.
+              </p>
+              {stockBlockError && (
+                <div className="stock-block-error">{stockBlockError}</div>
+              )}
+              <div className="stock-block-actions">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    setStockBlockError(null);
+                    setShowStockBlockShiftStep(true);
+                  }}
+                  disabled={stockBlockActionLoading}
+                >
+                  Shift stock to another location
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => setShowClearStockConfirm(true)}
+                  disabled={stockBlockActionLoading}
+                >
+                  Clear all stock
+                </Button>
+                <Button variant="secondary" onClick={handleStockBlockCancel}>
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="stock-block-message">
+                Select the target location to move all stock to. Only active locations in the same branch are listed.
+              </p>
+              {stockBlockError && (
+                <div className="stock-block-error">{stockBlockError}</div>
+              )}
+              <div className="stock-block-shift-form">
+                <label>Target location</label>
+                <Select
+                  value={stockBlockShiftTargetId}
+                  onChange={(e) => setStockBlockShiftTargetId(e.target.value)}
+                  style={{ width: '100%', marginBottom: 12 }}
+                >
+                  <option value="">Select location...</option>
+                  {shiftTargetLocations
+                    .filter(
+                      (l) =>
+                        l.isActive &&
+                        l.id !== locationToDeletePermanent &&
+                        (stockBlockLocationBranchId == null || l.branchId === stockBlockLocationBranchId)
+                    )
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.code} – {l.name}
+                      </option>
+                    ))}
+                </Select>
+                {stockBlockLocationBranchId != null &&
+                  shiftTargetLocations.filter(
+                    (l) =>
+                      l.isActive &&
+                      l.id !== locationToDeletePermanent &&
+                      l.branchId === stockBlockLocationBranchId
+                  ).length === 0 && (
+                    <p className="stock-block-no-targets">
+                      No other location in this branch to transfer to. Add a location or clear stock instead.
+                    </p>
+                  )}
+                <div className="stock-block-shift-buttons">
+                  <Button
+                    variant="primary"
+                    onClick={handleShiftStock}
+                    disabled={
+                      stockBlockActionLoading ||
+                      !stockBlockShiftTargetId ||
+                      (stockBlockLocationBranchId != null &&
+                        shiftTargetLocations.filter(
+                          (l) =>
+                            l.isActive &&
+                            l.id !== locationToDeletePermanent &&
+                            l.branchId === stockBlockLocationBranchId
+                        ).length === 0)
+                    }
+                  >
+                    {stockBlockActionLoading ? 'Moving...' : 'Create transfer'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setShowStockBlockShiftStep(false);
+                      setStockBlockShiftTargetId('');
+                      setStockBlockError(null);
+                    }}
+                    disabled={stockBlockActionLoading}
+                  >
+                    Back
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+      
+      {/* Clear all stock confirmation */}
+      <ConfirmDialog
+        isOpen={showClearStockConfirm}
+        title="Clear all stock"
+        message="This will reduce all stock at this location to zero. Adjustment records will be created for audit. This action cannot be undone for the stock. Reserved or blocked quantities may still need to be released separately."
+        confirmLabel="Clear all stock"
+        onConfirm={() => {
+          setShowClearStockConfirm(false);
+          handleClearStock();
+        }}
+        onCancel={() => setShowClearStockConfirm(false)}
         variant="danger"
       />
     </div>

@@ -1,15 +1,15 @@
 {
   "name": "busiman-desktop",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Busiman Desktop Application",
   "main": "dist-electron/main.js",
   "author": {
-    "name": "Pioneer Ventures",
+    "name": "Busiman",
     "email": "info@pioneer.com"
   },
   "build": {
     "appId": "com.busiman.desktop",
-    "productName": "Busiman Desktop",
+    "productName": "BusimanDesktop",
     "copyright": "Copyright © 2025 Busiman",
     "directories": {
       "buildResources": "build",
@@ -33,7 +33,8 @@
       "icon": "public/assets/logo.ico",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "forceCodeSigning": false,
-      "verifyUpdateCodeSignature": false
+      "verifyUpdateCodeSignature": false,
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [
@@ -62,8 +63,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "Vitco-Impex",
-      "repo": "desktop-application"
+      "owner": "Busiman-official",
+      "repo": "busiman-desktop"
     }
   },
   "scripts": {

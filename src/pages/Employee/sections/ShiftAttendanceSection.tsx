@@ -412,6 +412,25 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
               </div>
             )}
           </div>
+
+          <div className="form-field toggle-field">
+            <label className="field-label">Allow checkout without WiFi verification</label>
+            {canEdit ? (
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={employee.allowCheckoutWithoutWifi || false}
+                  onChange={(e) => handleToggle('allowCheckoutWithoutWifi', e.target.checked)}
+                  disabled={!canEdit}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            ) : (
+              <div className="field-value read-only">
+                {employee.allowCheckoutWithoutWifi ? 'Yes' : 'No'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </CollapsibleSection>

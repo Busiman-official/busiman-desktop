@@ -1,0 +1,201 @@
+/**
+ * Proxy Servers Section - NodeMCU proxy list and form
+ */
+
+.proxy-servers-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.proxy-servers-section .settings-section-loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.proxy-servers-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.proxy-servers-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-empty {
+  text-align: center;
+  padding: 32px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+
+.proxy-servers-empty-text {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-empty-subtext {
+  margin: 0 0 24px 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.proxy-servers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.proxy-servers-card {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 16px;
+  background: var(--color-bg-primary);
+}
+
+.proxy-servers-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.proxy-servers-card-info {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.proxy-servers-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-card-id {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.proxy-servers-status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.proxy-servers-status-online {
+  background: #e6f7ed;
+  color: #36b37e;
+}
+
+.proxy-servers-status-offline {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.proxy-servers-section .btn-danger {
+  color: #dc3545;
+  border: 1px solid #dc3545;
+  background: transparent;
+}
+
+.proxy-servers-section .btn-danger:hover:not(:disabled) {
+  background: rgba(220, 53, 69, 0.1);
+}
+
+.proxy-servers-deactivate-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.proxy-servers-inactive-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #dc3545;
+  background: rgba(220, 53, 69, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.proxy-servers-detail-row {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* Modal */
+.proxy-servers-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.proxy-servers-modal-content {
+  background: var(--color-bg-primary);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 480px;
+  width: 90%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.proxy-servers-modal-title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-modal-subtitle {
+  margin: 0 0 20px 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.proxy-servers-form .form-group {
+  margin-bottom: 16px;
+}
+
+.proxy-servers-form .form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-form .form-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+.proxy-servers-form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}

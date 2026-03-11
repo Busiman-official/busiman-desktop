@@ -499,6 +499,10 @@ class InventoryService {
     await api.delete(`/inventory/locations/${id}`);
   }
 
+  async deleteLocationPermanent(id: string): Promise<void> {
+    await api.delete(`/inventory/locations/${id}/permanent`);
+  }
+
   // Movements
   async createMovement(data: CreateStockMovementRequest): Promise<StockMovementResponse> {
     const response = await api.post('/inventory/movements', data);
@@ -659,8 +663,16 @@ class InventoryService {
     return extractApiData<StockBalance>(response);
   }
 
-  async getStockByLocation(locationId: string): Promise<StockByLocation[]> {
-    const response = await api.get(`/inventory/stock/location/${locationId}`);
+  async getStockByLocation(
+    locationId: string,
+    options?: { includeDescendants?: boolean }
+  ): Promise<StockByLocation[]> {
+    const params = new URLSearchParams();
+    if (options?.includeDescendants === true) {
+      params.append('includeDescendants', 'true');
+    }
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await api.get(`/inventory/stock/location/${locationId}${query}`);
     return extractApiData<StockByLocation[]>(response);
   }
 
@@ -830,6 +842,7 @@ class InventoryService {
         serialNumbers?: string[];
         manufacturingDate?: string;
         expiryDate?: string;
+        expectedVersion?: number;
       }>;
     }
   ): Promise<CountDocumentResponse> {
@@ -1176,6 +1189,7 @@ export interface CountLineDto {
   serialNumbers?: string[];
   manufacturingDate?: string;
   expiryDate?: string;
+  lineVersion?: number;
 }
 
 export interface CountDocumentResponse {
@@ -1464,6 +1478,8 @@ export interface CreateMovementBatchRequest {
   reasonDescription?: string;
   documentNotes?: string;
   requiresApproval?: boolean;
+  /** When true, allows transfer from an inactive location (e.g. shift stock before permanent delete). */
+  allowInactiveFromLocation?: boolean;
   lines: MovementLineRequest[];
 }
 
@@ -1599,6 +1615,14 @@ export interface StockByLocation {
   damagedQuantity: number;
   availableQuantity: number;
   expiryDate?: string;
+  /** Present when requested with includeDescendants */
+  locationId?: string;
+  location?: {
+    id: string;
+    code: string;
+    name: string;
+    type?: string;
+  };
 }
 
 export interface StockByItem {

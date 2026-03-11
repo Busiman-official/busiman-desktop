@@ -24,6 +24,7 @@ export interface User {
   designation?: string;
   isActive?: boolean;
   canActAsProxy?: boolean;
+  allowCheckoutWithoutWifi?: boolean;
 }
 
 // Auth types
@@ -65,6 +66,16 @@ export interface ProxyServerStatus {
   lastRegistrationAttempt?: string | null;
   lastRegistrationError?: string | null;
   mainServerUrl?: string;
+}
+
+export interface NodeMCUProxy {
+  id: string;
+  nodeMCUId: string;
+  displayName?: string;
+  ipAddress?: string;
+  port: number;
+  lastHeartbeat?: string;
+  isActive: boolean;
 }
 
 // Attendance enums
@@ -268,6 +279,7 @@ export interface EmployeeDetails {
   allowManualAttendanceOverride?: boolean;
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
+  allowCheckoutWithoutWifi?: boolean;
   
   // Task & Work Preferences
   defaultTaskVisibility?: TaskVisibility;
@@ -320,6 +332,7 @@ export interface UpdateEmployeeDetailsRequest {
   allowManualAttendanceOverride?: boolean;
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
+  allowCheckoutWithoutWifi?: boolean;
   
   // Task & Work Preferences
   defaultTaskVisibility?: TaskVisibility;

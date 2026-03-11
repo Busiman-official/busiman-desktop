@@ -23,11 +23,11 @@ function triggerWorkflow() {
   try {
     console.log('🚀 Triggering GitHub Actions workflow to publish Windows installer...');
     // Run the workflow against the remote repo directly, so we don't need a local .git repo
-    execSync('gh workflow run publish-windows.yml -R Vitco-Impex/desktop-application', {
+    execSync('gh workflow run publish-windows.yml -R Busiman-official/busiman-desktop', {
       stdio: 'inherit',
     });
     console.log('✅ Workflow triggered successfully!');
-    console.log('📊 Check the workflow status at: https://github.com/Vitco-Impex/desktop-application/actions');
+    console.log('📊 Check the workflow status at: https://github.com/Busiman-official/busiman-desktop/actions');
   } catch (error) {
     const errorMessage = error.message || error.toString();
     

@@ -11,11 +11,12 @@ import { Branch, CreateBranchRequest, UpdateBranchRequest } from '@/types';
 import { employeeService } from '@/services/employee.service';
 import { User, UserRole } from '@/types';
 import { logger } from '@/shared/utils/logger';
+import { ProxyServersSection } from './ProxyServersSection';
 
 const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'hr', 'finance', 'sales'];
 import './CompanySettings.css';
 
-type CompanySettingsTab = 'details' | 'branches';
+type CompanySettingsTab = 'details' | 'branches' | 'proxyServers';
 
 export const CompanySettings: React.FC = () => {
   const { company, isLoading, error, setCompany, loadCompany } = companyStore();
@@ -300,6 +301,12 @@ export const CompanySettings: React.FC = () => {
           onClick={() => setActiveTab('branches')}
         >
           Branch Management
+        </button>
+        <button
+          className={`company-settings-tab ${activeTab === 'proxyServers' ? 'active' : ''}`}
+          onClick={() => setActiveTab('proxyServers')}
+        >
+          Proxy Servers
         </button>
       </div>
 
@@ -675,6 +682,8 @@ export const CompanySettings: React.FC = () => {
           )}
         </div>
       )}
+
+      {activeTab === 'proxyServers' && <ProxyServersSection />}
     </div>
   );
 };

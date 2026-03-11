@@ -533,10 +533,95 @@
 
 .stock-tab-toolbar {
   display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid #e5e7eb;
+}
+
+.stock-tab-search-input {
+  min-width: 200px;
+  max-width: 320px;
+  margin-left: auto;
+}
+
+.stock-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.stock-summary-item {
+  color: #475569;
+}
+
+.stock-summary-item strong {
+  color: #1e293b;
+  margin-right: 4px;
+}
+
+.stock-by-location-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stock-location-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.stock-location-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #f9fafb;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+}
+
+.stock-location-section-header:hover {
+  background: #f3f4f6;
+}
+
+.stock-section-toggle {
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.stock-section-location {
+  font-weight: 600;
+  color: #111827;
+}
+
+.stock-section-name {
+  color: #4b5563;
+}
+
+.stock-section-meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.stock-location-section-body {
+  padding: 12px;
+  background: white;
+  border-top: 1px solid #e5e7eb;
 }
 
 /* Children Tab */
@@ -927,4 +1012,45 @@
   border-radius: 6px;
   margin: 16px 20px;
   border-left: 4px solid #10b981;
+}
+
+/* Stock block dialog (location has existing stock) */
+.stock-block-dialog {
+  padding: 8px 0;
+}
+.stock-block-message {
+  margin: 0 0 16px;
+  color: #374151;
+  line-height: 1.5;
+}
+.stock-block-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.stock-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.stock-block-shift-form label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #374151;
+}
+.stock-block-no-targets {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #b45309;
+}
+.stock-block-shift-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
 }

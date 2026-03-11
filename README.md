@@ -39,6 +39,22 @@ npm run dev
 - `npm run build` - Build for production
 - `npm run build:vite` - Build React app only
 - `npm run build:electron` - Build Electron main process only
+- `npm run build:win` - Build Windows installer (NSIS), no code signing
+
+### Building for Windows
+
+If you see **"Cannot create symbolic link: A required privilege is not held by the client"** when running `npm run build:win`:
+
+1. **Option A (recommended):** Enable **Developer Mode** so Windows allows creating symlinks:
+   - Open **Settings** → **Privacy & security** → **For developers**
+   - Turn **Developer Mode** **On**
+   - Clear the build cache and retry:
+     ```bash
+     rmdir /s /q "%LOCALAPPDATA%\electron-builder\Cache"
+     npm run build:win
+     ```
+
+2. **Option B:** The config uses `signAndEditExecutable: false` to avoid loading the code-signing tool; if the error persists, use Option A.
 
 ## Project Structure
 

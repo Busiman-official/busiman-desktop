@@ -285,32 +285,36 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
 
   const handleCheckOut = async () => {
     if (!canMarkAttendance) return;
-    
-    // Re-validate network before check-out
-    await checkNetworkStatus();
-    
-    // Check if network validation is still loading
-    if (networkValidation.loading) {
-      setError('Please wait for network validation to complete');
-      return;
-    }
-    
-    // Check if network is valid after validation
-    if (networkValidation.isValid === false) {
-      setError(networkValidation.reason || 'Network connection is not approved for attendance');
-      return;
-    }
 
-    // For desktop app, ensure we have network info
-    if (window.electronAPI) {
-      if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
-        setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+    const allowCheckoutWithoutWifi = user?.allowCheckoutWithoutWifi === true;
+
+    // Re-validate network before check-out (skip when employee is allowed to checkout without WiFi)
+    if (!allowCheckoutWithoutWifi) {
+      await checkNetworkStatus();
+
+      // Check if network validation is still loading
+      if (networkValidation.loading) {
+        setError('Please wait for network validation to complete');
         return;
       }
-      
-      if (networkValidation.isValid !== true) {
-        setError('Network connection validation failed. Please check your connection.');
+
+      // Check if network is valid after validation
+      if (networkValidation.isValid === false) {
+        setError(networkValidation.reason || 'Network connection is not approved for attendance');
         return;
+      }
+
+      // For desktop app, ensure we have network info
+      if (window.electronAPI) {
+        if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
+          setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+          return;
+        }
+
+        if (networkValidation.isValid !== true) {
+          setError('Network connection validation failed. Please check your connection.');
+          return;
+        }
       }
     }
 
@@ -322,7 +326,7 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
         source: AttendanceSource.DESKTOP,
       };
 
-      // Always include network info for desktop app if available
+      // Include network info when available (for audit when bypassing, or required when not bypassing)
       if (window.electronAPI && networkValidation.networkInfo) {
         if (networkValidation.networkInfo.type === 'wifi' && networkValidation.networkInfo.wifi) {
           checkOutRequest.wifi = {
@@ -333,14 +337,14 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
           checkOutRequest.ethernet = {
             macAddress: networkValidation.networkInfo.ethernet.macAddress,
           };
-        } else {
-          // If network info exists but type is invalid, throw error
+        } else if (!allowCheckoutWithoutWifi) {
+          // If network info exists but type is invalid, throw error (only when WiFi required)
           throw new Error('Invalid network information. Please reconnect and try again.');
         }
       }
 
-      // If desktop app but no network info, throw error
-      if (window.electronAPI && !checkOutRequest.wifi && !checkOutRequest.ethernet) {
+      // Require network info for desktop unless employee is allowed to checkout without WiFi
+      if (!allowCheckoutWithoutWifi && window.electronAPI && !checkOutRequest.wifi && !checkOutRequest.ethernet) {
         throw new Error('Network connection information is required for desktop attendance');
       }
 

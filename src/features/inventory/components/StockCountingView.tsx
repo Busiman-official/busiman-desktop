@@ -63,6 +63,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     dateTo: string;
   }>({ countType: '', status: '', locationId: '', itemId: '', dateFrom: '', dateTo: '' });
   const [showFilters, setShowFilters] = useState(false);
+  const [highVarianceOnly, setHighVarianceOnly] = useState(false);
 
   // Create wizard
   const [createForm, setCreateForm] = useState<{
@@ -84,6 +85,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   // Enter physical: line edits (lineNo -> { physicalQuantity?, varianceReason?, batchNumber?, serialNumbers?, manufacturingDate?, expiryDate? })
   type LineEditPatch = { physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string };
   const [lineEdits, setLineEdits] = useState<Record<number, LineEditPatch>>({});
+  const [bulkReason, setBulkReason] = useState('');
   const [savingLines, setSavingLines] = useState(false);
 
   // Collapse state for variant groups (itemIds that are collapsed)
@@ -294,6 +296,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         serialNumbers: v.serialNumbers,
         manufacturingDate: v.manufacturingDate,
         expiryDate: v.expiryDate,
+        expectedVersion: doc.lines.find((line) => line.lineNo === parseInt(k, 10))?.lineVersion,
       }));
     if (lines.length === 0) return;
     setSavingLines(true);
@@ -305,7 +308,13 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
       setSuccess('Lines saved');
       setTimeout(() => setSuccess(null), 2000);
     } catch (err: any) {
-      setError(extractErrorMessage(err, 'Failed to save lines'));
+      const msg = extractErrorMessage(err, 'Failed to save lines');
+      if (msg.toLowerCase().includes('changed by another user') || msg.toLowerCase().includes('conflict')) {
+        setError('Count changed on another session. Reloaded latest data.');
+        await loadDoc(doc.id);
+      } else {
+        setError(msg);
+      }
     } finally {
       setSavingLines(false);
     }
@@ -369,6 +378,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             serialNumbers: serials?.length ? serials : undefined,
             manufacturingDate: getMfg(l) || undefined,
             expiryDate: getExpiry(l) || undefined,
+            expectedVersion: l.lineVersion,
           };
         })
         .filter((x): x is { lineNo: number; physicalQuantity: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string } => x !== null && x.physicalQuantity !== undefined);
@@ -458,6 +468,22 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     URL.revokeObjectURL(a.href);
   };
 
+  const applyBulkReasonToVarianceLines = () => {
+    if (!doc || !bulkReason.trim()) return;
+    setLineEdits((prev) => {
+      const next = { ...prev };
+      for (const line of doc.lines || []) {
+        const ph = getPhysical(line);
+        if (ph == null) continue;
+        const variance = ph - line.systemQuantity;
+        if (variance !== 0) {
+          next[line.lineNo] = { ...(next[line.lineNo] ?? {}), varianceReason: bulkReason.trim() };
+        }
+      }
+      return next;
+    });
+  };
+
   // --- List ---
   const renderList = () => (
     <div className="stock-counting-view-list counting-list">
@@ -487,6 +513,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             ))}
           </Select>
           <Button variant="ghost" onClick={() => setShowFilters(!showFilters)}>{showFilters ? 'Hide' : 'More'} filters</Button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={highVarianceOnly} onChange={(e) => setHighVarianceOnly(e.target.checked)} />
+            High variance only
+          </label>
         </div>
         <Button variant="primary" onClick={handleCreateStart}>Create New Count</Button>
       </div>
@@ -532,7 +562,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
               </tr>
             </thead>
             <tbody>
-              {counts.map((c) => {
+              {counts.filter((c) => (highVarianceOnly ? Math.abs(c.variance) > 5 : true)).map((c) => {
                 const handleRowDoubleClick = () => {
                   if (c.status === CountStatus.DRAFT || c.status === CountStatus.IN_PROGRESS) {
                     loadDoc(c.id);
@@ -682,6 +712,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         </div>
         <p className="form-hint">Enter what you physically see. For lines with a difference, a variance reason is required.</p>
         <p className="form-hint">If an item has variants, count is required per variant. Variants represent unique versions of this item. Each variant has its own stock.</p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <Input value={bulkReason} onChange={(e) => setBulkReason(e.target.value)} placeholder="Bulk variance reason" />
+          <Button variant="ghost" onClick={applyBulkReasonToVarianceLines}>Apply to all variance lines</Button>
+        </div>
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
         <div className="counting-table">
