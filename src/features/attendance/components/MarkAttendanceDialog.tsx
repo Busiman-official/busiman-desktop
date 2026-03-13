@@ -233,7 +233,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
       onClose();
     } catch (err: any) {
       // Use centralized error extraction utility
-      const errorMessage = extractErrorMessage(err, 'Unable to mark attendance. Please try again.');
+      let errorMessage = extractErrorMessage(err, 'Unable to mark attendance. Please try again.');
       
       // Map common error scenarios to user-friendly messages
       const statusCode = err.response?.status;
