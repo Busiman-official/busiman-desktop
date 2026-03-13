@@ -64,7 +64,8 @@
     "publish": {
       "provider": "github",
       "owner": "Busiman-official",
-      "repo": "busiman-desktop"
+      "repo": "busiman-desktop",
+      "releaseType": "release"
     }
   },
   "scripts": {
