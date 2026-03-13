@@ -132,8 +132,7 @@ export const InventoryPage: React.FC = () => {
     <div className="inventory-page">
       <div className="inventory-page-header">
         <div>
-          <h1>Inventory Management</h1>
-          <p className="page-subtitle">Manage inventory items and locations</p>
+          <h1>Inventory Dashboard</h1>
         </div>
         <div className="quick-actions-header">
           <Button

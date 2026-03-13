@@ -7,6 +7,7 @@ export enum UserRole {
   MANAGER = 'manager',
   HR = 'hr',
   ADMIN = 'admin',
+  INVENTORY_APPROVER = 'inventory_approver',
 }
 
 // User interface

@@ -99,10 +99,11 @@ export const Navbar: React.FC = () => {
       return location.pathname === roleDashboard || 
              location.pathname === '/dashboard' ||
              (user && (
-               (user.role === 'admin' && location.pathname === '/admin') ||
-               (user.role === 'hr' && location.pathname === '/hr') ||
-               (user.role === 'manager' && location.pathname === '/manager') ||
-               (user.role === 'employee' && location.pathname === '/employee')
+               (user.role === UserRole.ADMIN && location.pathname === '/admin') ||
+               (user.role === UserRole.HR && location.pathname === '/hr') ||
+               (user.role === UserRole.MANAGER && location.pathname === '/manager') ||
+               (user.role === UserRole.EMPLOYEE && location.pathname === '/employee') ||
+               (user.role === UserRole.INVENTORY_APPROVER && location.pathname === '/employee')
              ));
     }
     if (path === '/reports') {
@@ -128,7 +129,7 @@ export const Navbar: React.FC = () => {
     // Show inventory only if branch has inventory department, or user is admin
     if (item.path === '/inventory') {
       const hasInventoryDept = departments?.some((d) => d.name.toLowerCase() === 'inventory');
-      const isAdmin = user?.role === UserRole.ADMIN || user?.role === 'admin';
+      const isAdmin = user?.role === UserRole.ADMIN;
       return hasInventoryDept || isAdmin;
     }
     if (item.roles && user) {
@@ -218,7 +219,7 @@ export const Navbar: React.FC = () => {
                 >
                   Settings
                 </button>
-                {(user?.role === UserRole.ADMIN || user?.role === 'admin') && (
+                {user?.role === UserRole.ADMIN && (
                   <button
                     className="navbar-menu-item"
                     onClick={handleLogout}

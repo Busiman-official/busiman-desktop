@@ -30,6 +30,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       [UserRole.HR]: '/hr',
       [UserRole.MANAGER]: '/manager',
       [UserRole.EMPLOYEE]: '/employee',
+      [UserRole.INVENTORY_APPROVER]: '/employee',
     };
     return <Navigate to={roleRoutes[user.role] || '/dashboard'} replace />;
   }

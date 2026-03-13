@@ -808,6 +808,8 @@ class InventoryService {
     itemId?: string;
     dateFrom?: string;
     dateTo?: string;
+    submittedByMe?: boolean;
+    limit?: number;
   }): Promise<CountDocumentSummary[]> {
     const params = new URLSearchParams();
     if (filters?.countType) params.append('countType', filters.countType);
@@ -816,6 +818,8 @@ class InventoryService {
     if (filters?.itemId) params.append('itemId', filters.itemId);
     if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom);
     if (filters?.dateTo) params.append('dateTo', filters.dateTo);
+    if (filters?.submittedByMe === true) params.append('submittedByMe', 'true');
+    if (filters?.limit != null) params.append('limit', String(filters.limit));
     const query = params.toString() ? `?${params.toString()}` : '';
     const response = await api.get(`/inventory/counts${query}`);
     return extractApiData<CountDocumentSummary[]>(response);
@@ -873,6 +877,10 @@ class InventoryService {
       rejectionReason: rejectionReason ?? 'Rejected',
     });
     return extractApiData<CountDocumentResponse>(response);
+  }
+
+  async deleteCount(countId: string): Promise<void> {
+    await api.delete(`/inventory/counts/${countId}`);
   }
 
   /** Legacy: backend returns 501. Prefer rejectCount then re-enter and submit. */
@@ -1181,6 +1189,8 @@ export interface CountLineDto {
   item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; isPerishable?: boolean };
   variant?: { id: string; code: string; name: string };
   systemQuantity: number;
+  /** Current on-hand at count location (for display: current − system) */
+  currentStock?: number;
   physicalQuantity: number;
   variance: number;
   varianceReason?: string;
@@ -1224,9 +1234,13 @@ export interface CountDocumentSummary {
   status: CountStatus | string;
   itemSummary: string;
   systemQuantity: number;
+  /** Current on-hand total for all lines (for display: current − system) */
+  currentStockTotal?: number;
   physicalQuantity: number;
   variance: number;
   createdBy: { id: string; name: string; email: string };
+  submittedBy?: { id: string; name: string; email: string };
+  submittedAt?: string;
   createdAt: string;
   approvedBy?: { id: string; name: string; email: string };
   approvedAt?: string;

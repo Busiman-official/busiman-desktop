@@ -3,7 +3,7 @@
  * Uses CountDocument + CountLine APIs. Replaces inline renderCountingView and legacy StockCounting.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   inventoryService,
   CountType,
@@ -22,7 +22,11 @@ import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog, Modal } from '@/shared/components/modals';
 import { Textarea } from '@/shared/components/ui';
 import { NumberGrid } from './NumberGrid';
+import { authStore } from '@/store/authStore';
+import { canApproveCount, canDeleteCount } from '../utils/countPermissions';
 import './StockCountingView.css';
+
+type CountSegment = 'to_do' | 'to_approve' | 'pending' | 'done';
 
 function toIndustryFlags(item: CountLineDto['item']): IndustryFlags {
   return {
@@ -102,32 +106,66 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   // Dialogs
   const [showApproveDialog, setShowApproveDialog] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [segment, setSegment] = useState<CountSegment>('to_do');
   const [actionCountId, setActionCountId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [numberGridForLine, setNumberGridForLine] = useState<{ lineNo: number; tracking: 'SERIAL' | 'BATCH' } | null>(null);
+  const approverDefaultSegmentChecked = useRef(false);
+  const [hasPendingCounts, setHasPendingCounts] = useState<boolean | null>(null);
 
+  const user = authStore((s) => s.user);
   const selectedId = doc?.id ?? null;
 
   const loadCounts = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const baseFilters = {
+      countType: filters.countType || undefined,
+      locationId: filters.locationId || undefined,
+      itemId: filters.itemId || undefined,
+      dateFrom: filters.dateFrom || undefined,
+      dateTo: filters.dateTo || undefined,
+    };
     try {
-      const data = await inventoryService.listCounts({
-        countType: filters.countType || undefined,
-        status: filters.status || undefined,
-        locationId: filters.locationId || undefined,
-        itemId: filters.itemId || undefined,
-        dateFrom: filters.dateFrom || undefined,
-        dateTo: filters.dateTo || undefined,
-      });
-      setCounts(data);
+      const toList = (raw: unknown): CountDocumentSummary[] =>
+        Array.isArray(raw) ? raw.filter((x): x is CountDocumentSummary => x != null && typeof x === 'object') : [];
+      const sortByCreated = (list: CountDocumentSummary[]) =>
+        list.sort(
+          (a, b) =>
+            new Date(b?.createdAt ?? 0).getTime() - new Date(a?.createdAt ?? 0).getTime()
+        );
+      if (segment === 'to_do') {
+        const [draft, inProgress] = await Promise.all([
+          inventoryService.listCounts({ ...baseFilters, status: CountStatus.DRAFT }),
+          inventoryService.listCounts({ ...baseFilters, status: CountStatus.IN_PROGRESS }),
+        ]);
+        setCounts(sortByCreated([...toList(draft), ...toList(inProgress)]));
+      } else if (segment === 'to_approve') {
+        const data = await inventoryService.listCounts({ ...baseFilters, status: CountStatus.SUBMITTED });
+        setCounts(sortByCreated(toList(data)));
+      } else if (segment === 'pending') {
+        const data = await inventoryService.listCounts({ ...baseFilters, status: CountStatus.SUBMITTED, submittedByMe: true });
+        const list = sortByCreated(toList(data));
+        setCounts(list);
+        if (list.length === 0) {
+          setHasPendingCounts(false);
+          setSegment('to_do');
+        }
+      } else {
+        const [approved, rejected] = await Promise.all([
+          inventoryService.listCounts({ ...baseFilters, status: CountStatus.APPROVED }),
+          inventoryService.listCounts({ ...baseFilters, status: CountStatus.REJECTED }),
+        ]);
+        setCounts(sortByCreated([...toList(approved), ...toList(rejected)]));
+      }
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to load counts'));
       logger.error('[StockCountingView] loadCounts', err);
     } finally {
       setLoading(false);
     }
-  }, [filters.countType, filters.status, filters.locationId, filters.itemId, filters.dateFrom, filters.dateTo]);
+  }, [segment, filters.countType, filters.locationId, filters.itemId, filters.dateFrom, filters.dateTo]);
 
   const loadDoc = useCallback(async (id: string) => {
     setLoading(true);
@@ -277,7 +315,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     if (wizardStep === 3) setWizardStep(2);
   };
 
-  const handleSaveLines = async () => {
+  const handleSaveLines = async (redirectToList?: boolean) => {
     if (!doc) return;
     const lines = Object.entries(lineEdits)
       .filter(([, v]) =>
@@ -288,17 +326,26 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         v.manufacturingDate != null ||
         v.expiryDate != null
       )
-      .map(([k, v]) => ({
-        lineNo: parseInt(k, 10),
-        physicalQuantity: v.physicalQuantity,
-        varianceReason: v.varianceReason,
-        batchNumber: v.batchNumber,
-        serialNumbers: v.serialNumbers,
-        manufacturingDate: v.manufacturingDate,
-        expiryDate: v.expiryDate,
-        expectedVersion: doc.lines.find((line) => line.lineNo === parseInt(k, 10))?.lineVersion,
-      }));
-    if (lines.length === 0) return;
+      .map(([k, v]) => {
+        const lineNo = parseInt(k, 10);
+        if (Number.isNaN(lineNo)) return null;
+        const serverLine = doc.lines?.find((line) => line.lineNo === lineNo);
+        const out: { lineNo: number; physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string; expectedVersion?: number } = { lineNo };
+        if (v.physicalQuantity != null) out.physicalQuantity = v.physicalQuantity;
+        if (v.varianceReason != null && v.varianceReason !== '') out.varianceReason = v.varianceReason;
+        if (v.batchNumber != null && v.batchNumber !== '') out.batchNumber = v.batchNumber;
+        if (Array.isArray(v.serialNumbers) && v.serialNumbers.length > 0) out.serialNumbers = v.serialNumbers;
+        if (v.manufacturingDate != null) out.manufacturingDate = v.manufacturingDate;
+        if (v.expiryDate != null) out.expiryDate = v.expiryDate;
+        if (serverLine?.lineVersion != null) out.expectedVersion = serverLine.lineVersion;
+        return out;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    if (lines.length === 0) {
+      setSuccess('No changes to save');
+      setTimeout(() => setSuccess(null), 2500);
+      return;
+    }
     setSavingLines(true);
     setError(null);
     try {
@@ -307,6 +354,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
       setLineEdits({});
       setSuccess('Lines saved');
       setTimeout(() => setSuccess(null), 2000);
+      if (redirectToList) {
+        setDoc(null);
+        setViewMode('list');
+        loadCounts();
+      }
     } catch (err: any) {
       const msg = extractErrorMessage(err, 'Failed to save lines');
       if (msg.toLowerCase().includes('changed by another user') || msg.toLowerCase().includes('conflict')) {
@@ -381,7 +433,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             expectedVersion: l.lineVersion,
           };
         })
-        .filter((x): x is { lineNo: number; physicalQuantity: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string } => x !== null && x.physicalQuantity !== undefined);
+        .filter((x): x is NonNullable<typeof x> => x !== null && x.physicalQuantity !== undefined);
       if (linesToFlush.length > 0) {
         const updated = await inventoryService.updateCountLines(doc.id, { lines: linesToFlush });
         setDoc(updated);
@@ -389,7 +441,9 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
       const updated = await inventoryService.submitCount(doc.id);
       setDoc(updated);
       setSuccess('Count submitted');
-      setViewMode('detail');
+      setDoc(null);
+      setViewMode('list');
+      loadCounts();
     } catch (err: any) {
       setError(extractErrorMessage(err, 'Failed to submit count'));
     }
@@ -431,6 +485,25 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     }
   };
 
+  const handleDelete = async () => {
+    if (!actionCountId || !user) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      await inventoryService.deleteCount(actionCountId);
+      setSuccess('Count deleted');
+      setShowDeleteDialog(false);
+      setActionCountId(null);
+      if (doc?.id === actionCountId) {
+        setDoc(null);
+        setViewMode('list');
+      }
+      loadCounts();
+    } catch (err: any) {
+      setError(extractErrorMessage(err, "You don't have permission to delete this count."));
+    }
+  };
+
   const varianceClass = (v: number) =>
     v === 0 ? 'variance-zero' : v > 0 ? 'variance-positive' : 'variance-negative';
 
@@ -448,6 +521,16 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
 
   const variantLabel = (l: CountLineDto) =>
     l.variant ? (l.variant.name ?? l.variant.code ?? '—') : '—';
+
+  /** System column: show (current stock − system at count) with tooltip when current is available */
+  const formatSystemCell = (current: number | undefined, systemAtCount: number) => {
+    const sys = systemAtCount ?? 0;
+    if (current === undefined || current === null) {
+      return { text: String(sys), tooltip: 'System stock at time of count.' };
+    }
+    const tooltip = 'Current stock − system at count';
+    return { text: `${current} − ${sys}`, tooltip };
+  };
 
   const handleExportCsv = () => {
     if (!doc?.lines?.length) return;
@@ -484,58 +567,150 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     });
   };
 
+  const canApprove = user ? canApproveCount(user?.role ?? '') : false;
+
+  // For non-approvers (employees): check if they have any counts pending approval (optimized: limit 1)
+  useEffect(() => {
+    if (viewMode !== 'list' || canApprove || !user) return;
+    let cancelled = false;
+    inventoryService.listCounts({ status: CountStatus.SUBMITTED, submittedByMe: true, limit: 1 }).then((list) => {
+      if (!cancelled) setHasPendingCounts(Array.isArray(list) && list.length > 0);
+    }).catch(() => {
+      if (!cancelled) setHasPendingCounts(false);
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, canApprove, user]);
+
+  // Default segment for approvers: "To approve" when it has items (plan 2.1)
+  useEffect(() => {
+    if (!canApprove || approverDefaultSegmentChecked.current) return;
+    approverDefaultSegmentChecked.current = true;
+    inventoryService.listCounts({ status: CountStatus.SUBMITTED }).then((list) => {
+      if (Array.isArray(list) && list.length > 0) setSegment('to_approve');
+    }).catch(() => {});
+  }, [canApprove]);
+
+  const emptyMessage =
+    segment === 'to_do'
+      ? 'No counts in progress. Start a new count.'
+      : segment === 'to_approve'
+        ? 'No counts waiting for approval.'
+        : segment === 'pending'
+          ? 'No counts pending approval.'
+          : 'No completed counts';
+
   // --- List ---
   const renderList = () => (
     <div className="stock-counting-view-list counting-list">
-      <p className="stock-counting-view-help" title="Stock counts verify actual stock. They don't change inventory until approved.">
-        Stock counts verify actual stock. They don't change inventory until approved.
-      </p>
       <div className="counting-toolbar">
-        <div className="stock-counting-view-filters">
+        <div className="stock-counting-view-segments" style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginBottom: 8 }}>
+          <div className="stock-counting-view-filters-container" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div className="stock-counting-view-filters">
           <Select
-            value={filters.countType}
+            value={filters.countType ?? ''}
             onChange={(e) => setFilters({ ...filters, countType: e.target.value })}
             style={{ width: '140px' }}
           >
-            <option value="">All types</option>
-            {Object.values(CountType).map((t) => (
-              <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
-            ))}
-          </Select>
-          <Select
-            value={filters.status}
-            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-            style={{ width: '140px' }}
-          >
-            <option value="">All statuses</option>
-            {[CountStatus.DRAFT, CountStatus.IN_PROGRESS, CountStatus.SUBMITTED, CountStatus.APPROVED, CountStatus.REJECTED].map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </Select>
-          <Button variant="ghost" onClick={() => setShowFilters(!showFilters)}>{showFilters ? 'Hide' : 'More'} filters</Button>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={highVarianceOnly} onChange={(e) => setHighVarianceOnly(e.target.checked)} />
-            High variance only
-          </label>
+                <option value="">All types</option>
+                {Object.values(CountType).map((t) => (
+                  <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+                ))}
+              </Select>
+              <Button variant="ghost" onClick={() => setShowFilters(!showFilters)}>{showFilters ? 'Hide' : 'More'} filters</Button>
+
+            </div>
+            {locations.length > 0 ? (
+              <Button variant="primary" onClick={handleCreateStart}>Create New Count</Button>
+            ) : (
+              <span style={{ fontSize: 12, color: '#666' }}>No locations in scope</span>
+            )}
+          </div>
+          <div className="stock-counting-view-segments-container" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={highVarianceOnly} onChange={(e) => setHighVarianceOnly(e.target.checked)} />
+              High variance only
+            </label>
+            <button
+              type="button"
+              className={segment === 'to_do' ? 'active' : ''}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                background: segment === 'to_do' ? '#e0e0e0' : 'transparent',
+                cursor: 'pointer',
+              }}
+              onClick={() => setSegment('to_do')}
+            >
+              To do
+            </button>
+            {canApprove && (
+              <button
+                type="button"
+                className={segment === 'to_approve' ? 'active' : ''}
+                style={{
+                  padding: '6px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4,
+                  background: segment === 'to_approve' ? '#e0e0e0' : 'transparent',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setSegment('to_approve')}
+              >
+                To approve
+              </button>
+            )}
+            {!canApprove && hasPendingCounts === true && (
+              <button
+                type="button"
+                className={segment === 'pending' ? 'active' : ''}
+                style={{
+                  padding: '6px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4,
+                  background: segment === 'pending' ? '#e0e0e0' : 'transparent',
+                  cursor: 'pointer',
+                }}
+                onClick={() => setSegment('pending')}
+                title="Counts you submitted, waiting for approval"
+              >
+                Pending
+              </button>
+            )}
+            <button
+              type="button"
+              className={segment === 'done' ? 'active' : ''}
+              style={{
+                padding: '6px 12px',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                background: segment === 'done' ? '#e0e0e0' : 'transparent',
+                cursor: 'pointer',
+              }}
+              onClick={() => setSegment('done')}
+            >
+              Done
+            </button>
+          </div>
         </div>
-        <Button variant="primary" onClick={handleCreateStart}>Create New Count</Button>
+
       </div>
       {showFilters && (
         <div className="stock-counting-view-filter-bar">
-          <Select value={filters.locationId} onChange={(e) => setFilters({ ...filters, locationId: e.target.value })} style={{ width: '200px' }}>
+          <Select value={filters.locationId ?? ''} onChange={(e) => setFilters({ ...filters, locationId: e.target.value })} style={{ width: '200px' }}>
             <option value="">All locations</option>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>{l.code} – {l.name}</option>
             ))}
           </Select>
-          <Select value={filters.itemId} onChange={(e) => setFilters({ ...filters, itemId: e.target.value })} style={{ width: '220px' }}>
+          <Select value={filters.itemId ?? ''} onChange={(e) => setFilters({ ...filters, itemId: e.target.value })} style={{ width: '220px' }}>
             <option value="">All items</option>
             {items.map((i) => (
               <option key={i.id} value={i.id}>{i.sku} – {i.name}</option>
             ))}
           </Select>
-          <Input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} />
-          <Input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} />
+          <Input type="date" value={filters.dateFrom ?? ''} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} />
+          <Input type="date" value={filters.dateTo ?? ''} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} />
         </div>
       )}
       {error && <div className="error-message">{error}</div>}
@@ -543,7 +718,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
       {loading ? (
         <LoadingState message="Loading counts..." />
       ) : counts.length === 0 ? (
-        <EmptyState message="No stock counts found" />
+        <EmptyState
+          message={emptyMessage}
+          action={segment === 'to_do' ? <Button variant="primary" onClick={handleCreateStart}>New count</Button> : undefined}
+        />
       ) : (
         <div className="counting-table">
           <table>
@@ -553,7 +731,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                 <th>Type</th>
                 <th>Location</th>
                 <th>Item(s)</th>
-                <th>System</th>
+                <th title="Current stock − system at count (hover cell for details)">System</th>
                 <th>Physical</th>
                 <th>Variance</th>
                 <th>Status</th>
@@ -562,37 +740,44 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
               </tr>
             </thead>
             <tbody>
-              {counts.filter((c) => (highVarianceOnly ? Math.abs(c.variance) > 5 : true)).map((c) => {
-                const handleRowDoubleClick = () => {
-                  if (c.status === CountStatus.DRAFT || c.status === CountStatus.IN_PROGRESS) {
-                    loadDoc(c.id);
-                    setViewMode('enter');
-                  } else {
-                    setDoc(null);
-                    loadDoc(c.id);
-                    setViewMode('detail');
-                  }
-                };
-                return (
-                  <tr 
-                    key={c.id} 
-                    onDoubleClick={handleRowDoubleClick}
-                    className="stock-counting-view-list-row"
-                    title="Double-click to open"
-                  >
-                    <td>{c.countNumber}</td>
-                    <td>{String(c.countType).replace(/_/g, ' ')}</td>
-                    <td>{c.location?.code ?? '-'}</td>
-                    <td>{c.itemSummary}</td>
-                    <td>{c.systemQuantity}</td>
-                    <td>{c.physicalQuantity}</td>
-                    <td><span className={varianceClass(c.variance)}>{c.variance > 0 ? '+' : ''}{c.variance}</span></td>
-                    <td><span className={`status-${String(c.status).toLowerCase()}`}>{c.status}</span></td>
-                    <td>{c.createdBy?.name ?? '-'}</td>
-                    <td>{new Date(c.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                );
-              })}
+              {counts
+                .filter((c): c is CountDocumentSummary => c != null && typeof c === 'object')
+                .filter((c) => (highVarianceOnly ? Math.abs(Number(c.variance)) > 5 : true))
+                .map((c, idx) => {
+                  const handleRowDoubleClick = () => {
+                    if (c.status === CountStatus.DRAFT || c.status === CountStatus.IN_PROGRESS) {
+                      loadDoc(c.id);
+                      setViewMode('enter');
+                    } else {
+                      setDoc(null);
+                      loadDoc(c.id);
+                      setViewMode('detail');
+                    }
+                  };
+                  const statusStr = c.status != null ? String(c.status) : '';
+                  const createdAt = c.createdAt != null ? new Date(c.createdAt).toLocaleDateString() : '—';
+                  return (
+                    <tr
+                      key={c.id ?? `count-row-${idx}`}
+                      onDoubleClick={handleRowDoubleClick}
+                      className="stock-counting-view-list-row"
+                      title="Double-click to open"
+                    >
+                      <td>{c.countNumber ?? '—'}</td>
+                      <td>{c.countType != null ? String(c.countType).replace(/_/g, ' ') : '—'}</td>
+                      <td>{c.location?.code ?? '—'}</td>
+                      <td>{c.itemSummary ?? '—'}</td>
+                      <td title={formatSystemCell(c.currentStockTotal, c.systemQuantity ?? 0).tooltip}>
+                        {formatSystemCell(c.currentStockTotal, c.systemQuantity ?? 0).text}
+                      </td>
+                      <td>{c.physicalQuantity ?? '—'}</td>
+                      <td><span className={varianceClass(Number(c.variance))}>{Number(c.variance) > 0 ? '+' : ''}{c.variance}</span></td>
+                      <td><span className={statusStr ? `status-${statusStr.toLowerCase()}` : ''}>{statusStr || '—'}</span></td>
+                      <td>{c.createdBy?.name ?? '—'}</td>
+                      <td>{createdAt}</td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -700,14 +885,27 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   const renderEnter = () => {
     if (!doc) return <LoadingState message="Loading…" />;
     const blind = doc.blindCount;
+    const isCreator = user && doc.createdBy?.id === user.id;
+    const canSubmitThis = isCreator || canApprove;
+    const showDeleteInEnter = user && canDeleteCount(user.role, doc.createdBy?.id ?? '', user.id);
     return (
       <Card className="stock-counting-view-enter counting-details">
         <div className="details-header">
           <h2>Enter Physical – {doc.countNumber}</h2>
           <div className="details-actions">
             <Button variant="secondary" onClick={() => setViewMode('list')}>Back to list</Button>
-            <Button variant="ghost" onClick={handleSaveLines} disabled={savingLines}>Save</Button>
-            <Button variant="primary" onClick={handleSubmit} disabled={!canSubmit}>Submit</Button>
+            <Button variant="ghost" onClick={() => handleSaveLines(true)} disabled={savingLines} title="Save entered quantities and variance reasons">Save</Button>
+            <Button
+              variant="primary"
+              onClick={handleSubmit}
+              disabled={!canSubmitThis || !canSubmit}
+              title={!canSubmitThis ? 'Only the count creator or an approver can submit' : !canSubmit ? 'Enter physical quantity for every line; add variance reason where there is a difference' : 'Submit count for approval'}
+            >
+              Submit
+            </Button>
+            {showDeleteInEnter && (
+              <Button variant="danger" onClick={() => { setActionCountId(doc.id); setShowDeleteDialog(true); }}>Delete</Button>
+            )}
           </div>
         </div>
         <p className="form-hint">Enter what you physically see. For lines with a difference, a variance reason is required.</p>
@@ -724,7 +922,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
               <tr>
                 <th>Item</th>
                 <th title="Variant-level counting is mandatory for variant items; product-level adjustment is never allowed.">Variant</th>
-                {!blind && <th>System</th>}
+                {!blind && <th title="Current stock − system at count (hover cell for details)">System</th>}
                 <th>Physical</th>
                 <th>Variance</th>
                 <th>Variance reason</th>
@@ -759,11 +957,12 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                         const ph = getPhysical(l);
                         const v = ph != null ? ph - l.systemQuantity : 0;
                         const needReason = v !== 0;
+                        const sysCell = formatSystemCell(l.currentStock, l.systemQuantity);
                         return (
                           <tr key={l.id} className="stock-counting-view-child-row">
                             <td className="stock-counting-view-indent"></td>
                             <td>{variantLabel(l)}</td>
-                            {!blind && <td>{l.systemQuantity}</td>}
+                            {!blind && <td title={sysCell.tooltip}>{sysCell.text}</td>}
                             <td>
                               <Input
                                 type="number"
@@ -817,11 +1016,12 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                   const ph = getPhysical(l);
                   const v = ph != null ? ph - l.systemQuantity : 0;
                   const needReason = v !== 0;
+                  const sysCell = formatSystemCell(l.currentStock, l.systemQuantity);
                   return (
                     <tr key={l.id}>
                       <td>{l.item?.name ?? l.itemId}</td>
                       <td>{variantLabel(l)}</td>
-                      {!blind && <td>{l.systemQuantity}</td>}
+                      {!blind && <td title={sysCell.tooltip}>{sysCell.text}</td>}
                       <td>
                         <Input
                           type="number"
@@ -879,18 +1079,31 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   const renderDetail = () => {
     if (!doc) return <LoadingState message="Loading…" />;
     const canEdit = doc.status === CountStatus.DRAFT || doc.status === CountStatus.IN_PROGRESS;
+    const isCreator = user && doc.createdBy?.id === user.id;
+    const isSubmitter = user && doc.submittedBy?.id === user.id;
+    const showApproveReject =
+      doc.status === CountStatus.SUBMITTED &&
+      canApprove &&
+      !isSubmitter;
+    const showDelete =
+      canEdit &&
+      user &&
+      canDeleteCount(user.role, doc.createdBy?.id ?? '', user.id);
     return (
       <Card className="counting-details stock-counting-view-detail">
         <div className="details-header">
           <h2>Count {doc.countNumber}</h2>
           <div className="details-actions">
             <Button variant="secondary" onClick={() => { setDoc(null); setViewMode('list'); }}>Back to list</Button>
-            {canEdit && <Button variant="primary" onClick={() => setViewMode('enter')}>Enter Physical</Button>}
-            {doc.status === CountStatus.SUBMITTED && (
+            {canEdit && (isCreator || canApprove) && <Button variant="primary" onClick={() => setViewMode('enter')}>Enter Physical</Button>}
+            {showApproveReject && (
               <>
                 <Button variant="primary" onClick={() => { setActionCountId(doc.id); setShowApproveDialog(true); }}>Approve</Button>
                 <Button variant="danger" onClick={() => { setActionCountId(doc.id); setRejectionReason(''); setShowRejectDialog(true); }}>Reject</Button>
               </>
+            )}
+            {showDelete && (
+              <Button variant="danger" onClick={() => { setActionCountId(doc.id); setShowDeleteDialog(true); }}>Delete</Button>
             )}
             {doc.adjustmentMovementDocumentId && onViewMovementDocument && (
               <Button variant="ghost" onClick={() => onViewMovementDocument(doc.adjustmentMovementDocumentId!)}>View Adjustment</Button>
@@ -910,9 +1123,13 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
               <div><label>Location</label><div>{doc.location ? `${doc.location.code} – ${doc.location.name}` : doc.locationId}</div></div>
               <div><label>Created by</label><div>{doc.createdBy?.name ?? '-'}</div></div>
               <div><label>Created</label><div>{doc.createdAt ? new Date(doc.createdAt).toLocaleString() : '-'}</div></div>
-              {doc.submittedAt && <div><label>Submitted</label><div>{new Date(doc.submittedAt).toLocaleString()}</div></div>}
+              {doc.submittedAt && (
+                <div><label>Submitted</label><div>Submitted by {doc.submittedBy?.name ?? '—'} at {new Date(doc.submittedAt).toLocaleString()}</div></div>
+              )}
               {doc.approvedAt && <div><label>Approved</label><div>{new Date(doc.approvedAt).toLocaleString()} by {doc.approvedBy?.name}</div></div>}
-              {doc.rejectedAt && <div><label>Rejected</label><div>{new Date(doc.rejectedAt).toLocaleString()} – {doc.rejectionReason}</div></div>}
+              {doc.rejectedAt && (
+                <div><label>Rejected</label><div>Rejected by {doc.rejectedBy?.name ?? '—'} at {new Date(doc.rejectedAt).toLocaleString()} – {doc.rejectionReason}</div></div>
+              )}
             </div>
           </div>
           <div className="details-section">
@@ -923,7 +1140,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                   <tr>
                     <th>Item</th>
                     <th title="Variant-level counting is mandatory for variant items; product-level adjustment is never allowed.">Variant</th>
-                    <th>System</th>
+                    <th title="Current stock − system at count (hover cell for details)">System</th>
                     <th>Physical</th>
                     <th>Variance</th>
                     <th>Reason</th>
@@ -954,36 +1171,42 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                             <td>—</td>
                             <td colSpan={6}>—</td>
                           </tr>
-                          {!collapsed && lines.map((l) => (
-                            <tr key={l.id} className="stock-counting-view-child-row">
-                              <td className="stock-counting-view-indent"></td>
-                              <td>{variantLabel(l)}</td>
-                              <td>{l.systemQuantity}</td>
-                              <td>{l.physicalQuantity}</td>
-                              <td><span className={varianceClass(l.variance)}>{l.variance > 0 ? '+' : ''}{l.variance}</span></td>
-                              <td>{l.varianceReason ?? '—'}</td>
-                              <td>{l.batchNumber ?? '—'}</td>
-                              <td>{l.expiryDate ? new Date(l.expiryDate).toLocaleDateString() : '—'}</td>
-                              <td>{l.serialNumbers?.length ? l.serialNumbers.join(', ') : '—'}</td>
-                            </tr>
-                          ))}
+                          {!collapsed && lines.map((l) => {
+                            const sysCell = formatSystemCell(l.currentStock, l.systemQuantity);
+                            return (
+                              <tr key={l.id} className="stock-counting-view-child-row">
+                                <td className="stock-counting-view-indent"></td>
+                                <td>{variantLabel(l)}</td>
+                                <td title={sysCell.tooltip}>{sysCell.text}</td>
+                                <td>{l.physicalQuantity}</td>
+                                <td><span className={varianceClass(l.variance)}>{l.variance > 0 ? '+' : ''}{l.variance}</span></td>
+                                <td>{l.varianceReason ?? '—'}</td>
+                                <td>{l.batchNumber ?? '—'}</td>
+                                <td>{l.expiryDate ? new Date(l.expiryDate).toLocaleDateString() : '—'}</td>
+                                <td>{l.serialNumbers?.length ? l.serialNumbers.join(', ') : '—'}</td>
+                              </tr>
+                            );
+                          })}
                         </React.Fragment>
                       );
                     }
 
-                    return lines.map((l) => (
-                      <tr key={l.id}>
-                        <td>{l.item?.name ?? l.itemId}</td>
-                        <td>{variantLabel(l)}</td>
-                        <td>{l.systemQuantity}</td>
-                        <td>{l.physicalQuantity}</td>
-                        <td><span className={varianceClass(l.variance)}>{l.variance > 0 ? '+' : ''}{l.variance}</span></td>
-                        <td>{l.varianceReason ?? '—'}</td>
-                        <td>{l.batchNumber ?? '—'}</td>
-                        <td>{l.expiryDate ? new Date(l.expiryDate).toLocaleDateString() : '—'}</td>
-                        <td>{l.serialNumbers?.length ? l.serialNumbers.join(', ') : '—'}</td>
-                      </tr>
-                    ));
+                    return lines.map((l) => {
+                      const sysCell = formatSystemCell(l.currentStock, l.systemQuantity);
+                      return (
+                        <tr key={l.id}>
+                          <td>{l.item?.name ?? l.itemId}</td>
+                          <td>{variantLabel(l)}</td>
+                          <td title={sysCell.tooltip}>{sysCell.text}</td>
+                          <td>{l.physicalQuantity}</td>
+                          <td><span className={varianceClass(l.variance)}>{l.variance > 0 ? '+' : ''}{l.variance}</span></td>
+                          <td>{l.varianceReason ?? '—'}</td>
+                          <td>{l.batchNumber ?? '—'}</td>
+                          <td>{l.expiryDate ? new Date(l.expiryDate).toLocaleDateString() : '—'}</td>
+                          <td>{l.serialNumbers?.length ? l.serialNumbers.join(', ') : '—'}</td>
+                        </tr>
+                      );
+                    });
                   })}
                 </tbody>
               </table>
@@ -1052,6 +1275,14 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         onConfirm={handleApprove}
         onCancel={() => { setShowApproveDialog(false); setActionCountId(null); }}
         variant="info"
+      />
+      <ConfirmDialog
+        isOpen={showDeleteDialog}
+        title="Delete count"
+        message="Permanently delete this count? This cannot be undone."
+        onConfirm={handleDelete}
+        onCancel={() => { setShowDeleteDialog(false); setActionCountId(null); }}
+        variant="danger"
       />
       <Modal
         isOpen={showRejectDialog}
