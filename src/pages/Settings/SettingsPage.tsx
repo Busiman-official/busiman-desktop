@@ -9,40 +9,36 @@ import { UserRole } from '@/types';
 import { PersonalSettings } from './sections/PersonalSettings';
 import { AttendanceSettings } from './sections/AttendanceSettings';
 import { ReportsSettings } from './sections/ReportsSettings';
-import { EmployeeSettings } from './sections/EmployeeSettings';
-import { ShiftSettings } from './sections/ShiftSettings';
-import { ProxySettings } from './sections/ProxySettings';
+import { WorkforceSettings } from './sections/WorkforceSettings';
+import { DevicesSettings } from './sections/DevicesSettings';
 import { SystemLogs } from './sections/SystemLogs';
 import { CompanySettings } from './sections/CompanySettings';
 import './SettingsPage.css';
 
 type SettingsSection =
-  | 'personal'
+  | 'account'
   | 'attendance'
   | 'reports'
-  | 'employees'
-  | 'shifts'
-  | 'proxy'
+  | 'workforce'
   | 'company'
+  | 'devices'
   | 'logs';
 
 export const SettingsPage: React.FC = () => {
   const { user } = authStore();
-  const [activeSection, setActiveSection] = useState<SettingsSection>('personal');
+  const [activeSection, setActiveSection] = useState<SettingsSection>('account');
 
   useEffect(() => {
-    // Listen for open-logs-viewer event from tray menu
     const handleOpenLogsViewer = () => {
       setActiveSection('logs');
     };
 
     window.addEventListener('open-logs-viewer', handleOpenLogsViewer);
 
-    // Check URL hash for direct navigation
     const hash = window.location.hash.replace('#', '');
-    if (hash === 'logs') {
-      setActiveSection('logs');
-    }
+    if (hash === 'logs') setActiveSection('logs');
+    else if (hash === 'devices') setActiveSection('devices');
+    else if (hash === 'workforce') setActiveSection('workforce');
 
     return () => {
       window.removeEventListener('open-logs-viewer', handleOpenLogsViewer);
@@ -52,16 +48,15 @@ export const SettingsPage: React.FC = () => {
   const canManageEmployees = user?.role === UserRole.HR || user?.role === UserRole.ADMIN;
 
   const sections = [
-    { id: 'personal' as const, label: 'Personal', icon: '👤' },
+    { id: 'account' as const, label: 'Account', icon: '👤' },
     { id: 'attendance' as const, label: 'Attendance', icon: '📅' },
     { id: 'reports' as const, label: 'Reports', icon: '📊' },
-    ...(canManageEmployees ? [{ id: 'employees' as const, label: 'Employees', icon: '👥' }] : []),
-    ...(canManageEmployees ? [{ id: 'shifts' as const, label: 'Shifts', icon: '🕐' }] : []),
+    ...(canManageEmployees ? [{ id: 'workforce' as const, label: 'Workforce', icon: '👥' }] : []),
     ...(user?.role === UserRole.ADMIN
-      ? [{ id: 'company' as const, label: 'Company Details', icon: '🏢' }]
+      ? [{ id: 'company' as const, label: 'Company', icon: '🏢' }]
       : []),
-    { id: 'proxy' as const, label: 'Proxy Server', icon: '🔌' },
-    { id: 'logs' as const, label: 'System Logs', icon: '📋' },
+    { id: 'devices' as const, label: 'Devices', icon: '🔌' },
+    { id: 'logs' as const, label: 'Logs', icon: '📋' },
   ];
 
   return (
@@ -88,13 +83,12 @@ export const SettingsPage: React.FC = () => {
         </div>
 
         <div className="settings-content">
-          {activeSection === 'personal' && <PersonalSettings />}
+          {activeSection === 'account' && <PersonalSettings />}
           {activeSection === 'attendance' && <AttendanceSettings />}
           {activeSection === 'reports' && <ReportsSettings />}
-          {activeSection === 'employees' && canManageEmployees && <EmployeeSettings />}
-          {activeSection === 'shifts' && canManageEmployees && <ShiftSettings />}
-          {activeSection === 'proxy' && <ProxySettings />}
+          {activeSection === 'workforce' && canManageEmployees && <WorkforceSettings />}
           {activeSection === 'company' && user?.role === UserRole.ADMIN && <CompanySettings />}
+          {activeSection === 'devices' && <DevicesSettings />}
           {activeSection === 'logs' && <SystemLogs />}
         </div>
       </div>

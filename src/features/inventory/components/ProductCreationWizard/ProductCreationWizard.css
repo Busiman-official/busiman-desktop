@@ -48,11 +48,28 @@
   transition: width 150ms ease;
 }
 
+/* Steps row: tabs + Next button on the right */
+.wizard-steps-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.wizard-steps-row .wizard-steps-tabs {
+  flex: 1;
+  min-width: 0;
+}
+
+.wizard-header-next-btn {
+  flex-shrink: 0;
+}
+
 /* Step tabs - compact */
 .wizard-steps-tabs {
   display: flex;
   gap: 4px;
-  margin-top: 8px;
   flex-wrap: wrap;
 }
 
@@ -153,20 +170,6 @@
   color: #333;
   text-align: right;
   word-break: break-word;
-}
-
-/* Sticky footer */
-.wizard-footer {
-  flex-shrink: 0;
-  padding: 10px 16px;
-  background: #fff;
-  border-top: 1px solid #e5e5e5;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
 }
 
 /* Compact form spacing inside steps */

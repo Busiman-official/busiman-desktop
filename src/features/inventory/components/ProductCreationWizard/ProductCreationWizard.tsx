@@ -373,17 +373,31 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     return () => clearInterval(t);
   }, [formData, showToast]);
 
+  const handleNextStep = useCallback(() => {
+    if (currentStep < 6) {
+      setCurrentStep((s) => s + 1);
+    } else {
+      handleSave(false);
+    }
+  }, [currentStep, handleSave]);
+
+  const handlePrevStep = useCallback(() => {
+    if (currentStep > 1) {
+      setCurrentStep((s) => s - 1);
+    }
+  }, [currentStep]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 's') {
-          e.preventDefault();
-          handleSave(false);
-          return;
-        }
         if (e.key === 'Enter') {
           e.preventDefault();
-          handleSave(true);
+          handleNextStep();
+          return;
+        }
+        if (e.key === 'Backspace') {
+          e.preventDefault();
+          handlePrevStep();
           return;
         }
         const num = parseInt(e.key, 10);
@@ -400,7 +414,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSave, handleCancel]);
+  }, [handleNextStep, handlePrevStep, handleCancel]);
 
   const marginPercent =
     formData.costPrice && formData.sellingPrice && parseFloat(formData.costPrice) > 0
@@ -413,28 +427,40 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     <div className="product-creation-wizard" role="application" aria-label="Product Creation Wizard">
       {/* Sticky header */}
       <header className="wizard-header">
-        <h2>Create Product – Busiman</h2>
+        {/* <h2>Create Product – Busiman</h2> */}
         <div className="wizard-progress-text" aria-live="polite">
           Step {currentStep} of 6 – {progressPercent}% Complete
         </div>
         <div className="wizard-progress-bar" role="progressbar" aria-valuenow={progressPercent} aria-valuemin={0} aria-valuemax={100}>
           <div className="wizard-progress-fill" style={{ width: `${progressPercent}%` }} />
         </div>
-        <div className="wizard-steps-tabs" role="tablist" aria-label="Wizard steps">
-          {WIZARD_STEPS.map((step) => (
-            <button
-              key={step.id}
-              type="button"
-              role="tab"
-              aria-selected={currentStep === step.id}
-              aria-controls={`step-panel-${step.id}`}
-              id={`step-tab-${step.id}`}
-              className="wizard-step-tab"
-              onClick={() => setCurrentStep(step.id)}
-            >
-              {step.label}
-            </button>
-          ))}
+        <div className="wizard-steps-row">
+          <div className="wizard-steps-tabs" role="tablist" aria-label="Wizard steps">
+            {WIZARD_STEPS.map((step) => (
+              <button
+                key={step.id}
+                type="button"
+                role="tab"
+                aria-selected={currentStep === step.id}
+                aria-controls={`step-panel-${step.id}`}
+                id={`step-tab-${step.id}`}
+                className="wizard-step-tab"
+                onClick={() => setCurrentStep(step.id)}
+              >
+                {step.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={handleNextStep}
+            disabled={loading}
+            title={currentStep === 6 ? 'Create product' : 'Next step (Ctrl+Enter)'}
+            className="wizard-header-next-btn"
+          >
+            {currentStep === 6 ? 'Create product' : 'Next'}
+          </Button>
         </div>
       </header>
 
@@ -1185,30 +1211,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
           </Card>
         </aside>
       </div>
-
-      <footer className="wizard-footer">
-        <Button type="button" variant="ghost" onClick={handleCancel}>
-          Cancel (Esc)
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          onClick={() => handleSave(true)}
-          disabled={loading}
-          title="Save and create another (Ctrl+Enter)"
-        >
-          Save & New (Ctrl+Enter)
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          onClick={() => handleSave(false)}
-          disabled={loading}
-          title="Save and close (Ctrl+S)"
-        >
-          Save (Ctrl+S)
-        </Button>
-      </footer>
 
       {toast && (
         <div className="wizard-toast" role="status" aria-live="polite">

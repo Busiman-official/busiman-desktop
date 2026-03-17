@@ -1,0 +1,9 @@
+.workforce-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workforce-tab-content {
+  width: 100%;
+}

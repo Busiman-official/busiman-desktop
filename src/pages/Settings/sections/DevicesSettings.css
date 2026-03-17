@@ -1,0 +1,9 @@
+.devices-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.devices-tab-content {
+  width: 100%;
+}

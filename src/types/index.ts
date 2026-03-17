@@ -79,6 +79,37 @@ export interface NodeMCUProxy {
   isActive: boolean;
 }
 
+export interface GateDevice {
+  id: string;
+  gateId: string;
+  displayName?: string;
+  lastSeen?: string;
+  isActive: boolean;
+}
+
+export interface EdgeDeviceCapabilities {
+  proxy: boolean;
+  gateBeacon: boolean;
+  gateAudio: boolean;
+}
+
+export interface EdgeDevice {
+  id: string;
+  deviceId: string;
+  displayName?: string;
+  deviceType?: string;
+  capabilities: EdgeDeviceCapabilities;
+  isActive: boolean;
+  lastSeen?: string;
+  ipAddress?: string;
+  port?: number;
+  wifiRssi?: number;
+  meta?: {
+    branchId?: string;
+    locationId?: string;
+  };
+}
+
 // Attendance enums
 export enum AttendanceSessionStatus {
   NOT_STARTED = 'NOT_STARTED',
