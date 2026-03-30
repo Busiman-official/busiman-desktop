@@ -12,9 +12,10 @@ jobs:
     permissions:
       contents: write   # Required for creating GitHub releases and uploading assets
 
+    # Do NOT set NODE_ENV=production on the job: npm ci would skip devDependencies
+    # (vite, electron, electron-builder) and the build would fail.
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      NODE_ENV: production
 
     steps:
       - name: Checkout code
@@ -23,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -33,7 +34,7 @@ jobs:
       - name: Build and publish Windows installer
         run: |
           node scripts/with-production-env-only.js -- npm run build
-          npx cross-env CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --win --publish always
+          npm run release:win
 
       - name: Upload artifacts
         if: failure()
