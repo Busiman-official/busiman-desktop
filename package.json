@@ -80,6 +80,7 @@
     "build:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:all": "npm run build && electron-builder --win --mac",
+    "release:win": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish always",
     "publish:win": "node scripts/trigger-publish-win.js",
     "publish:mac": "npm run build:publish && electron-builder --mac --publish always",
     "publish:all": "npm run build:publish && electron-builder --win --mac --publish always",
