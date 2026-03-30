@@ -14,6 +14,7 @@ jobs:
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NODE_ENV: production
 
     steps:
       - name: Checkout code
@@ -31,7 +32,7 @@ jobs:
 
       - name: Build and publish Windows installer
         run: |
-          npm run build
+          node scripts/with-production-env-only.js -- npm run build
           npx cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --publish always
 
       - name: Upload artifacts
