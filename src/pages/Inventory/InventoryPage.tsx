@@ -71,11 +71,11 @@ export const InventoryPage: React.FC = () => {
   useEffect(() => {
     // Prevent loops during tab updates
     if (isUpdatingTabRef.current) return;
-    
+
     const currentTab = searchParams.get('tab');
-    // Only update URL if tab actually changed AND it's different from what's in URL
-    // This prevents loops when URL already has the correct tab
-    if (currentTab !== activeTab) {
+    const validTabs = ['items', 'locations', 'movements', 'reports', 'settings'];
+    const urlHasValidTab = currentTab && validTabs.includes(currentTab);
+    if (currentTab !== activeTab && !urlHasValidTab) {
       isUpdatingTabRef.current = true;
       const newParams = new URLSearchParams(searchParams);
       newParams.set('tab', activeTab);
@@ -88,7 +88,6 @@ export const InventoryPage: React.FC = () => {
         newParams.delete('itemSubTab');
       }
       setSearchParams(newParams, { replace: true });
-      // Update lastTabRef to reflect the new URL state
       lastTabRef.current = `${activeTab}-${newParams.get('itemId') || ''}-${newParams.get('locationId') || ''}`;
       setTimeout(() => {
         isUpdatingTabRef.current = false;
@@ -190,7 +189,7 @@ export const InventoryPage: React.FC = () => {
             setActiveTab('items');
           }}
         >
-          Item Master
+          Master
         </button>
         <button
           className={`inventory-tab ${activeTab === 'locations' ? 'active' : ''}`}

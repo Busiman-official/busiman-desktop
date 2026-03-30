@@ -2,10 +2,11 @@
  * Global Search Provider - Context for managing global search state
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { searchService } from '../../services/search.service';
-import { SearchResponse, SearchFilters } from '../../types/search.types';
+import { SearchResponse, SearchFilters, PageSearchResult } from '../../types/search.types';
+import { filterPagesByQuery } from './inventoryPages';
 
 interface GlobalSearchContextValue {
   isOpen: boolean;
@@ -14,12 +15,16 @@ interface GlobalSearchContextValue {
   query: string;
   setQuery: (query: string) => void;
   results: SearchResponse;
+  filteredPages: PageSearchResult[];
+  flattenedResults: Array<PageSearchResult | SearchResponse['serials'][number] | SearchResponse['items'][number] | SearchResponse['movements'][number] | SearchResponse['locations'][number]>;
   loading: boolean;
   selectedIndex: number;
   setSelectedIndex: (index: number) => void;
   selectResult: (index: number) => void;
   filters: SearchFilters;
   setFilters: (filters: SearchFilters) => void;
+  recentSearches: string[];
+  clearRecentSearches: () => void;
 }
 
 const GlobalSearchContext = createContext<GlobalSearchContextValue | undefined>(undefined);
@@ -38,6 +43,8 @@ interface GlobalSearchProviderProps {
 
 export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ children }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [, setSearchParams] = useSearchParams();
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResponse>({
@@ -96,13 +103,20 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     }
   }, []);
 
-  // Flatten results for navigation
-  const flattenedResults = [
-    ...results.serials,
-    ...results.items,
-    ...results.movements,
-    ...results.locations,
-  ];
+  // Page targets filtered by query (client-side)
+  const filteredPages = useMemo(() => filterPagesByQuery(query), [query]);
+
+  // Flatten: pages first, then entity results (so one index drives keyboard + selection)
+  const flattenedResults = useMemo(
+    () => [
+      ...filteredPages,
+      ...results.serials,
+      ...results.items,
+      ...results.movements,
+      ...results.locations,
+    ],
+    [filteredPages, results.serials, results.items, results.movements, results.locations]
+  );
 
   // Search function with debouncing
   const performSearch = useCallback(
@@ -124,11 +138,8 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
         const searchResults = await searchService.search(searchQuery, filters, 15);
         setResults(searchResults);
         // Auto-select first result when results load
-        const totalResults = searchResults.serials.length + 
-                            searchResults.items.length + 
-                            searchResults.movements.length + 
-                            searchResults.locations.length;
-        setSelectedIndex(totalResults > 0 ? 0 : -1);
+        // selectedIndex will be updated when flattenedResults changes (pages + entity results)
+        setSelectedIndex(0);
       } catch (error: any) {
         if (error.message !== 'Search canceled') {
           console.error('Search error:', error);
@@ -162,7 +173,6 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
         locations: [],
         total: 0,
       });
-      setSelectedIndex(-1); // Clear selection when query is empty
       setLoading(false);
       return;
     }
@@ -211,35 +221,41 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
   // Select result and navigate
   const selectResult = useCallback(
     (index: number) => {
-      // Recalculate flattened results to ensure we have latest data
-      const currentFlattened = [
-        ...results.serials,
-        ...results.items,
-        ...results.movements,
-        ...results.locations,
-      ];
-      
-      if (index < 0 || index >= currentFlattened.length) {
-        console.warn(`Invalid result index: ${index} (total: ${currentFlattened.length})`);
+      if (index < 0 || index >= flattenedResults.length) {
+        console.warn(`Invalid result index: ${index} (total: ${flattenedResults.length})`);
         return;
       }
 
-      const result = currentFlattened[index];
-      if (!result || !result.route) {
+      const result = flattenedResults[index];
+      if (!result) return;
+
+      // Page result: navigate to route and close.
+      // When already on the target pathname (e.g. /inventory), use setSearchParams so tab/search
+      // params update reliably; otherwise use navigate (e.g. from dashboard to /inventory?tab=movements).
+      if (result.type === 'page') {
+        close();
+        const route = result.route;
+        const [pathname, search] = route.includes('?') ? route.split('?', 2) : [route, ''];
+        if (pathname === location.pathname && search) {
+          setSearchParams(new URLSearchParams(search), { replace: true });
+        } else {
+          navigate(search ? { pathname, search: `?${search}` } : pathname);
+        }
+        return;
+      }
+
+      if (!result.route) {
         console.warn('Result missing route:', result);
         return;
       }
-      
-      // Save to recent searches
+
       if (query.trim().length > 0) {
         saveRecentSearch(query);
       }
-      
-      // Special handling for serial results: open detail panel via URL param
+
       if (result.type === 'serial') {
         const serialResult = result as any;
         close();
-        // Navigate to inventory with serialNumber param to trigger detail panel
         const params = new URLSearchParams();
         params.set('tab', 'items');
         if (serialResult.item?.id) {
@@ -250,11 +266,11 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
         navigate(`/inventory?${params.toString()}`);
         return;
       }
-      
+
       close();
       navigate(result.route);
     },
-    [results, navigate, close, query, saveRecentSearch]
+    [flattenedResults, navigate, close, query, saveRecentSearch, location.pathname, setSearchParams]
   );
 
   // Global keyboard shortcut (Ctrl+K / Cmd+K)
@@ -287,6 +303,18 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     };
   }, []);
 
+  // Clamp selectedIndex when flattenedResults length changes
+  useEffect(() => {
+    const total = flattenedResults.length;
+    if (total === 0) {
+      setSelectedIndex(-1);
+    } else if (selectedIndex >= total) {
+      setSelectedIndex(total - 1);
+    } else if (selectedIndex < 0 && total > 0) {
+      setSelectedIndex(0);
+    }
+  }, [flattenedResults.length]);
+
   const value: GlobalSearchContextValue = {
     isOpen,
     open,
@@ -294,6 +322,8 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     query,
     setQuery,
     results,
+    filteredPages,
+    flattenedResults,
     loading,
     selectedIndex,
     setSelectedIndex,

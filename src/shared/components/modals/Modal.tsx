@@ -9,6 +9,8 @@ export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
+  /** Sets `id` on the title for `aria-labelledby` when using dialog semantics */
+  titleId?: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
@@ -18,6 +20,7 @@ export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
+  titleId,
   children,
   size = 'md',
   className = '',
@@ -50,14 +53,19 @@ export const Modal: React.FC<ModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
         className={`modal modal--${size} ${className}`}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId || (title ? 'modal-title' : undefined)}
       >
         {title && (
           <div className="modal-header">
-            <h2 className="modal-title">{title}</h2>
+            <h2 className="modal-title" id={titleId || 'modal-title'}>
+              {title}
+            </h2>
             <button
               className="modal-close"
               onClick={onClose}

@@ -64,6 +64,12 @@ export const CompanySettings: React.FC = () => {
         supportPhone: company.supportPhone,
         address: company.address,
         timezone: company.timezone,
+        gstNumber: company.gstNumber,
+        bankAccountName: company.bankAccountName,
+        bankAccountNumber: company.bankAccountNumber,
+        bankName: company.bankName,
+        bankBranch: company.bankBranch,
+        bankIfsc: company.bankIfsc,
       });
       setLogoPreview(company.logoUrl || null);
       setLogoFile(null);
@@ -385,6 +391,17 @@ export const CompanySettings: React.FC = () => {
               />
             </div>
 
+            <div className="form-group">
+              <label>GST Number</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.gstNumber || ''}
+                onChange={(e) => handleInputChange('gstNumber', e.target.value.toUpperCase())}
+                placeholder="e.g., 29ABCDE1234F1Z5"
+              />
+            </div>
+
             <div className="form-group full-width">
               <label>Address</label>
               <textarea
@@ -425,6 +442,66 @@ export const CompanySettings: React.FC = () => {
               <p className="form-help">
                 Recommended: square PNG/JPG, at least 128x128px.
               </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header">
+          <h3>Primary Bank Account</h3>
+        </div>
+        <div className="settings-card-content">
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Account Holder Name</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.bankAccountName || ''}
+                onChange={(e) => handleInputChange('bankAccountName', e.target.value)}
+                placeholder="e.g., Busiman Private Limited"
+              />
+            </div>
+            <div className="form-group">
+              <label>Account Number</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.bankAccountNumber || ''}
+                onChange={(e) => handleInputChange('bankAccountNumber', e.target.value)}
+                placeholder="e.g., 123456789012"
+              />
+            </div>
+            <div className="form-group">
+              <label>Bank Name</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.bankName || ''}
+                onChange={(e) => handleInputChange('bankName', e.target.value)}
+                placeholder="e.g., Kotak Mahindra Bank"
+              />
+            </div>
+            <div className="form-group">
+              <label>Branch</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.bankBranch || ''}
+                onChange={(e) => handleInputChange('bankBranch', e.target.value)}
+                placeholder="e.g., M.G. Road, Bengaluru"
+              />
+            </div>
+            <div className="form-group">
+              <label>IFSC</label>
+              <input
+                type="text"
+                className="form-input"
+                value={form.bankIfsc || ''}
+                onChange={(e) => handleInputChange('bankIfsc', e.target.value.toUpperCase())}
+                placeholder="e.g., KKBK0008066"
+              />
             </div>
           </div>
         </div>

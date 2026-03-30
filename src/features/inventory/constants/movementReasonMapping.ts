@@ -24,7 +24,8 @@ export type MovementType =
   | 'LOSS'
   | 'BLOCK'
   | 'UNBLOCK'
-  | 'REVERSAL';
+  | 'REVERSAL'
+  | 'STOCK_MIGRATION';
 
 /** Source context for choosing default reason (and lock) */
 export type MovementSource =
@@ -44,6 +45,7 @@ export const MOVEMENT_TYPE_CATEGORIES: Record<MovementType, ReasonCategory[]> = 
   ADJUSTMENT: ['ADJUSTMENT'],
   COUNT_ADJUSTMENT: ['ADJUSTMENT'],
   REVERSAL: ['ADJUSTMENT'],
+  STOCK_MIGRATION: ['ADJUSTMENT'],
   DAMAGE: ['DAMAGE'],
   WASTE: ['WASTE'],
   LOSS: ['LOSS'],
@@ -77,6 +79,7 @@ const DEFAULTS: Array<{
   { movementType: 'BLOCK', defaultCode: 'BLOCK_QUALITY', reasonLocked: false },
   { movementType: 'UNBLOCK', defaultCode: 'BLOCK_QUALITY', reasonLocked: false },
   { movementType: 'LOSS', defaultCode: 'LOSS_MISSING', reasonLocked: false },
+  { movementType: 'STOCK_MIGRATION', defaultCode: 'STOCK_MIGRATION', reasonLocked: true },
   // Fallbacks when source not matched
   { movementType: 'RECEIPT', defaultCode: 'RECEIPT', reasonLocked: false },
   { movementType: 'ISSUE', defaultCode: 'ISSUE', reasonLocked: false },
@@ -84,6 +87,7 @@ const DEFAULTS: Array<{
   { movementType: 'ADJUSTMENT', defaultCode: 'ADJUSTMENT', reasonLocked: false },
   { movementType: 'COUNT_ADJUSTMENT', defaultCode: 'COUNT_VARIANCE', reasonLocked: false },
   { movementType: 'REVERSAL', defaultCode: 'REVERSAL', reasonLocked: false },
+  { movementType: 'STOCK_MIGRATION', defaultCode: 'STOCK_MIGRATION', reasonLocked: true },
 ];
 
 export interface DefaultReasonResult {
@@ -126,4 +130,24 @@ export function isReasonAllowedForMovementType(
 ): boolean {
   const allowed = getAllowedCategories(movementType);
   return allowed.includes(reasonCategory as ReasonCategory);
+}
+
+/** Human-readable labels for movement types (history, reports, filters). */
+export const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+  RECEIPT: 'Receipt',
+  ISSUE: 'Issue',
+  TRANSFER: 'Transfer',
+  ADJUSTMENT: 'Adjustment',
+  COUNT_ADJUSTMENT: 'Count Adjustment',
+  DAMAGE: 'Damage',
+  WASTE: 'Waste',
+  LOSS: 'Loss',
+  BLOCK: 'Block',
+  UNBLOCK: 'Unblock',
+  REVERSAL: 'Reversal',
+  STOCK_MIGRATION: 'Stock Migration',
+};
+
+export function getMovementTypeLabel(movementType: string): string {
+  return MOVEMENT_TYPE_LABELS[movementType] ?? movementType;
 }

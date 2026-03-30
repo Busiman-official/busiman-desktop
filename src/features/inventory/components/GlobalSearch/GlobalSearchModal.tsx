@@ -2,7 +2,7 @@
  * Global Search Modal - Command palette style search interface
  */
 
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { useGlobalSearch } from './GlobalSearchProvider';
 import { GlobalSearchResult } from './GlobalSearchResult';
 import './GlobalSearchModal.css';
@@ -19,21 +19,12 @@ export const GlobalSearchModal: React.FC = () => {
     setSelectedIndex,
     selectResult,
     recentSearches,
+    filteredPages,
+    flattenedResults,
   } = useGlobalSearch();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
-
-  // Memoize flattened results to prevent recalculation on every render
-  // This ensures stable indices for navigation
-  const flattenedResults = useMemo(() => {
-    return [
-      ...results.serials,
-      ...results.items,
-      ...results.movements,
-      ...results.locations,
-    ];
-  }, [results.serials, results.items, results.movements, results.locations]);
   
   // Store result count in ref to avoid closure issues
   const resultCountRef = useRef(flattenedResults.length);
@@ -219,7 +210,7 @@ export const GlobalSearchModal: React.FC = () => {
               ref={inputRef}
               type="text"
               className="global-search-input"
-              placeholder="Search serials, items, movements, locations..."
+              placeholder="Search or go to page…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -268,6 +259,24 @@ export const GlobalSearchModal: React.FC = () => {
 
           {!loading && !hasQuery && (
             <div className="global-search-results">
+              {flattenedResults.length > 0 && (
+                <div className="global-search-group">
+                  <div className="global-search-group-header">Go to</div>
+                  {flattenedResults.map((result, flatIndex) => (
+                    <div
+                      key={result.type === 'page' ? result.id : result.id}
+                      data-result-index={flatIndex}
+                    >
+                      <GlobalSearchResult
+                        result={result}
+                        isSelected={selectedIndex === flatIndex}
+                        query={query}
+                        onClick={() => selectResult(flatIndex)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
               {recentSearches.length > 0 && (
                 <div className="global-search-group">
                   <div className="global-search-group-header">Recent Searches</div>
@@ -291,12 +300,12 @@ export const GlobalSearchModal: React.FC = () => {
                   ))}
                 </div>
               )}
-              {recentSearches.length === 0 && (
+              {flattenedResults.length === 0 && recentSearches.length === 0 && (
                 <div className="global-search-empty">
                   <div className="global-search-empty-icon">⌨️</div>
                   <div className="global-search-empty-title">Start typing to search</div>
                   <div className="global-search-empty-text">
-                    Search for serials, items, movements, or locations
+                    Search for serials, items, movements, or locations — or go to a page
                   </div>
                 </div>
               )}
@@ -305,11 +314,33 @@ export const GlobalSearchModal: React.FC = () => {
 
           {!loading && hasResults && (
             <div className="global-search-results">
+              {filteredPages.length > 0 && (
+                <div className="global-search-group">
+                  <div className="global-search-group-header">Go to</div>
+                  {filteredPages.map((result, index) => {
+                    const flatIndex = index;
+                    return (
+                      <div
+                        key={result.id}
+                        data-result-index={flatIndex}
+                      >
+                        <GlobalSearchResult
+                          result={result}
+                          isSelected={selectedIndex === flatIndex}
+                          query={query}
+                          onClick={() => selectResult(flatIndex)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {results.serials.length > 0 && (
                 <div className="global-search-group">
                   <div className="global-search-group-header">Serials</div>
                   {results.serials.map((result, index) => {
-                    const flatIndex = index;
+                    const flatIndex = filteredPages.length + index;
                     return (
                       <div
                         key={result.id}
@@ -331,7 +362,7 @@ export const GlobalSearchModal: React.FC = () => {
                 <div className="global-search-group">
                   <div className="global-search-group-header">Items</div>
                   {results.items.map((result, index) => {
-                    const flatIndex = results.serials.length + index;
+                    const flatIndex = filteredPages.length + results.serials.length + index;
                     return (
                       <div
                         key={result.id}
@@ -353,7 +384,11 @@ export const GlobalSearchModal: React.FC = () => {
                 <div className="global-search-group">
                   <div className="global-search-group-header">Movements</div>
                   {results.movements.map((result, index) => {
-                    const flatIndex = results.serials.length + results.items.length + index;
+                    const flatIndex =
+                      filteredPages.length +
+                      results.serials.length +
+                      results.items.length +
+                      index;
                     return (
                       <div
                         key={result.id}
@@ -376,6 +411,7 @@ export const GlobalSearchModal: React.FC = () => {
                   <div className="global-search-group-header">Locations</div>
                   {results.locations.map((result, index) => {
                     const flatIndex =
+                      filteredPages.length +
                       results.serials.length +
                       results.items.length +
                       results.movements.length +

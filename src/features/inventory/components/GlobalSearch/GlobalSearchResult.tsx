@@ -8,10 +8,11 @@ import {
   ItemSearchResult,
   MovementSearchResult,
   LocationSearchResult,
+  PageSearchResult,
 } from '../../types/search.types';
 import './GlobalSearchResult.css';
 
-type SearchResult = SerialSearchResult | ItemSearchResult | MovementSearchResult | LocationSearchResult;
+type SearchResult = SerialSearchResult | ItemSearchResult | MovementSearchResult | LocationSearchResult | PageSearchResult;
 
 interface GlobalSearchResultProps {
   result: SearchResult;
@@ -30,6 +31,8 @@ const getTypeIcon = (type: string): string => {
       return '📋';
     case 'location':
       return '📍';
+    case 'page':
+      return '📄';
     default:
       return '🔍';
   }
@@ -45,6 +48,8 @@ const getTypeLabel = (type: string): string => {
       return 'Movement';
     case 'location':
       return 'Location';
+    case 'page':
+      return 'Page';
     default:
       return 'Result';
   }
@@ -162,6 +167,24 @@ export const GlobalSearchResult: React.FC<GlobalSearchResultProps> = ({
               <div className="global-search-result-meta">{locationResult.path}</div>
             )}
             <div className="global-search-result-meta">Type: {locationResult.locationType}</div>
+          </>
+        );
+      }
+
+      case 'page': {
+        const pageResult = result as PageSearchResult;
+        return (
+          <>
+            <div className="global-search-result-header">
+              <span className="global-search-result-icon">{getTypeIcon('page')}</span>
+              <div className="global-search-result-title">
+                {highlightMatch(pageResult.title, query)}
+              </div>
+              <span className="global-search-result-type">{getTypeLabel('page')}</span>
+            </div>
+            {pageResult.subtitle && (
+              <div className="global-search-result-subtitle">{pageResult.subtitle}</div>
+            )}
           </>
         );
       }

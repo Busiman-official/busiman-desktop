@@ -165,7 +165,7 @@
 .item-master-table {
   overflow-x: auto;
   overflow-y: visible; /* Let parent handle scrolling */
-  padding: 0 20px;
+  padding: 0 0;
   width: 100%;
 }
 
@@ -260,6 +260,64 @@
 
 .item-master-table tr.selected-row:hover {
   background-color: #e3f2fd;
+}
+
+/* Drag preview: translucent row snapshot while dragging */
+.item-master-drag-preview {
+  position: fixed;
+  top: -9999px;
+  left: 0;
+  opacity: 0.92;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.item-master-drag-preview .item-master-table {
+  border-collapse: collapse;
+}
+
+.item-master-drag-preview td,
+.item-master-drag-preview th {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+/* Draggable rows: grab cursor only on handle */
+.item-master-table tbody tr.expandable-row.dragging {
+  opacity: 0.85;
+}
+
+.item-master-table tbody tr.expandable-row.dragging .drag-handle-cell {
+  cursor: grabbing;
+}
+
+.item-master-table .drag-handle-cell {
+  cursor: grab;
+  user-select: none;
+  vertical-align: middle;
+  text-align: center;
+  padding: 12px 8px;
+}
+
+.item-master-table .drag-handle-icon {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+  color: #888;
+  letter-spacing: -2px;
+}
+
+.item-master-table tbody tr.expandable-row.drop-target {
+  background-color: #e8f4fd;
+  border-left: 2px solid #2563eb;
+}
+
+.item-master-table tbody tr.expandable-row.drop-target.selected-row {
+  background-color: #d6ebfc;
 }
 
 .status-active {
@@ -631,7 +689,6 @@
 
 /* Wizard Content */
 .wizard-content {
-  padding: 24px;
   flex: 1;
   overflow-y: auto;
   background: #f8fafc;
@@ -1684,7 +1741,7 @@
   color: #666;
 }
 
-/* Expandable rows */
+/* Expandable rows (cursor overridden by .item-master-table tbody tr.expandable-row for list) */
 .expandable-row {
   cursor: pointer;
 }
@@ -1707,6 +1764,13 @@
 
 .expand-icon.expanded {
   transform: rotate(90deg);
+}
+
+.expand-icon-placeholder {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 .expanded-content {

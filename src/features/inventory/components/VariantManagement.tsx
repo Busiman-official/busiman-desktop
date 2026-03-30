@@ -2,34 +2,88 @@
  * Variant Management Component - Manage product variants for an item
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useId, useRef } from 'react';
 import {
   inventoryService,
   InventoryVariant,
   CreateVariantRequest,
+  CreateVariantResponse,
   UpdateVariantRequest,
 } from '@/services/inventory.service';
-import { Button, Input, Tooltip } from '@/shared/components/ui';
+import { Button, Input, Tooltip, Spinner } from '@/shared/components/ui';
 import { DataTable, ColumnDef, FilterConfig } from '@/shared/components/data-display';
-import { DropdownMenuItem } from '@/shared/components/ui';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog, SideDrawer } from '@/shared/components/modals';
 import './VariantManagement.css';
 
+/** Inline trash icon for delete-variant control (no extra icon package). */
+function VariantTrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width={18}
+      height={18}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 interface VariantManagementProps {
   itemId: string;
   itemName: string;
+  /** Product default unit of measure; used when variant has no UoM override. */
+  itemDefaultUnitOfMeasure: string;
   selectedVariantId?: string;
   onVariantChange?: () => void;
+  onVariantCreated?: (
+    variant: InventoryVariant,
+    migration?: { ledgerModified: number; serialModified: number }
+  ) => void;
   onVariantSelect?: (variantId: string) => void;
+}
+
+type ValidationResult =
+  | { valid: true }
+  | { valid: false; fieldErrors: Record<string, string> };
+
+const HSN_PATTERN = /^\d{4}(\d{2}){0,2}$/;
+
+function validateVariantForm(formData: CreateVariantRequest): ValidationResult {
+  const fieldErrors: Record<string, string> = {};
+  const code = formData.code?.trim() ?? '';
+  const name = formData.name?.trim() ?? '';
+  if (!code) fieldErrors.code = 'Variant code is required';
+  else if (formData.code.length > 100) fieldErrors.code = 'Variant code must be 100 characters or less';
+  if (!name) fieldErrors.name = 'Variant name is required';
+  else if (formData.name.length > 500) fieldErrors.name = 'Variant name must be 500 characters or less';
+  if (formData.barcode && formData.barcode.length > 100) fieldErrors.barcode = 'Barcode must be 100 characters or less';
+  const hsnTrim = formData.hsn?.trim() ?? '';
+  if (hsnTrim && !HSN_PATTERN.test(hsnTrim)) {
+    fieldErrors.hsn = 'HSN must be 4, 6, or 8 digits (GST India).';
+  }
+  if (Object.keys(fieldErrors).length > 0) return { valid: false, fieldErrors };
+  return { valid: true };
 }
 
 export const VariantManagement: React.FC<VariantManagementProps> = ({
   itemId,
-  itemName: _itemName, // Reserved for future use (e.g., aria-label, tooltip)
+  itemName,
+  itemDefaultUnitOfMeasure,
   selectedVariantId,
   onVariantChange,
+  onVariantCreated,
   onVariantSelect,
 }) => {
   const [variants, setVariants] = useState<InventoryVariant[]>([]);
@@ -39,25 +93,80 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [variantToDelete, setVariantToDelete] = useState<string | null>(null);
+  const [deleteVariantStockOnHand, setDeleteVariantStockOnHand] = useState<number | null>(null);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [variantToDisable, setVariantToDisable] = useState<{ id: string; isActive: boolean } | null>(null);
   const [showDrawer, setShowDrawer] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [newlyCreatedVariantId, setNewlyCreatedVariantId] = useState<string | null>(null);
 
+  const drawerMessagesId = useId();
+  const firstFormFieldRef = useRef<HTMLInputElement | null>(null);
+  const variantNameInputRef = useRef<HTMLInputElement | null>(null);
+  const addVariantButtonRef = useRef<HTMLButtonElement | null>(null);
+  const addFirstVariantRef = useRef<HTMLButtonElement | null>(null);
+  const emptyStateHintId = useId();
   const [formData, setFormData] = useState<CreateVariantRequest>({
     itemId,
     code: '',
     name: '',
     isDefault: false,
     barcode: '',
+    hsn: '',
+    unitOfMeasureOverride: '',
   });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (itemId) {
       loadVariants();
     }
   }, [itemId]);
+
+  /** When there are no variants, focus the empty-state CTA for keyboard users (Enter activates). */
+  useEffect(() => {
+    if (loading || variants.length > 0 || showDrawer) return;
+    const id = window.requestAnimationFrame(() => {
+      addFirstVariantRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [loading, variants.length, showDrawer]);
+
+  useEffect(() => {
+    if (!showDeleteConfirm || !variantToDelete || !itemId) {
+      if (!showDeleteConfirm) setDeleteVariantStockOnHand(null);
+      return;
+    }
+    let cancelled = false;
+    setDeleteVariantStockOnHand(null);
+    inventoryService
+      .getStockByItem(itemId)
+      .then((rows) => {
+        if (cancelled) return;
+        const total = rows
+          .filter((s) => s.variantId === variantToDelete)
+          .reduce((sum, s) => sum + s.onHandQuantity, 0);
+        setDeleteVariantStockOnHand(total);
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteVariantStockOnHand(-1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showDeleteConfirm, variantToDelete, itemId]);
+
+  useEffect(() => {
+    if (!showDrawer) return;
+    const id = setTimeout(() => {
+      if (editingVariantId) {
+        variantNameInputRef.current?.focus();
+      } else {
+        firstFormFieldRef.current?.focus();
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [showDrawer, editingVariantId]);
 
   const loadVariants = async () => {
     setLoading(true);
@@ -75,26 +184,46 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   };
 
   const handleCreate = async () => {
-    if (!formData.code || !formData.name) {
-      setError('Code and name are required');
+    const result = validateVariantForm(formData);
+    if (!result.valid) {
+      setFieldErrors(result.fieldErrors);
+      setError('Please fix the errors below.');
       return;
     }
-
-    setLoading(true);
+    setFieldErrors({});
     setError(null);
+    setLoading(true);
     try {
-      const createdVariant = await inventoryService.createVariant(formData);
-      setSuccess('Variant created successfully');
+      const payload = {
+        ...formData,
+        code: formData.code.trim(),
+        name: formData.name.trim(),
+        barcode: formData.barcode?.trim() || undefined,
+        hsn: formData.hsn?.trim() || undefined,
+        unitOfMeasureOverride: formData.unitOfMeasureOverride?.trim() || undefined,
+        isDefault: variants.length === 0 ? true : formData.isDefault,
+      };
+      const createdVariant: CreateVariantResponse = await inventoryService.createVariant(payload);
+      setSuccess(
+        createdVariant.migration
+          ? 'Variant created. Existing product-level stock has been assigned to this default variant.'
+          : 'Variant created successfully'
+      );
       setTimeout(() => setSuccess(null), 3000);
       setShowDrawer(false);
       resetForm();
       await loadVariants();
       setNewlyCreatedVariantId(createdVariant.id);
       setTimeout(() => setNewlyCreatedVariantId(null), 2000);
+      onVariantCreated?.(createdVariant, createdVariant.migration);
       onVariantChange?.();
+      setTimeout(() => addVariantButtonRef.current?.focus(), 50);
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to create variant');
       setError(message);
+      if (message.toLowerCase().includes('already exists')) {
+        setFieldErrors((prev) => ({ ...prev, code: message }));
+      }
       logger.error('[VariantManagement] Failed to create variant', err);
     } finally {
       setLoading(false);
@@ -106,39 +235,23 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       setError('No variant selected');
       return;
     }
-    
-    // Field-level validation
-    const errors: string[] = [];
-    
-    if (!formData.code || formData.code.trim() === '') {
-      errors.push('Variant code is required');
-    } else if (formData.code.length > 100) {
-      errors.push('Variant code must be 100 characters or less');
-    }
-    
-    if (!formData.name || formData.name.trim() === '') {
-      errors.push('Variant name is required');
-    } else if (formData.name.length > 500) {
-      errors.push('Variant name must be 500 characters or less');
-    }
-    
-    if (formData.barcode && formData.barcode.length > 100) {
-      errors.push('Barcode must be 100 characters or less');
-    }
-    
-    if (errors.length > 0) {
-      setError(errors.join('. '));
+    const result = validateVariantForm(formData);
+    if (!result.valid) {
+      setFieldErrors(result.fieldErrors);
+      setError('Please fix the errors below.');
       return;
     }
-
-    setLoading(true);
+    setFieldErrors({});
     setError(null);
+    setLoading(true);
     try {
       const updateData: UpdateVariantRequest = {
-        code: formData.code,
-        name: formData.name,
+        code: formData.code.trim(),
+        name: formData.name.trim(),
         isDefault: formData.isDefault,
-        barcode: formData.barcode || undefined,
+        barcode: formData.barcode?.trim() || undefined,
+        hsn: formData.hsn?.trim() || '',
+        unitOfMeasureOverride: formData.unitOfMeasureOverride?.trim() || undefined,
       };
 
       await inventoryService.updateVariant(editingVariantId, updateData);
@@ -151,6 +264,9 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to update variant');
       setError(message);
+      if (message.toLowerCase().includes('already exists')) {
+        setFieldErrors((prev) => ({ ...prev, code: message }));
+      }
       logger.error('[VariantManagement] Failed to update variant', err);
     } finally {
       setLoading(false);
@@ -246,13 +362,25 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       name: variant.name,
       isDefault: variant.isDefault,
       barcode: variant.barcode || '',
+      hsn: variant.hsn || '',
+      unitOfMeasureOverride: variant.unitOfMeasureOverride || '',
     });
     setShowDrawer(true);
     setError(null);
   };
 
   const handleAddVariant = () => {
-    resetForm();
+    setFormData({
+      itemId,
+      code: '',
+      name: '',
+      isDefault: variants.length === 0,
+      barcode: '',
+      hsn: '',
+      unitOfMeasureOverride: '',
+    });
+    setEditingVariantId(null);
+    setFieldErrors({});
     setShowDrawer(true);
     setError(null);
   };
@@ -261,6 +389,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     setShowDrawer(false);
     resetForm();
     setError(null);
+    setFieldErrors({});
   };
 
   const resetForm = () => {
@@ -270,85 +399,26 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       name: '',
       isDefault: false,
       barcode: '',
+      hsn: '',
+      unitOfMeasureOverride: '',
     });
     setEditingVariantId(null);
+    setFieldErrors({});
   };
 
-  // Parse variant attributes into tags
-  const parseVariantAttributes = (variant: InventoryVariant): Array<{ key: string; value: string }> => {
-    const tags: Array<{ key: string; value: string }> = [];
-    
-    if (variant.name) {
-      tags.push({ key: 'Name', value: variant.name });
-    }
-    if (variant.barcode) {
-      tags.push({ key: 'Barcode', value: variant.barcode });
-    }
-    if (variant.unitOfMeasureOverride) {
-      tags.push({ key: 'UoM', value: variant.unitOfMeasureOverride });
-    }
-    
-    // Add metadata fields
-    if (variant.metadata) {
-      Object.entries(variant.metadata).forEach(([key, value]) => {
-        tags.push({ key, value: String(value) });
-      });
-    }
-    
-    return tags;
+  const resolveEffectiveUnit = (variant: InventoryVariant): string => {
+    const o = variant.unitOfMeasureOverride?.trim();
+    if (o) return o;
+    return itemDefaultUnitOfMeasure?.trim() || '—';
   };
 
-  // Build action menu items for a variant
-  const buildVariantActions = (variant: InventoryVariant): DropdownMenuItem[] => {
-    const items: DropdownMenuItem[] = [
-      {
-        id: 'edit',
-        label: 'Edit',
-        onClick: () => handleEdit(variant),
-      },
-    ];
-
-    if (!variant.isDefault) {
-      items.push({
-        id: 'set-default',
-        label: 'Set as Default',
-        onClick: () => handleSetDefault(variant.id),
-      });
+  const requestToggleVariantStatus = (variant: InventoryVariant) => {
+    if (variant.isDefault && variants.length > 1) {
+      setError('Cannot disable the default variant. Set another variant as default first.');
+      return;
     }
-
-    items.push({
-      id: 'toggle-status',
-      label: variant.isActive ? 'Disable' : 'Enable',
-      onClick: () => {
-        if (variant.isDefault && variants.length > 1) {
-          setError('Cannot disable the default variant. Set another variant as default first.');
-          return;
-        }
-        setVariantToDisable({ id: variant.id, isActive: variant.isActive });
-        setShowDisableConfirm(true);
-      },
-      disabled: variant.isDefault && variants.length > 1,
-    });
-
-    items.push({
-      id: 'divider',
-      divider: true,
-      label: '',
-      onClick: () => {},
-    });
-
-    items.push({
-      id: 'delete',
-      label: 'Delete',
-      onClick: () => {
-        setVariantToDelete(variant.id);
-        setShowDeleteConfirm(true);
-      },
-      danger: true,
-      disabled: variant.isDefault,
-    });
-
-    return items;
+    setVariantToDisable({ id: variant.id, isActive: variant.isActive });
+    setShowDisableConfirm(true);
   };
 
   // Filter variants based on status (search is handled by DataTable)
@@ -366,58 +436,98 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     {
       id: 'code',
       header: 'Code',
-      width: 120,
+      width: 130,
       accessor: (variant) => (
-        <span className="variant-code-cell" style={{ fontWeight: 600 }}>
-          {variant.code}
-        </span>
+        <span className="variant-code-cell">{variant.code}</span>
       ),
     },
     {
-      id: 'attributes',
-      header: 'Attributes',
-      minWidth: 200,
+      id: 'name',
+      header: 'Name',
+      minWidth: 140,
       accessor: (variant) => {
-        const tags = parseVariantAttributes(variant);
-        const visibleTags = tags.slice(0, 4);
-        const remainingCount = tags.length - 4;
-
+        const metaKeys = variant.metadata ? Object.keys(variant.metadata) : [];
+        const nameCell = <span className="variant-name-cell">{variant.name}</span>;
+        if (metaKeys.length === 0) return nameCell;
         return (
-          <div className="variant-attributes-cell">
-            <div className="variant-attributes-tags">
-              {visibleTags.map((tag, idx) => (
-                <span key={idx} className="variant-attribute-tag">
-                  [{tag.key}: {tag.value}]
-                </span>
-              ))}
-              {remainingCount > 0 && (
-                <Tooltip
-                  content={
-                    <div>
-                      {tags.slice(4).map((tag, idx) => (
-                        <div key={idx}>[{tag.key}: {tag.value}]</div>
-                      ))}
-                    </div>
-                  }
-                >
-                  <span className="variant-attribute-more">+{remainingCount} more</span>
-                </Tooltip>
-              )}
-            </div>
-          </div>
+          <Tooltip
+            content={
+              <div className="variant-metadata-tooltip">
+                {metaKeys.map((k) => (
+                  <div key={k}>
+                    {k}: {String(variant.metadata?.[k])}
+                  </div>
+                ))}
+              </div>
+            }
+          >
+            <span className="variant-name-cell variant-name-cell--has-meta">{variant.name}</span>
+          </Tooltip>
         );
       },
     },
     {
-      id: 'status',
-      header: 'Status',
-      width: 100,
+      id: 'barcode',
+      header: 'Barcode',
+      width: 130,
       accessor: (variant) => (
-        <span className={`variant-status ${variant.isActive ? 'variant-status--active' : 'variant-status--inactive'}`}>
-          <span className="variant-status-dot">{variant.isActive ? '●' : '○'}</span>
-          <span>{variant.isActive ? 'Active' : 'Disabled'}</span>
+        <span className="variant-barcode-cell">{variant.barcode?.trim() || '—'}</span>
+      ),
+    },
+    {
+      id: 'hsn',
+      header: 'HSN',
+      width: 96,
+      accessor: (variant) => (
+        <span className="variant-hsn-cell">{variant.hsn?.trim() || '—'}</span>
+      ),
+    },
+    {
+      id: 'unit',
+      header: 'Unit',
+      width: 88,
+      accessor: (variant) => (
+        <span className="variant-unit-cell" title={variant.unitOfMeasureOverride ? 'Variant override' : 'Product default'}>
+          {resolveEffectiveUnit(variant)}
         </span>
       ),
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      width: 168,
+      accessor: (variant) => {
+        const disableBlocked = variant.isDefault && variants.length > 1;
+        return (
+          <div className="variant-status-cell">
+            <span className={`variant-status ${variant.isActive ? 'variant-status--active' : 'variant-status--inactive'}`}>
+              <span className="variant-status-dot">{variant.isActive ? '●' : '○'}</span>
+              <span>{variant.isActive ? 'Active' : 'Disabled'}</span>
+            </span>
+            <Tooltip
+              content={
+                disableBlocked && variant.isActive
+                  ? 'Set another variant as default before disabling this one.'
+                  : variant.isActive
+                    ? 'Disable this variant'
+                    : 'Enable this variant'
+              }
+            >
+              <button
+                type="button"
+                className="variant-status-toggle"
+                disabled={disableBlocked && variant.isActive}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  requestToggleVariantStatus(variant);
+                }}
+              >
+                {variant.isActive ? 'Disable' : 'Enable'}
+              </button>
+            </Tooltip>
+          </div>
+        );
+      },
     },
     {
       id: 'default',
@@ -438,6 +548,30 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
             aria-label={variant.isDefault ? 'Default variant' : 'Set as default'}
           >
             {variant.isDefault ? '⭐' : '☆'}
+          </button>
+        </Tooltip>
+      ),
+    },
+    {
+      id: 'delete',
+      header: '',
+      width: 48,
+      align: 'center',
+      accessor: (variant) => (
+        <Tooltip content={variant.isDefault ? 'Cannot delete the default variant' : 'Delete variant'}>
+          <button
+            type="button"
+            className="variant-row-delete"
+            disabled={variant.isDefault}
+            aria-label={variant.isDefault ? 'Cannot delete default variant' : 'Delete variant'}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (variant.isDefault) return;
+              setVariantToDelete(variant.id);
+              setShowDeleteConfirm(true);
+            }}
+          >
+            <VariantTrashIcon />
           </button>
         </Tooltip>
       ),
@@ -467,7 +601,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     const targetId = newlyCreatedVariantId || selectedVariantId;
     if (targetId) {
       setTimeout(() => {
-        const rowElement = document.querySelector(`[data-variant-id="${targetId}"]`);
+        const rowElement = document.querySelector(`[data-row-id="${targetId}"]`);
         if (rowElement) {
           rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
@@ -476,14 +610,26 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   }, [newlyCreatedVariantId, selectedVariantId]);
 
   const renderList = () => (
-    <div className="variant-management-list">
+    <section
+      className="variant-management-section"
+      aria-label={itemName ? `Variants for ${itemName}` : 'Product variants'}
+    >
+      <div className="variant-management-section-intro">
+        <h2 className="variant-management-section-title">Variants</h2>
+        {itemName ? (
+          <p className="variant-management-section-product" title={itemName}>
+            {itemName}
+          </p>
+        ) : null}
+        <p id={emptyStateHintId} className="variant-management-section-lead">
+          Each variant is a sellable SKU under this product. Stock and barcodes are tracked per variant.
+        </p>
+      </div>
 
-      {/* Toolbar */}
       <div className="variant-management-toolbar">
-        <h3>Variants</h3>
         <div className="variant-toolbar-actions">
-          <Button variant="primary" onClick={handleAddVariant}>
-            Add Variant
+          <Button ref={addVariantButtonRef} variant="primary" onClick={handleAddVariant}>
+            Add variant
           </Button>
         </div>
       </div>
@@ -491,52 +637,95 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
 
-      <DataTable<InventoryVariant>
-        data={filteredVariants}
-        columns={columns}
-        searchable={true}
-        searchPlaceholder="Search variants by code, name, or barcode..."
-        searchFields={(variant) => [
-          variant.code,
-          variant.name,
-          variant.barcode || '',
-          variant.unitOfMeasureOverride || '',
-        ]}
-        filters={[statusFilterConfig]}
-        actions={buildVariantActions}
-        onRowClick={(variant) => onVariantSelect?.(variant.id)}
-        onRowDoubleClick={handleEdit}
-        selectedRowId={newlyCreatedVariantId || selectedVariantId || undefined}
-        emptyMessage={variants.length === 0 
-          ? "Add more variants if this product has multiple forms."
-          : "No variants match your search/filter"}
-        loading={loading}
-        getRowId={(variant) => variant.id}
-      />
-    </div>
+      <div className="variant-management-table-region">
+        <DataTable<InventoryVariant>
+          data={filteredVariants}
+          columns={columns}
+          searchable={true}
+          searchPlaceholder="Search by code, name, or barcode…"
+          searchFields={(variant) => [
+            variant.code,
+            variant.name,
+            variant.barcode || '',
+            variant.hsn || '',
+            variant.unitOfMeasureOverride || '',
+            resolveEffectiveUnit(variant),
+          ]}
+          filters={[statusFilterConfig]}
+          onRowClick={(variant) => onVariantSelect?.(variant.id)}
+          onRowDoubleClick={handleEdit}
+          selectedRowId={newlyCreatedVariantId || selectedVariantId || undefined}
+          emptyTitle="No variants yet"
+          emptyMessage="Add the first variant to sell and track stock at SKU level. The first variant becomes the default."
+          emptyAction={
+            <Button
+              ref={addFirstVariantRef}
+              type="button"
+              variant="primary"
+              onClick={handleAddVariant}
+              aria-describedby={emptyStateHintId}
+            >
+              Add first variant
+            </Button>
+          }
+          filteredEmptyMessage="No variants match your search or status filter."
+          filteredEmptyTitle="No matches"
+          loading={loading}
+          getRowId={(variant) => variant.id}
+          className="variant-management-data-table"
+          rowSourceCount={variants.length}
+        />
+      </div>
+    </section>
   );
+
+  const drawerTitle = editingVariantId
+    ? `Edit Variant${itemName ? ` – ${itemName}` : ''}`
+    : `Add Variant${itemName ? ` – ${itemName}` : ''}`;
 
   const renderForm = () => (
     <div className="variant-form">
-      {error && <div className="error-message">{error}</div>}
-      {success && <div className="success-message">{success}</div>}
+      <div id={drawerMessagesId} aria-live="polite" aria-atomic="true">
+        {error && <div className="error-message">{error}</div>}
+        {success && <div className="success-message">{success}</div>}
+      </div>
+      {!editingVariantId && variants.length === 0 && (
+        <div className="variant-form-first-info" role="status">
+          Creating the first variant will make it the default and assign any existing product-level stock to it.
+        </div>
+      )}
 
       <div className="form-group">
         <label>Variant Code *</label>
         <Input
+          ref={firstFormFieldRef}
           value={formData.code}
-          onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+          onChange={(e) => {
+            setFormData({ ...formData, code: e.target.value.toUpperCase() });
+            setFieldErrors((prev) => ({ ...prev, code: '' }));
+          }}
           placeholder="VARIANT-001"
           disabled={!!editingVariantId}
+          error={fieldErrors.code || undefined}
+          aria-invalid={!!fieldErrors.code}
         />
+        <p className="variant-form-field-hint">
+          Unique per product; e.g. SKU-SIZE or SKU-COLOR. Uppercase recommended.
+        </p>
       </div>
 
       <div className="form-group">
         <label>Variant Name *</label>
         <Input
+          ref={variantNameInputRef}
           value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          onChange={(e) => {
+            setFormData({ ...formData, name: e.target.value });
+            setFieldErrors((prev) => ({ ...prev, name: '' }));
+          }}
           placeholder="Red - 32GB"
+          error={fieldErrors.name || undefined}
+          aria-invalid={!!fieldErrors.name}
         />
       </div>
 
@@ -544,24 +733,62 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
         <label>Barcode</label>
         <Input
           value={formData.barcode}
-          onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+          onChange={(e) => {
+            setFormData({ ...formData, barcode: e.target.value });
+            setFieldErrors((prev) => ({ ...prev, barcode: '' }));
+          }}
           placeholder="Optional barcode"
+          error={fieldErrors.barcode || undefined}
+          aria-invalid={!!fieldErrors.barcode}
         />
+      </div>
+
+      <div className="form-group">
+        <label>HSN</label>
+        <Input
+          inputMode="numeric"
+          maxLength={8}
+          value={formData.hsn ?? ''}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+            setFormData({ ...formData, hsn: digits });
+            setFieldErrors((prev) => ({ ...prev, hsn: '' }));
+          }}
+          placeholder="4, 6, or 8 digits"
+          error={fieldErrors.hsn || undefined}
+          aria-invalid={!!fieldErrors.hsn}
+          aria-label="HSN code for this variant"
+        />
+        <p className="variant-form-field-hint">GST India — optional per variant.</p>
+      </div>
+
+      <div className="form-group">
+        <label>Unit of measure override</label>
+        <Input
+          value={formData.unitOfMeasureOverride ?? ''}
+          onChange={(e) => setFormData({ ...formData, unitOfMeasureOverride: e.target.value })}
+          placeholder="e.g. BOX, CTN"
+        />
+        <p className="variant-form-field-hint">Overrides the product default when set. Leave blank to use product UoM.</p>
       </div>
 
       <div className="form-group">
         <label>
           <input
             type="checkbox"
-            checked={formData.isDefault}
+            checked={variants.length === 0 && !editingVariantId ? true : formData.isDefault}
+            disabled={variants.length === 0 && !editingVariantId}
             onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
           />
           Set as default variant
+          {variants.length === 0 && !editingVariantId && (
+            <span className="variant-form-default-note">(The first variant is always the default.)</span>
+          )}
         </label>
       </div>
 
       <div className="form-actions">
-        <Button variant="secondary" onClick={handleCloseDrawer}>
+        <Button variant="secondary" onClick={handleCloseDrawer} disabled={loading}>
           Cancel
         </Button>
         <Button
@@ -569,21 +796,29 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           onClick={editingVariantId ? handleUpdate : handleCreate}
           disabled={loading}
         >
-          {editingVariantId ? 'Update' : 'Create'}
+          {loading ? (
+            <>
+              <Spinner size="sm" className="variant-form-btn-spinner" />
+              {editingVariantId ? 'Updating…' : 'Creating…'}
+            </>
+          ) : (
+            editingVariantId ? 'Update' : 'Create'
+          )}
         </Button>
       </div>
     </div>
   );
 
   return (
-    <div className="variant-management">
+    <div className="variant-management variant-management--root">
       {renderList()}
 
       <SideDrawer
         isOpen={showDrawer}
         onClose={handleCloseDrawer}
-        title={editingVariantId ? 'Edit Variant' : 'Add Variant'}
+        title={drawerTitle}
         width="480px"
+        ariaDescribedBy={drawerMessagesId}
       >
         {renderForm()}
       </SideDrawer>
@@ -591,11 +826,18 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       <ConfirmDialog
         isOpen={showDeleteConfirm}
         title="Delete Variant"
-        message="Are you sure you want to delete this variant? This action cannot be undone. Make sure there is no stock associated with this variant."
+        message={
+          deleteVariantStockOnHand === null
+            ? 'Are you sure you want to delete this variant? This action cannot be undone. Checking stock…'
+            : deleteVariantStockOnHand > 0
+              ? `This variant has ${deleteVariantStockOnHand} unit${deleteVariantStockOnHand === 1 ? '' : 's'} on hand. Deleting will remove the variant from the product. Move or adjust stock first if you need to preserve it. Are you sure you want to delete?`
+              : 'Are you sure you want to delete this variant? This action cannot be undone. Make sure there is no stock associated with this variant.'
+        }
         onConfirm={handleDelete}
         onCancel={() => {
           setShowDeleteConfirm(false);
           setVariantToDelete(null);
+          setDeleteVariantStockOnHand(null);
         }}
         variant="danger"
       />

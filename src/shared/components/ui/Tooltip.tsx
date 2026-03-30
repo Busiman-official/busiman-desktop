@@ -15,6 +15,8 @@ export interface TooltipProps {
   position?: 'top' | 'bottom' | 'left' | 'right';
   delay?: number;
   className?: string;
+  /** Show when the child (or any descendant) receives focus — for keyboard users. */
+  openOnFocus?: boolean;
 }
 
 export const Tooltip: React.FC<TooltipProps> = ({
@@ -23,6 +25,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
   position = 'top',
   delay = 200,
   className = '',
+  openOnFocus = false,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number; transform: string } | null>(null);
@@ -73,6 +76,21 @@ export const Tooltip: React.FC<TooltipProps> = ({
     setCoords(null);
   };
 
+  const handleFocusIn = (e: React.FocusEvent) => {
+    if (!openOnFocus) return;
+    const t = e.target as Node | null;
+    if (!wrapperRef.current || !t || !wrapperRef.current.contains(t)) return;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setIsVisible(true);
+  };
+
+  const handleFocusOut = (e: React.FocusEvent) => {
+    if (!openOnFocus) return;
+    const next = e.relatedTarget as Node | null;
+    if (wrapperRef.current && next && wrapperRef.current.contains(next)) return;
+    hideTooltip();
+  };
+
   useLayoutEffect(() => {
     if (isVisible && wrapperRef.current) {
       updatePosition();
@@ -104,6 +122,8 @@ export const Tooltip: React.FC<TooltipProps> = ({
         className={`tooltip-wrapper ${className}`}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
+        onFocus={openOnFocus ? handleFocusIn : undefined}
+        onBlur={openOnFocus ? handleFocusOut : undefined}
       >
         {children}
       </div>

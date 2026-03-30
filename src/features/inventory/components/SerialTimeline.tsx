@@ -38,6 +38,7 @@ const getMovementTypeLabel = (type: string): string => {
     UNBLOCK: 'Unblocked',
     COUNT_ADJUSTMENT: 'Count Adjusted',
     REVERSAL: 'Reversed',
+    STOCK_MIGRATION: 'Stock Migration',
   };
   return labels[type] || type;
 };
@@ -55,6 +56,7 @@ const getMovementTypeIcon = (type: string): string => {
     UNBLOCK: '✅',
     COUNT_ADJUSTMENT: '📊',
     REVERSAL: '↩️',
+    STOCK_MIGRATION: '📦',
   };
   return icons[type] || '📋';
 };
@@ -72,6 +74,7 @@ const getMovementTypeColor = (type: string): string => {
     UNBLOCK: '#16a34a',
     COUNT_ADJUSTMENT: '#7c3aed',
     REVERSAL: '#ea580c',
+    STOCK_MIGRATION: '#0d9488',
   };
   return colors[type] || '#6b7280';
 };

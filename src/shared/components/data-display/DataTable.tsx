@@ -40,6 +40,20 @@ export interface DataTableProps<T> {
   onRowDoubleClick?: (row: T) => void;
   selectedRowId?: string;
   emptyMessage?: string;
+  /** Shown when `data` is empty (before search). Passed to EmptyState as title if set. */
+  emptyTitle?: string;
+  /** Optional icon for empty state when data is empty. */
+  emptyIcon?: React.ReactNode;
+  /** Primary CTA when data is empty (e.g. “Add first item”). */
+  emptyAction?: React.ReactNode;
+  /** When data exists but search/filter hides all rows. */
+  filteredEmptyMessage?: string;
+  filteredEmptyTitle?: string;
+  /**
+   * Total rows before this table’s search (e.g. parent status filter already applied to `data`).
+   * When `data` is empty but `rowSourceCount > 0`, empty state shows filtered-empty copy, not “no data” CTA.
+   */
+  rowSourceCount?: number;
   loading?: boolean;
   maxRowHeight?: number;
   className?: string;
@@ -59,6 +73,12 @@ export function DataTable<T extends Record<string, any>>({
   onRowDoubleClick,
   selectedRowId,
   emptyMessage = 'No data available',
+  emptyTitle,
+  emptyIcon,
+  emptyAction,
+  filteredEmptyMessage = 'No rows match your search or filter.',
+  filteredEmptyTitle = 'No matches',
+  rowSourceCount,
   loading = false,
   maxRowHeight,
   className = '',
@@ -151,6 +171,9 @@ export function DataTable<T extends Record<string, any>>({
     return <LoadingState message="Loading data..." />;
   }
 
+  const baseRowCount = rowSourceCount ?? data.length;
+  const isTrueEmpty = filteredData.length === 0 && baseRowCount === 0;
+
   return (
     <div className={`data-table ${className}`}>
       {(searchable || filters.length > 0) && (
@@ -188,7 +211,12 @@ export function DataTable<T extends Record<string, any>>({
 
       <div className="data-table-content" ref={tableRef}>
         {filteredData.length === 0 ? (
-          <EmptyState message={emptyMessage} />
+          <EmptyState
+            title={isTrueEmpty ? emptyTitle ?? 'No data found' : filteredEmptyTitle}
+            message={isTrueEmpty ? emptyMessage : filteredEmptyMessage}
+            icon={isTrueEmpty ? emptyIcon : undefined}
+            action={isTrueEmpty ? emptyAction : undefined}
+          />
         ) : (
           <div className="data-table-wrapper">
             <div className="data-table-grid">
@@ -218,7 +246,7 @@ export function DataTable<T extends Record<string, any>>({
                 return (
                   <div
                     key={id}
-                    data-variant-id={id}
+                    data-row-id={id}
                     className={`data-table-row ${isSelected ? 'data-table-row--selected' : ''} ${onRowClick || onRowDoubleClick ? 'data-table-row--clickable' : ''}`}
                     style={typeof maxRowHeight === 'number' && maxRowHeight > 0 ? { maxHeight: `${maxRowHeight}px` } : undefined}
                     onClick={() => onRowClick?.(row)}

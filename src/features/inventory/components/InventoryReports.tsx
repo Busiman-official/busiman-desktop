@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   inventoryService,
   StockSummaryReport,
@@ -21,12 +22,23 @@ import './InventoryReports.css';
 
 type ReportType = 'summary' | 'location' | 'expiry' | 'audit' | 'damage' | 'reconciliation' | 'variant';
 
+const REPORT_TYPES: ReportType[] = ['summary', 'location', 'expiry', 'audit', 'damage', 'reconciliation', 'variant'];
+
 export const InventoryReports: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeReport, setActiveReport] = useState<ReportType>('summary');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+
+  // Sync activeReport with URL param report (for deep-linking from global search)
+  useEffect(() => {
+    const report = searchParams.get('report');
+    if (report && REPORT_TYPES.includes(report as ReportType)) {
+      setActiveReport(report as ReportType);
+    }
+  }, [searchParams]);
 
   const [summaryReport, setSummaryReport] = useState<StockSummaryReport[]>([]);
   const [locationReport, setLocationReport] = useState<LocationWiseStockReport[]>([]);
@@ -357,25 +369,25 @@ export const InventoryReports: React.FC = () => {
   return (
     <div className="inventory-reports">
       <div className="reports-tabs">
-        <button className={activeReport === 'summary' ? 'active' : ''} onClick={() => setActiveReport('summary')}>
+        <button className={activeReport === 'summary' ? 'active' : ''} onClick={() => { setActiveReport('summary'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'summary'); return next; }); }}>
           Stock Summary
         </button>
-        <button className={activeReport === 'location' ? 'active' : ''} onClick={() => setActiveReport('location')}>
+        <button className={activeReport === 'location' ? 'active' : ''} onClick={() => { setActiveReport('location'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'location'); return next; }); }}>
           Location Wise
         </button>
-        <button className={activeReport === 'expiry' ? 'active' : ''} onClick={() => setActiveReport('expiry')}>
+        <button className={activeReport === 'expiry' ? 'active' : ''} onClick={() => { setActiveReport('expiry'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'expiry'); return next; }); }}>
           Expiry Risk
         </button>
-        <button className={activeReport === 'audit' ? 'active' : ''} onClick={() => setActiveReport('audit')}>
+        <button className={activeReport === 'audit' ? 'active' : ''} onClick={() => { setActiveReport('audit'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'audit'); return next; }); }}>
           Movement Audit
         </button>
-        <button className={activeReport === 'damage' ? 'active' : ''} onClick={() => setActiveReport('damage')}>
+        <button className={activeReport === 'damage' ? 'active' : ''} onClick={() => { setActiveReport('damage'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'damage'); return next; }); }}>
           Damage/Waste
         </button>
-        <button className={activeReport === 'reconciliation' ? 'active' : ''} onClick={() => setActiveReport('reconciliation')}>
+        <button className={activeReport === 'reconciliation' ? 'active' : ''} onClick={() => { setActiveReport('reconciliation'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'reconciliation'); return next; }); }}>
           Reconciliation
         </button>
-        <button className={activeReport === 'variant' ? 'active' : ''} onClick={() => setActiveReport('variant')}>
+        <button className={activeReport === 'variant' ? 'active' : ''} onClick={() => { setActiveReport('variant'); setSearchParams((p) => { const next = new URLSearchParams(p); next.set('report', 'variant'); return next; }); }}>
           Variant Stock
         </button>
       </div>

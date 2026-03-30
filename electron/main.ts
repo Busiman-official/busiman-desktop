@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, powerMonitor, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, powerMonitor, powerSaveBlocker, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -1869,9 +1869,24 @@ app.on('before-quit', () => {
   }
 });
 
-// Security: Prevent new window creation and handle navigation
+// Security: Block in-app popups; open safe external schemes in the system browser / default handlers
 app.on('web-contents-created', (_, contents) => {
-  contents.setWindowOpenHandler(() => {
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      const protocol = parsed.protocol.replace(':', '').toLowerCase();
+      if (
+        protocol === 'https' ||
+        protocol === 'http' ||
+        protocol === 'mailto' ||
+        protocol === 'tel'
+      ) {
+        void shell.openExternal(url);
+        return { action: 'deny' };
+      }
+    } catch {
+      // ignore malformed URL
+    }
     return { action: 'deny' };
   });
 

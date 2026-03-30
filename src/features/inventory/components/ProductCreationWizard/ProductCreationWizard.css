@@ -118,7 +118,7 @@
   background: #fff;
   border-radius: 6px;
   border: 1px solid #e5e5e5;
-  padding: 12px;
+
 }
 
 .wizard-summary-panel {
@@ -181,6 +181,145 @@
 
 .wizard-step-content.full-width {
   grid-template-columns: 1fr;
+}
+
+/* Master registration: 30% images | 70% name + description */
+.wizard-step-content--master {
+  display: block;
+}
+
+.wizard-master-split {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 20px;
+  min-height: 320px;
+}
+
+/* Left column: image upload only (ImageUpload fills this panel) */
+.wizard-master-images {
+  flex: 0 0 30%;
+  max-width: 30%;
+  min-width: 0;
+  padding: 12px;
+  background: #f8fafc;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.wizard-master-fields {
+  flex: 1 1 70%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+}
+
+/* Step 1: SKU (narrow, left) + Item name (fills remainder) */
+.wizard-master-name-sku-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wizard-master-sku-col {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: min(280px, 100%);
+}
+
+.wizard-master-sku-col .wizard-sku-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.wizard-master-sku-col .wizard-sku-input-row .input-group {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.wizard-sku-generate-btn {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+/* Keep full contrast while the spinner runs (default :disabled fades the whole control). */
+.wizard-sku-generate-btn--busy:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.wizard-sku-generate-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  color: inherit;
+}
+
+.wizard-sku-generate-icon--spinning {
+  animation: wizard-sku-refresh-spin 0.75s linear infinite;
+}
+
+@keyframes wizard-sku-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard-sku-generate-icon--spinning {
+    animation: none;
+  }
+}
+
+.wizard-master-name-col {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.wizard-master-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.wizard-form-group--grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-master-description {
+  flex: 1;
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+  .wizard-master-split {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .wizard-master-images {
+    flex: 0 0 auto;
+    max-width: 100%;
+    max-height: 320px;
+  }
 }
 
 .wizard-form-group {
@@ -284,25 +423,234 @@
   font-weight: 500;
 }
 
-.wizard-variant-table {
+/* Step 2: draft variants — spreadsheet grid (keyboard-first) */
+.wizard-variants-section {
   width: 100%;
-  border-collapse: collapse;
+  min-width: 0;
+}
+
+.wizard-variants-heading {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.wizard-variants-lead {
+  margin: 0 0 12px 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #64748b;
+  max-width: 40rem;
+}
+
+.wizard-variants-datatable-wrap {
+  margin-bottom: 10px;
+}
+
+.wizard-variants-data-table.variant-spreadsheet-grid {
+  min-height: 100px;
+}
+
+/* VariantSpreadsheetGrid */
+.variant-spreadsheet-grid {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.variant-spreadsheet-grid--empty {
+  border: none;
+  background: transparent;
+}
+
+.variant-grid-header-row {
+  display: grid;
+  align-items: center;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #64748b;
+  padding: 0 4px;
+  min-height: 30px;
+}
+
+.variant-grid-header-cell {
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.variant-grid-body-scroll {
+  padding: 10px;
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  outline: none;
+}
+
+.variant-grid-data-row {
+  align-items: stretch;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 0;
+  min-height: 0;
+}
+
+.variant-grid-data-row:last-child {
+  border-bottom: none;
+}
+
+.variant-grid-cell {
+  padding: 0;
+  min-width: 0;
+}
+
+/* One visual layer: tint only — control borders show focus/active (avoids stacked outlines). */
+.variant-grid-cell--active {
+  outline: none;
+  border-radius: 2px;
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.variant-grid-readonly-cell {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 12px;
+  border-radius: 0;
+}
+
+.variant-grid-default-cell {
+  justify-content: center;
+}
+
+.variant-grid-virtual-row {
+  width: 100%;
+}
+
+.wizard-variant-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 0;
+}
+
+.variant-spreadsheet-grid .wizard-variant-cell-stack .input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 4px;
+  min-height: 26px;
+  border-radius: 3px;
+}
+
+.wizard-variant-barcode-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
 }
 
-.wizard-variant-table th,
-.wizard-variant-table td {
-  padding: 6px 8px;
-  text-align: left;
-  border-bottom: 1px solid #e5e5e5;
+.variant-spreadsheet-grid .wizard-field-error {
+  line-height: 1.2;
+  margin: 0;
 }
 
-.wizard-variant-table th {
-  font-weight: 500;
-  color: #666;
-}
-
-.wizard-variant-table .input {
+/* Unit: tooltip wraps select — block wrapper avoids inline-block + double box */
+.variant-spreadsheet-grid .variant-grid-cell .tooltip-wrapper {
+  display: block;
   width: 100%;
-  min-width: 80px;
+  margin: 0;
+  padding: 0;
 }
+
+.variant-grid-cell .variant-grid-unit-select.select-group {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  gap: 0;
+}
+
+/* Single border ring: no stacked cell outline + select border + focus outline-offset */
+.variant-spreadsheet-grid .variant-grid-unit-select .select {
+  width: 100%;
+  min-height: 26px;
+  font-size: 12px;
+  margin: 0;
+  padding: 0 1.5rem 0 4px;
+  border-radius: 3px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.variant-spreadsheet-grid .variant-grid-unit-select .select:focus {
+  outline: none;
+  outline-offset: 0;
+  border-color: #2563eb;
+  box-shadow: none;
+}
+
+.wizard-variant-status-new {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.wizard-variant-default-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.wizard-variant-default-dash {
+  color: #cbd5e1;
+}
+
+.wizard-variants-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  margin-left: 12px;
+}
+
+.wizard-variants-suffix-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.wizard-variant-details-btn {
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.wizard-variant-details-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.wizard-variant-details-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+/*
+ * Keyboard: Arrow / Enter / Tab navigate cells; Ctrl+D duplicate; Ctrl+Delete remove row.
+ */

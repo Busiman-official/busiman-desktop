@@ -34,6 +34,7 @@ export enum MovementType {
   UNBLOCK = 'UNBLOCK',
   COUNT_ADJUSTMENT = 'COUNT_ADJUSTMENT',
   REVERSAL = 'REVERSAL',
+  STOCK_MIGRATION = 'STOCK_MIGRATION',
 }
 
 export enum MovementStatus {
@@ -117,8 +118,30 @@ export interface InventoryVariant {
   name: string;
   isDefault: boolean;
   barcode?: string;
+  /** GST HSN (India): 4, 6, or 8 digits. */
+  hsn?: string;
   unitOfMeasureOverride?: string;
   metadata?: Record<string, any>;
+  costPriceOverride?: number;
+  sellingPriceOverride?: number;
+  mrpOverride?: number;
+  taxOverride?: number;
+  reorderLevel?: number;
+  minStock?: number;
+  maxStock?: number;
+  allowBackorder?: boolean;
+  trackSerialOverride?: boolean;
+  trackBatchOverride?: boolean;
+  isDiscontinued?: boolean;
+  weightOverride?: number;
+  dimensionsOverride?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  packSize?: number;
+  unitsPerBox?: number;
+  shelfLifeDaysOverride?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -131,14 +154,41 @@ export interface InventoryVariant {
   updatedAt: string;
 }
 
+/** Create-variant API response; includes optional migration counts when first-variant migration ran. */
+export type CreateVariantResponse = InventoryVariant & {
+  migration?: { ledgerModified: number; serialModified: number };
+};
+
 export interface CreateVariantRequest {
   itemId: string;
   code: string;
   name: string;
   isDefault?: boolean;
   barcode?: string;
+  hsn?: string;
   unitOfMeasureOverride?: string;
   metadata?: Record<string, any>;
+  costPriceOverride?: number;
+  sellingPriceOverride?: number;
+  mrpOverride?: number;
+  taxOverride?: number;
+  reorderLevel?: number;
+  minStock?: number;
+  maxStock?: number;
+  allowBackorder?: boolean;
+  trackSerialOverride?: boolean;
+  trackBatchOverride?: boolean;
+  isActive?: boolean;
+  isDiscontinued?: boolean;
+  weightOverride?: number;
+  dimensionsOverride?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  packSize?: number;
+  unitsPerBox?: number;
+  shelfLifeDaysOverride?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -152,9 +202,30 @@ export interface UpdateVariantRequest {
   name?: string;
   isDefault?: boolean;
   barcode?: string;
+  hsn?: string;
   unitOfMeasureOverride?: string;
   metadata?: Record<string, any>;
+  costPriceOverride?: number;
+  sellingPriceOverride?: number;
+  mrpOverride?: number;
+  taxOverride?: number;
+  reorderLevel?: number;
+  minStock?: number;
+  maxStock?: number;
+  allowBackorder?: boolean;
+  trackSerialOverride?: boolean;
+  trackBatchOverride?: boolean;
   isActive?: boolean;
+  isDiscontinued?: boolean;
+  weightOverride?: number;
+  dimensionsOverride?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  packSize?: number;
+  unitsPerBox?: number;
+  shelfLifeDaysOverride?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -183,7 +254,8 @@ export interface SerialAttributeTemplate {
 }
 
 export interface CreateInventoryItemRequest {
-  sku: string;
+  /** Omit to let the server assign a unique SKU (e.g. PRD-…). */
+  sku?: string;
   name: string;
   description?: string;
   category?: string;
@@ -393,9 +465,44 @@ class InventoryService {
     return extractApiData<InventoryItem>(response);
   }
 
-  async checkSkuAvailable(sku: string): Promise<{ available: boolean }> {
+  /** Item-level or variant-level barcode; includes variantId when scan matched a variant. */
+  async getItemByBarcode(barcode: string): Promise<InventoryItem & { variantId?: string }> {
+    const response = await api.get('/inventory/items/by-barcode', {
+      params: { barcode: barcode.trim() },
+    });
+    return extractApiData<InventoryItem & { variantId?: string }>(response);
+  }
+
+  async checkSkuAvailable(
+    sku: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<{ available: boolean }> {
     const response = await api.get('/inventory/items/check-sku', {
       params: { sku: sku.trim().toUpperCase() },
+      signal: options?.signal,
+    });
+    return extractApiData<{ available: boolean }>(response);
+  }
+
+  /** Branch-unique PRD-… candidate; does not create an item. */
+  async suggestItemSku(options?: { signal?: AbortSignal }): Promise<{ sku: string }> {
+    const response = await api.get('/inventory/items/suggest-sku', {
+      signal: options?.signal,
+    });
+    return extractApiData<{ sku: string }>(response);
+  }
+
+  /** Full variant code (e.g. BASE-SUFFIX) availability within branch. */
+  async checkVariantCodeAvailable(
+    code: string,
+    options?: { excludeItemId?: string; signal?: AbortSignal }
+  ): Promise<{ available: boolean }> {
+    const response = await api.get('/inventory/variants/check-code', {
+      params: {
+        code: code.trim().toUpperCase(),
+        ...(options?.excludeItemId ? { excludeItemId: options.excludeItemId } : {}),
+      },
+      signal: options?.signal,
     });
     return extractApiData<{ available: boolean }>(response);
   }
@@ -424,8 +531,13 @@ class InventoryService {
     type?: LocationType;
     parentLocationId?: string | null;
     isActive?: boolean;
+    /** When set (e.g. admin on Sales), limits locations to that branch */
+    branchId?: string;
   }): Promise<Location[]> {
     const params = new URLSearchParams();
+    if (filters?.branchId) {
+      params.append('branchId', filters.branchId);
+    }
     if (filters?.type) {
       params.append('type', filters.type);
     }
@@ -966,9 +1078,9 @@ class InventoryService {
     return extractApiData<InventoryVariant>(response);
   }
 
-  async createVariant(data: CreateVariantRequest): Promise<InventoryVariant> {
+  async createVariant(data: CreateVariantRequest): Promise<CreateVariantResponse> {
     const response = await api.post('/inventory/variants', data);
-    return extractApiData<InventoryVariant>(response);
+    return extractApiData<CreateVariantResponse>(response);
   }
 
   async updateVariant(id: string, data: UpdateVariantRequest): Promise<InventoryVariant> {
@@ -980,9 +1092,30 @@ class InventoryService {
     await api.delete(`/inventory/variants/${id}`);
   }
 
+  async migrateProductLevelStockToDefaultVariant(itemId: string): Promise<{
+    itemId: string;
+    defaultVariantId: string;
+    ledgerModified: number;
+    serialModified: number;
+  }> {
+    const response = await api.post(
+      `/inventory/items/${itemId}/migrate-product-level-stock-to-default-variant`,
+    );
+    return extractApiData(response);
+  }
+
+  async getItemsWithProductLevelRows(): Promise<Array<{ itemId: string }>> {
+    const response = await api.get(
+      "/inventory/admin/items-with-product-level-rows",
+    );
+    const data = extractApiData<{ items: Array<{ itemId: string }> }>(response);
+    return data.items ?? [];
+  }
+
   async getVariantStock(itemId: string): Promise<Array<{
     variantId: string;
     totalOnHand: number;
+    isUnassigned?: boolean;
     locations: Array<{
       locationId: string;
       locationCode: string;

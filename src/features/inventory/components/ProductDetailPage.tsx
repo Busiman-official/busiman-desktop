@@ -45,6 +45,11 @@ export const ProductDetailPage: React.FC = () => {
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [stockData, setStockData] = useState<StockByItem[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
+  const [optimisticMigration, setOptimisticMigration] = useState<{
+    variantId: string;
+    ledgerModified: number;
+    serialModified: number;
+  } | null>(null);
   const [movementHistory, setMovementHistory] = useState<StockMovementResponse[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilters, setHistoryFilters] = useState({
@@ -464,10 +469,22 @@ export const ProductDetailPage: React.FC = () => {
             <VariantManagement
               itemId={id}
               itemName={item.name}
+              itemDefaultUnitOfMeasure={item.unitOfMeasure || 'pcs'}
               selectedVariantId={variantIdFromUrl || undefined}
+              onVariantCreated={(variant, migration) => {
+                if (migration) {
+                  setOptimisticMigration({
+                    variantId: variant.id,
+                    ledgerModified: migration.ledgerModified,
+                    serialModified: migration.serialModified,
+                  });
+                }
+              }}
               onVariantChange={async () => {
                 const variantData = await inventoryService.getVariantsByItem(id);
                 setVariants(variantData);
+                await loadStockData();
+                setOptimisticMigration(null);
               }}
             />
           </div>
@@ -477,70 +494,94 @@ export const ProductDetailPage: React.FC = () => {
           <div className="product-stock-tab">
             {stockLoading ? (
               <LoadingState message="Loading stock information..." />
-            ) : stockData.length === 0 ? (
-              <EmptyState message="No stock information available" />
-            ) : (
-              <div className="stock-table-container">
-                <table className="stock-table">
-                  <thead>
-                    <tr>
-                      <th>Location</th>
-                      {item.hasVariants && <th>Variant</th>}
-                      {item.industryFlags.requiresBatchTracking && <th>Batch</th>}
-                      {item.industryFlags.requiresSerialTracking && <th>Serial</th>}
-                      <th>On Hand</th>
-                      <th>Reserved</th>
-                      <th>Blocked</th>
-                      <th>Damaged</th>
-                      <th>Available</th>
-                      {item.industryFlags.hasExpiryDate && <th>Expiry Date</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stockData.map((stock, index) => {
-                      const variant = stock.variantId ? variants.find(v => v.id === stock.variantId) : null;
-                      return (
-                        <tr key={index}>
-                          <td>
-                            {stock.location ? (
-                              <div>
-                                <div className="stock-location-code">{stock.location.code}</div>
-                                <div className="stock-location-name">{stock.location.name}</div>
-                              </div>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                          {item.hasVariants && (
+            ) : (() => {
+              const hasOptimistic = !!optimisticMigration;
+              const existingForVariant = hasOptimistic ? stockData.find(s => s.variantId === optimisticMigration!.variantId) : null;
+              const displayStock: StockByItem[] = hasOptimistic && !existingForVariant
+                ? [
+                    ...stockData,
+                    {
+                      locationId: '',
+                      location: { id: '', code: '–', name: 'Migrated (updating…)', type: '' },
+                      variantId: optimisticMigration!.variantId,
+                      onHandQuantity: optimisticMigration!.ledgerModified,
+                      reservedQuantity: 0,
+                      blockedQuantity: 0,
+                      damagedQuantity: 0,
+                      availableQuantity: optimisticMigration!.ledgerModified,
+                    } as StockByItem,
+                  ]
+                : stockData;
+              let optimisticAdded = false;
+              return displayStock.length === 0 ? (
+                <EmptyState message="No stock information available" />
+              ) : (
+                <div className="stock-table-container">
+                  <table className="stock-table">
+                    <thead>
+                      <tr>
+                        <th>Location</th>
+                        {item.hasVariants && <th>Variant</th>}
+                        {item.industryFlags.requiresBatchTracking && <th>Batch</th>}
+                        {item.industryFlags.requiresSerialTracking && <th>Serial</th>}
+                        <th>On Hand</th>
+                        <th>Reserved</th>
+                        <th>Blocked</th>
+                        <th>Damaged</th>
+                        <th>Available</th>
+                        {item.industryFlags.hasExpiryDate && <th>Expiry Date</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayStock.map((stock, index) => {
+                        const variant = stock.variantId ? variants.find(v => v.id === stock.variantId) : null;
+                        const addOptimistic = hasOptimistic && stock.variantId === optimisticMigration!.variantId && !optimisticAdded;
+                        if (addOptimistic) optimisticAdded = true;
+                        const onHand = stock.onHandQuantity + (addOptimistic ? optimisticMigration!.ledgerModified : 0);
+                        const available = stock.availableQuantity + (addOptimistic ? optimisticMigration!.ledgerModified : 0);
+                        return (
+                          <tr key={stock.locationId || `opt-${stock.variantId}-${index}`}>
                             <td>
-                              {variant ? (
-                                <span className="variant-badge">{variant.code}</span>
+                              {stock.location?.code ? (
+                                <div>
+                                  <div className="stock-location-code">{stock.location.code}</div>
+                                  <div className="stock-location-name">{stock.location.name}</div>
+                                </div>
                               ) : (
-                                '-'
+                                stock.location?.name || '-'
                               )}
                             </td>
-                          )}
-                          {item.industryFlags.requiresBatchTracking && (
-                            <td>{stock.batchNumber || '-'}</td>
-                          )}
-                          {item.industryFlags.requiresSerialTracking && (
-                            <td>{stock.serialNumber || '-'}</td>
-                          )}
-                          <td className="stock-quantity">{stock.onHandQuantity}</td>
-                          <td className="stock-quantity">{stock.reservedQuantity}</td>
-                          <td className="stock-quantity">{stock.blockedQuantity}</td>
-                          <td className="stock-quantity">{stock.damagedQuantity}</td>
-                          <td className="stock-quantity available">{stock.availableQuantity}</td>
-                          {item.industryFlags.hasExpiryDate && (
-                            <td>{stock.expiryDate ? new Date(stock.expiryDate).toLocaleDateString() : '-'}</td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                            {item.hasVariants && (
+                              <td>
+                                {variant ? (
+                                  <span className="variant-badge">{variant.code}</span>
+                                ) : (
+                                  '-'
+                                )}
+                              </td>
+                            )}
+                            {item.industryFlags.requiresBatchTracking && (
+                              <td>{stock.batchNumber || '-'}</td>
+                            )}
+                            {item.industryFlags.requiresSerialTracking && (
+                              <td>{stock.serialNumber || '-'}</td>
+                            )}
+                            <td className="stock-quantity">{onHand}</td>
+                            <td className="stock-quantity">{stock.reservedQuantity}</td>
+                            <td className="stock-quantity">{stock.blockedQuantity}</td>
+                            <td className="stock-quantity">{stock.damagedQuantity}</td>
+                            <td className="stock-quantity available">{available}</td>
+                            {item.industryFlags.hasExpiryDate && (
+                              <td>{stock.expiryDate ? new Date(stock.expiryDate).toLocaleDateString() : '-'}</td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 

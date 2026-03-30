@@ -1,0 +1,424 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Modal } from '@/shared/components/modals/Modal';
+import { Button } from '@/shared/components/ui';
+import { inventoryService, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
+import { buildLineMetaFromItemVariant, type PosResolvedLineMeta } from './resolveScan';
+import './PosVariantPickerModal.css';
+
+export type PosVariantPickerLine = {
+  meta: PosResolvedLineMeta;
+  quantity: number;
+  unitPrice: number;
+};
+
+export interface PosVariantPickerModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  item: InventoryItem | null;
+  variants: InventoryVariant[];
+  locationId: string | null;
+  salesPointId: string | null;
+  customerId: string | null;
+  /** Row to accent (must be one of `variants` when provided). */
+  highlightVariantId?: string | null;
+  resolvePrice: (
+    variantId: string,
+    opts?: { customerId?: string; salesPointId?: string }
+  ) => Promise<{ price: number; currency: string }>;
+  onConfirm: (lines: PosVariantPickerLine[]) => void;
+}
+
+type StockLevel = 'in' | 'low' | 'out';
+
+function formatMoney(n: number, currency = 'INR'): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(n) ? n : 0);
+}
+
+function primaryImageUrl(item: InventoryItem): string | undefined {
+  const imgs = item.images;
+  if (!imgs?.length) return undefined;
+  const primary = imgs.find((i) => i.isPrimary) || imgs[0];
+  return primary?.url;
+}
+
+function stockStatus(available: number, lowThreshold: number): StockLevel {
+  if (available <= 0) return 'out';
+  if (available <= lowThreshold) return 'low';
+  return 'in';
+}
+
+function lowThresholdForVariant(v: InventoryVariant): number {
+  const t = v.reorderLevel ?? v.minStock;
+  if (typeof t === 'number' && t > 0) return Math.floor(t);
+  return 5;
+}
+
+function PlaceholderIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="8.5" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      <path d="M21 17l-5-5-4 4-2-2-4 4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
+  isOpen,
+  onClose,
+  item,
+  variants,
+  locationId,
+  salesPointId,
+  customerId,
+  highlightVariantId,
+  resolvePrice,
+  onConfirm,
+}) => {
+  const [loading, setLoading] = useState(true);
+  const [stockByVariant, setStockByVariant] = useState<Record<string, number>>({});
+  const [priceByVariant, setPriceByVariant] = useState<Record<string, number>>({});
+  const [currency, setCurrency] = useState('INR');
+  const [draftQty, setDraftQty] = useState<Record<string, number>>({});
+  const [sessionLines, setSessionLines] = useState<PosVariantPickerLine[]>([]);
+  const [addedFlash, setAddedFlash] = useState<Record<string, boolean>>({});
+
+  const sortedVariants = useMemo(() => {
+    return [...variants].sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [variants]);
+
+  useEffect(() => {
+    if (!isOpen || !item || sortedVariants.length === 0) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setSessionLines([]);
+    setAddedFlash({});
+    const initialDraft: Record<string, number> = {};
+    sortedVariants.forEach((v) => {
+      initialDraft[v.id] = 1;
+    });
+    setDraftQty(initialDraft);
+
+    (async () => {
+      const stock: Record<string, number> = {};
+      const prices: Record<string, number> = {};
+      let cur = 'INR';
+
+      await Promise.all(
+        sortedVariants.map(async (v) => {
+          let avail = 0;
+          if (locationId) {
+            try {
+              const b = await inventoryService.getStockBalance(item.id, locationId, undefined, v.id);
+              avail = b.available;
+            } catch {
+              avail = 0;
+            }
+          }
+          stock[v.id] = avail;
+
+          if (salesPointId) {
+            try {
+              const pr = await resolvePrice(v.id, {
+                salesPointId,
+                customerId: customerId || undefined,
+              });
+              prices[v.id] = pr.price;
+              cur = pr.currency || cur;
+            } catch {
+              prices[v.id] = 0;
+            }
+          } else {
+            prices[v.id] = 0;
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setStockByVariant(stock);
+        setPriceByVariant(prices);
+        setCurrency(cur);
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, item, sortedVariants, locationId, salesPointId, customerId, resolvePrice]);
+
+  const subtitle = useMemo(() => {
+    if (!item) return '';
+    const cat = item.category?.trim() || '—';
+    return `SKU: ${item.sku} · ${cat} · ${item.unitOfMeasure || 'pcs'}`;
+  }, [item]);
+
+  const imgUrl = item ? primaryImageUrl(item) : undefined;
+  const [imgBroken, setImgBroken] = useState(false);
+  useEffect(() => {
+    setImgBroken(false);
+  }, [item?.id, imgUrl]);
+
+  const sessionTotals = useMemo(() => {
+    const units = sessionLines.reduce((s, l) => s + l.quantity, 0);
+    const total = sessionLines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+    return { units, total, variantCount: sessionLines.length };
+  }, [sessionLines]);
+
+  const bumpDraft = useCallback((variantId: string, delta: number, maxStock: number) => {
+    setDraftQty((prev) => {
+      const cur = prev[variantId] ?? 1;
+      const next = Math.max(0, cur + delta);
+      const capped = maxStock > 0 ? Math.min(next, maxStock) : next;
+      return { ...prev, [variantId]: capped };
+    });
+  }, []);
+
+  const handleAddVariant = useCallback(
+    (v: InventoryVariant) => {
+      const avail = stockByVariant[v.id] ?? 0;
+      const qty = draftQty[v.id] ?? 0;
+      const price = priceByVariant[v.id] ?? 0;
+      if (!item || qty <= 0 || avail <= 0) return;
+
+      const meta = buildLineMetaFromItemVariant(item, v);
+      setSessionLines((prev) => {
+        const i = prev.findIndex((l) => l.meta.variantId === v.id);
+        if (i >= 0) {
+          const next = [...prev];
+          next[i] = {
+            ...next[i],
+            quantity: next[i].quantity + qty,
+            unitPrice: price,
+          };
+          return next;
+        }
+        return [...prev, { meta, quantity: qty, unitPrice: price }];
+      });
+
+      setAddedFlash((f) => ({ ...f, [v.id]: true }));
+      window.setTimeout(() => {
+        setAddedFlash((f) => ({ ...f, [v.id]: false }));
+      }, 1400);
+
+      setDraftQty((prev) => ({ ...prev, [v.id]: 1 }));
+    },
+    [item, draftQty, stockByVariant, priceByVariant]
+  );
+
+  const handleConfirm = useCallback(() => {
+    if (sessionLines.length === 0) return;
+    onConfirm(sessionLines);
+  }, [sessionLines, onConfirm]);
+
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  const highlightId =
+    highlightVariantId && sortedVariants.some((x) => x.id === highlightVariantId)
+      ? highlightVariantId
+      : sortedVariants.find((x) => x.isDefault)?.id || sortedVariants[0]?.id;
+
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} className="pos-variant-picker-modal">
+      <div className="pos-variant-picker__shell">
+        <header className="pos-variant-picker__header">
+          <div className="pos-variant-picker__thumb-wrap" aria-hidden>
+            {imgUrl && !imgBroken ? (
+              <img
+                src={imgUrl}
+                alt=""
+                className="pos-variant-picker__thumb"
+                onError={() => setImgBroken(true)}
+              />
+            ) : (
+              <span className="pos-variant-picker__thumb-placeholder">
+                <PlaceholderIcon />
+              </span>
+            )}
+          </div>
+          <div className="pos-variant-picker__title-block">
+            <h2 className="pos-variant-picker__title" id="pos-variant-picker-title">
+              {item?.name ?? 'Product'}
+            </h2>
+            <p className="pos-variant-picker__subtitle">{subtitle}</p>
+          </div>
+          <button
+            type="button"
+            className="pos-variant-picker__close"
+            onClick={handleClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="pos-variant-picker__divider" />
+        <p className="pos-variant-picker__section-label">All variants</p>
+
+        <div className="pos-variant-picker__body" role="region" aria-labelledby="pos-variant-picker-title">
+          {loading ? (
+            <p className="pos-variant-picker__loading">Loading variants…</p>
+          ) : (
+            sortedVariants.map((v) => {
+              const avail = stockByVariant[v.id] ?? 0;
+              const low = lowThresholdForVariant(v);
+              const status = stockStatus(avail, low);
+              const price = priceByVariant[v.id] ?? 0;
+              const qty = draftQty[v.id] ?? 0;
+              const highlight = highlightId === v.id;
+              const oos = avail <= 0;
+
+              const badge =
+                status === 'in' ? (
+                  <span className="pos-variant-card__badge pos-variant-card__badge--in">In stock</span>
+                ) : status === 'low' ? (
+                  <span className="pos-variant-card__badge pos-variant-card__badge--low">Low stock</span>
+                ) : (
+                  <span className="pos-variant-card__badge pos-variant-card__badge--out">Out of stock</span>
+                );
+
+              const stockClass =
+                status === 'in'
+                  ? 'pos-variant-card__stock--in'
+                  : status === 'low'
+                    ? 'pos-variant-card__stock--low'
+                    : 'pos-variant-card__stock--out';
+
+              const barcode = (v.barcode || '—').trim() || '—';
+
+              return (
+                <article
+                  key={v.id}
+                  className={`pos-variant-card${highlight ? ' pos-variant-card--highlight' : ''}${oos ? ' pos-variant-card--oos' : ''}`}
+                >
+                  <div className="pos-variant-card__head">
+                    <div>
+                      <div className="pos-variant-card__name">{`${item.name} - ${v.name}`}</div>
+                      <span className="pos-variant-card__sku">SKU: {v.code}</span>
+                    </div>
+                    {badge}
+                  </div>
+                  <div className="pos-variant-card__row">
+                    <div className="pos-variant-card__meta">
+                      <div>
+                        <span>Stock</span>
+                        <strong className={stockClass}>{locationId ? avail : '—'}</strong>
+                      </div>
+                      <div>
+                        <span>Price</span>
+                        <strong>{formatMoney(price, currency)}</strong>
+                      </div>
+                      <div>
+                        <span>Barcode</span>
+                        <strong title={barcode}>{barcode.length > 14 ? `${barcode.slice(0, 14)}…` : barcode}</strong>
+                      </div>
+                    </div>
+
+                    {oos ? (
+                      <div className="pos-variant-card__actions">
+                        <button type="button" className="pos-variant-card__oos-btn" disabled>
+                          Out of stock
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="pos-variant-card__actions">
+                        <div className="pos-variant-card__stepper">
+                          <button
+                            type="button"
+                            className="pos-variant-card__step-btn"
+                            aria-label="Decrease quantity"
+                            disabled={qty <= 0}
+                            onClick={() => bumpDraft(v.id, -1, avail)}
+                          >
+                            −
+                          </button>
+                          <span className="pos-variant-card__step-val">{qty}</span>
+                          <button
+                            type="button"
+                            className="pos-variant-card__step-btn"
+                            aria-label="Increase quantity"
+                            disabled={qty >= avail}
+                            onClick={() => bumpDraft(v.id, 1, avail)}
+                          >
+                            +
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className={`pos-variant-card__add${addedFlash[v.id] ? ' pos-variant-card__add--done' : ''}`}
+                          disabled={qty <= 0 || !salesPointId}
+                          onClick={() => handleAddVariant(v)}
+                        >
+                          {addedFlash[v.id] ? (
+                            <>
+                              <CheckIcon />
+                              Added
+                            </>
+                          ) : (
+                            'Add'
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+
+        <footer className="pos-variant-picker__footer">
+          <div className="pos-variant-picker__summary">
+            {sessionTotals.units === 0 ? (
+              <span className="pos-variant-picker__summary--muted">No items added yet</span>
+            ) : (
+              <>
+                <span>
+                  {sessionTotals.units} {sessionTotals.units === 1 ? 'item' : 'items'} added
+                  {sessionTotals.variantCount > 1
+                    ? ` · ${sessionTotals.variantCount} variants`
+                    : ''}{' '}
+                  · Total:{' '}
+                  <span className="pos-variant-picker__summary-total">
+                    {formatMoney(sessionTotals.total, currency)}
+                  </span>
+                </span>
+              </>
+            )}
+          </div>
+          <div className="pos-variant-picker__footer-actions">
+            <Button type="button" variant="secondary" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleConfirm}
+              disabled={sessionLines.length === 0}
+            >
+              Add to cart
+            </Button>
+          </div>
+        </footer>
+      </div>
+    </Modal>
+  );
+};

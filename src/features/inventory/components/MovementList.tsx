@@ -1,24 +1,65 @@
 /**
- * Movement List Component - Main ledger table
+ * Movement List Component - Unified ledger table (single movements + documents)
  */
 
-import React, { useState, useEffect } from 'react';
-import { inventoryService, MovementDocumentResponse, MovementType, MovementStatus } from '@/services/inventory.service';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  inventoryService,
+  MovementDocumentResponse,
+  StockMovementResponse,
+  MovementType,
+  MovementStatus,
+} from '@/services/inventory.service';
 import { Button, Input, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import './MovementList.css';
 
+export type MovementRowSource = 'movement' | 'document';
+
+export interface MovementSelection {
+  source: MovementRowSource;
+  id: string;
+}
+
+export type MovementRow =
+  | { source: 'movement'; data: StockMovementResponse }
+  | { source: 'document'; data: MovementDocumentResponse };
+
 interface MovementListProps {
-  onSelectMovement: (documentId: string) => void;
+  onSelectMovement: (selection: MovementSelection) => void;
   /** Double-click: open details panel (or Create with prefill when DRAFT). */
-  onOpenDetails?: (doc: MovementDocumentResponse) => void;
-  selectedDocumentId?: string;
+  onOpenDetails?: (selection: MovementSelection, doc?: MovementDocumentResponse) => void;
+  selectedSelection?: MovementSelection | null;
   onCreateMovement?: () => void;
 }
 
-export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, onOpenDetails, selectedDocumentId, onCreateMovement }) => {
+function getRowKey(row: MovementRow): string {
+  return row.source === 'movement' ? `movement-${row.data.id}` : `document-${row.data.id}`;
+}
+
+function getRowCreatedAt(row: MovementRow): string {
+  return row.data.createdAt;
+}
+
+function getFromLocationDoc(doc: MovementDocumentResponse) {
+  if (doc.lines.length > 0 && doc.lines[0].fromLocation) return doc.lines[0].fromLocation;
+  return doc.defaultFromLocation;
+}
+
+function getToLocationDoc(doc: MovementDocumentResponse) {
+  if (doc.lines.length > 0 && doc.lines[0].toLocation) return doc.lines[0].toLocation;
+  return doc.defaultToLocation;
+}
+
+export const MovementList: React.FC<MovementListProps> = ({
+  onSelectMovement,
+  onOpenDetails,
+  selectedSelection,
+  onCreateMovement,
+}) => {
+  const [movements, setMovements] = useState<StockMovementResponse[]>([]);
   const [documents, setDocuments] = useState<MovementDocumentResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,19 +73,28 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
   });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
-  const loadDocuments = async () => {
+  const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await inventoryService.getAllMovementDocuments({
-        movementType: filters.movementType || undefined,
-        status: filters.status || undefined,
-        createdBy: filters.createdBy || undefined,
-        dateFrom: filters.dateFrom || undefined,
-        dateTo: filters.dateTo || undefined,
-        myPendingApprovals: filters.myPendingApprovals || undefined,
-      });
-      setDocuments(data);
+      const [movementsData, documentsData] = await Promise.all([
+        inventoryService.getAllMovements({
+          movementType: filters.movementType || undefined,
+          status: filters.status || undefined,
+          dateFrom: filters.dateFrom || undefined,
+          dateTo: filters.dateTo || undefined,
+        }),
+        inventoryService.getAllMovementDocuments({
+          movementType: filters.movementType || undefined,
+          status: filters.status || undefined,
+          createdBy: filters.createdBy || undefined,
+          dateFrom: filters.dateFrom || undefined,
+          dateTo: filters.dateTo || undefined,
+          myPendingApprovals: filters.myPendingApprovals || undefined,
+        }),
+      ]);
+      setMovements(movementsData);
+      setDocuments(documentsData);
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to load movements');
       setError(message);
@@ -55,28 +105,32 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
   };
 
   useEffect(() => {
-    loadDocuments();
+    loadData();
   }, [filters]);
 
-  const getFromLocation = (doc: MovementDocumentResponse) => {
-    if (doc.lines.length > 0 && doc.lines[0].fromLocation) {
-      return doc.lines[0].fromLocation;
-    }
-    return doc.defaultFromLocation;
+  const mergedRows: MovementRow[] = useMemo(() => {
+    const documentRows: MovementRow[] = documents.map((data) => ({ source: 'document', data }));
+    const documentNumbers = new Set(documents.map((d) => d.movementNumber));
+    // Hide line-level ledger movements that were produced by a movement document:
+    // the document row already summarizes those lines.
+    const movementRows: MovementRow[] = movements
+      .filter((m) => !(m.referenceNumber && documentNumbers.has(m.referenceNumber)))
+      .map((data) => ({ source: 'movement', data }));
+    const all: MovementRow[] = [...movementRows, ...documentRows];
+    all.sort((a, b) => new Date(getRowCreatedAt(b)).getTime() - new Date(getRowCreatedAt(a)).getTime());
+    return all;
+  }, [movements, documents]);
+
+  const isSelected = (row: MovementRow) => {
+    if (!selectedSelection) return false;
+    return selectedSelection.source === row.source && selectedSelection.id === row.data.id;
   };
 
-  const getToLocation = (doc: MovementDocumentResponse) => {
-    if (doc.lines.length > 0 && doc.lines[0].toLocation) {
-      return doc.lines[0].toLocation;
-    }
-    return doc.defaultToLocation;
-  };
-
-  if (loading && documents.length === 0) {
+  if (loading && mergedRows.length === 0) {
     return <LoadingState message="Loading movements..." />;
   }
 
-  if (error && documents.length === 0) {
+  if (error && mergedRows.length === 0) {
     return <div className="error-message">{error}</div>;
   }
 
@@ -120,6 +174,15 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
             {showAdvancedFilters ? 'Hide Filters' : 'More Filters'}
           </Button>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => loadData()}
+          disabled={loading}
+          title="Refresh transactions list"
+        >
+          {loading ? '…' : '↻ Refresh'}
+        </Button>
       </div>
 
       {showAdvancedFilters && (
@@ -174,7 +237,7 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
 
       {error && <div className="error-message">{error}</div>}
 
-      {documents.length === 0 ? (
+      {mergedRows.length === 0 ? (
         <EmptyState message="No movements found" />
       ) : (
         <div className="movement-list-table">
@@ -194,9 +257,38 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
               </tr>
             </thead>
             <tbody>
-              {documents.map((doc) => {
-                const fromLoc = getFromLocation(doc);
-                const toLoc = getToLocation(doc);
+              {mergedRows.map((row) => {
+                const selection: MovementSelection = { source: row.source, id: row.data.id };
+                if (row.source === 'movement') {
+                  const m = row.data;
+                  const fromLoc = m.fromLocation;
+                  const toLoc = m.toLocation;
+                  const variantDisplay = m.variant?.code || m.variant?.name || '-';
+                  return (
+                    <tr
+                      key={getRowKey(row)}
+                      className={`movement-row ${isSelected(row) ? 'selected' : ''}`}
+                      onClick={() => onSelectMovement(selection)}
+                      onDoubleClick={() => onOpenDetails?.(selection)}
+                    >
+                      <td>{new Date(m.createdAt).toLocaleString()}</td>
+                      <td>{m.movementType}</td>
+                      <td>1</td>
+                      <td>{variantDisplay}</td>
+                      <td>{fromLoc ? `${fromLoc.code} - ${fromLoc.name}` : '-'}</td>
+                      <td>{toLoc ? `${toLoc.code} - ${toLoc.name}` : '-'}</td>
+                      <td>{m.quantity}</td>
+                      <td>
+                        <span className={`status-${m.status.toLowerCase()}`}>{m.status}</span>
+                      </td>
+                      <td>{m.createdBy?.name ?? '-'}</td>
+                      <td>{m.approvedBy || '-'}</td>
+                    </tr>
+                  );
+                }
+                const doc = row.data;
+                const fromLoc = getFromLocationDoc(doc);
+                const toLoc = getToLocationDoc(doc);
                 const variantDisplay =
                   doc.lines.length === 1
                     ? (doc.lines[0].variant?.code || doc.lines[0].variant?.name || '-')
@@ -205,10 +297,10 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
                     : 'Multiple';
                 return (
                   <tr
-                    key={doc.id}
-                    className={`movement-row ${selectedDocumentId === doc.id ? 'selected' : ''}`}
-                    onClick={() => onSelectMovement(doc.id)}
-                    onDoubleClick={() => onOpenDetails?.(doc)}
+                    key={getRowKey(row)}
+                    className={`movement-row ${isSelected(row) ? 'selected' : ''}`}
+                    onClick={() => onSelectMovement(selection)}
+                    onDoubleClick={() => onOpenDetails?.(selection, doc)}
                   >
                     <td>{new Date(doc.createdAt).toLocaleString()}</td>
                     <td>{doc.movementType}</td>
@@ -218,9 +310,7 @@ export const MovementList: React.FC<MovementListProps> = ({ onSelectMovement, on
                     <td>{toLoc ? `${toLoc.code} - ${toLoc.name}` : '-'}</td>
                     <td>{doc.totalQuantity}</td>
                     <td>
-                      <span className={`status-${doc.status.toLowerCase()}`}>
-                        {doc.status}
-                      </span>
+                      <span className={`status-${doc.status.toLowerCase()}`}>{doc.status}</span>
                     </td>
                     <td>{doc.createdBy.name}</td>
                     <td>{doc.approvedBy || '-'}</td>

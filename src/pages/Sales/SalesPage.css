@@ -1,7 +1,189 @@
 /**
- * Sales Page Styles
+ * Sales workspace — mirrors Inventory page layout (tabs + scroll)
  */
 
 .sales-page {
-  padding: var(--spacing-2xl);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Unified Sales module: sticky header + scroll body */
+.sales-page--unified {
+  background: #f8fafc;
+}
+
+.sales-page-scroll {
+  flex: 1;
+  margin-top: 16px;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sales-page-scroll--customer-detail {
+  padding: 0;
+}
+
+.sales-page-scroll--order-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.sales-page .sales-workspace {
+  flex: 1;
+  min-height: 0;
+}
+
+.sales-page-warn {
+  color: #b45309;
+  font-size: 13px;
+  align-self: center;
+}
+
+.sales-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 -20px 0;
+  padding: 0 20px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #f9f9f9;
+}
+
+.sales-page-tab {
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  transition: color 0.2s, background 0.2s;
+}
+
+.sales-page-tab:hover {
+  color: #333;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.sales-page-tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  background: #fff;
+}
+
+.sales-page-content {
+  padding-top: 16px;
+}
+
+.sales-order-mode-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Mode toggle lives in workspace header actions when Orders tab is active */
+.sales-workspace-actions .sales-order-mode-row {
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.sales-page--pos-focus .sales-workspace-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.sales-page--pos-focus .sales-page-tabs {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.sales-page--pos-focus .sales-page-content--pos {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+
+.pos-orders-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* POS dashboard: control bar + tabs + full-height shell (no SalesWorkspaceLayout) */
+.sales-page--pos-dashboard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sales-page--pos-dashboard .sales-page-tabs {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.sales-page--pos-dashboard .sales-page-content--pos {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Customer detail route: scroll the detail body, keep sales chrome fixed */
+.sales-page--pos-dashboard .sales-page-content--pos.sales-page-content--customer-detail {
+  overflow: auto;
+  min-height: 0;
+}
+
+.sales-page-content--pos.sales-page-content--customer-detail>* {
+  flex: 1 1 auto;
+  min-height: min-content;
+}
+
+.sales-pos-bar-toast {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 13px;
+  text-align: center;
+}
+
+.sales-filter-btn__icon {
+  width: 12px;
+  height: 10px;
+  display: inline-block;
+  margin-right: 6px;
+  position: relative;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid transparent;
+  border-right: 2px solid transparent;
+}
+
+.sales-filter-btn__icon::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 2px;
+  height: 5px;
+  background: currentColor;
 }

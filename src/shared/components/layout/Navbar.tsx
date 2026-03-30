@@ -21,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard' },
   { label: 'Attendance', path: '/attendance' },
   { label: 'Inventory', path: '/inventory' },
+  { label: 'Sales', path: '/sales' },
   { label: 'Reports', path: '/reports' },
   { label: 'Reports', path: '/reports/admin', roles: ['admin'] },
   { label: 'Calendar', path: '/calendar' },
@@ -118,6 +119,9 @@ export const Navbar: React.FC = () => {
     if (path === '/inventory') {
       return location.pathname === path || location.pathname.startsWith(path + '/');
     }
+    if (path === '/sales') {
+      return location.pathname === path || location.pathname.startsWith(path + '/');
+    }
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
@@ -131,6 +135,11 @@ export const Navbar: React.FC = () => {
       const hasInventoryDept = departments?.some((d) => d.name.toLowerCase() === 'inventory');
       const isAdmin = user?.role === UserRole.ADMIN;
       return hasInventoryDept || isAdmin;
+    }
+    if (item.path === '/sales') {
+      const hasSalesDept = departments?.some((d) => d.name.toLowerCase() === 'sales');
+      const isAdmin = user?.role === UserRole.ADMIN;
+      return hasSalesDept || isAdmin;
     }
     if (item.roles && user) {
       return item.roles.includes(user.role);

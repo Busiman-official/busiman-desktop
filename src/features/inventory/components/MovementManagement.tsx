@@ -19,7 +19,7 @@ import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { ResizableSplitPane } from '@/shared/components/layout';
-import { MovementList } from './MovementList';
+import { MovementList, MovementSelection } from './MovementList';
 import { MovementDetailPanel } from './MovementDetailPanel';
 import { CreateMovementView } from './CreateMovementView';
 import { StockCountingView } from './StockCountingView';
@@ -37,7 +37,15 @@ export const MovementManagement: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [movementSubTab, setMovementSubTab] = useState<MovementSubTab>('transactions');
+
+  // Sync movementSubTab with URL param subTab (for deep-linking from global search)
+  useEffect(() => {
+    const subTab = searchParams.get('subTab');
+    setMovementSubTab(subTab === 'counting' ? 'counting' : 'transactions');
+  }, [searchParams]);
+
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedSelection, setSelectedSelection] = useState<MovementSelection | null>(null);
   const [detailsPanelOpen, setDetailsPanelOpen] = useState(false);
   const [editDraftId, setEditDraftId] = useState<string | null>(null);
 
@@ -161,17 +169,15 @@ export const MovementManagement: React.FC = () => {
   // Handle movementId from URL params (for deep linking)
   useEffect(() => {
     const urlMovementId = searchParams.get('movementId');
-    if (urlMovementId && urlMovementId !== selectedMovementId) {
-      setSelectedMovementId(urlMovementId);
-      setViewMode('details');
-      setDetailsPanelOpen(true);
-      setMovementSubTab('transactions');
-      // Remove movementId from URL after setting it
-      const params = new URLSearchParams(searchParams);
-      params.delete('movementId');
-      setSearchParams(params, { replace: true });
-    }
-  }, [searchParams, selectedMovementId, setSearchParams]);
+    if (!urlMovementId) return;
+    setSelectedSelection({ source: 'movement', id: urlMovementId });
+    setViewMode('list');
+    setDetailsPanelOpen(true);
+    setMovementSubTab('transactions');
+    const params = new URLSearchParams(searchParams);
+    params.delete('movementId');
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const handleQuickReceipt = () => {
@@ -1371,13 +1377,27 @@ export const MovementManagement: React.FC = () => {
         <div className="movement-sub-tabs">
           <button
             className={`movement-sub-tab ${movementSubTab === 'transactions' ? 'active' : ''}`}
-            onClick={() => setMovementSubTab('transactions')}
+            onClick={() => {
+              setMovementSubTab('transactions');
+              setSearchParams((prev) => {
+                const p = new URLSearchParams(prev);
+                p.delete('subTab');
+                return p;
+              });
+            }}
           >
             Transactions
           </button>
           <button
             className={`movement-sub-tab ${movementSubTab === 'counting' ? 'active' : ''}`}
-            onClick={() => setMovementSubTab('counting')}
+            onClick={() => {
+              setMovementSubTab('counting');
+              setSearchParams((prev) => {
+                const p = new URLSearchParams(prev);
+                p.set('subTab', 'counting');
+                return p;
+              });
+            }}
           >
             Counting
           </button>
@@ -1391,19 +1411,19 @@ export const MovementManagement: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 <MovementList
-                  onSelectMovement={setSelectedDocumentId}
-                  onOpenDetails={(doc) => {
-                    if (doc.status === MovementStatus.DRAFT) {
+                  onSelectMovement={setSelectedSelection}
+                  onOpenDetails={(selection, doc) => {
+                    if (selection.source === 'document' && doc?.status === MovementStatus.DRAFT) {
                       setEditDraftId(doc.id);
                       setViewMode('create');
-                      setSelectedDocumentId(null);
+                      setSelectedSelection(null);
                       setDetailsPanelOpen(false);
                     } else {
-                      setSelectedDocumentId(doc.id);
+                      setSelectedSelection(selection);
                       setDetailsPanelOpen(true);
                     }
                   }}
-                  selectedDocumentId={selectedDocumentId || undefined}
+                  selectedSelection={selectedSelection}
                   onCreateMovement={handleCreateMovement}
                 />
               </div>
@@ -1411,12 +1431,13 @@ export const MovementManagement: React.FC = () => {
           }
           right={
             <MovementDetailPanel
-              documentId={selectedDocumentId}
+              documentId={selectedSelection?.source === 'document' ? selectedSelection.id : null}
+              movementId={selectedSelection?.source === 'movement' ? selectedSelection.id : null}
               onClose={() => {
-                setSelectedDocumentId(null);
+                setSelectedSelection(null);
                 setDetailsPanelOpen(false);
               }}
-              onRefresh={() => setSelectedDocumentId(null)}
+              onRefresh={() => setSelectedSelection(null)}
             />
           }
           storageKey="movement-list-detail-split"
@@ -1431,7 +1452,7 @@ export const MovementManagement: React.FC = () => {
       {viewMode === 'list' && movementSubTab === 'counting' && (
         <StockCountingView
           onViewMovementDocument={(id) => {
-            setSelectedDocumentId(id);
+            setSelectedSelection({ source: 'document', id });
             setMovementSubTab('transactions');
             setDetailsPanelOpen(true);
           }}
@@ -1444,7 +1465,7 @@ export const MovementManagement: React.FC = () => {
           onCancel={() => {
             setEditDraftId(null);
             setViewMode('list');
-            setSelectedDocumentId(null);
+            setSelectedSelection(null);
             const returnTab = searchParams.get('returnTab');
             const p = new URLSearchParams();
             if (returnTab) {
@@ -1467,7 +1488,7 @@ export const MovementManagement: React.FC = () => {
           onSuccess={() => {
             setEditDraftId(null);
             setViewMode('list');
-            setSelectedDocumentId(null);
+            setSelectedSelection(null);
             const returnTab = searchParams.get('returnTab');
             const p = new URLSearchParams();
             if (returnTab) {

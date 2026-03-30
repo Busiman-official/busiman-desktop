@@ -13,6 +13,12 @@ export interface CompanyProfile {
   supportPhone?: string;
   address?: string;
   timezone?: string;
+  gstNumber?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankName?: string;
+  bankBranch?: string;
+  bankIfsc?: string;
   logoUrl?: string | null;
   updatedAt?: string;
   updatedBy?: string;
@@ -26,6 +32,12 @@ export interface UpdateCompanyRequest {
   supportPhone?: string;
   address?: string;
   timezone?: string;
+  gstNumber?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankName?: string;
+  bankBranch?: string;
+  bankIfsc?: string;
   // logo is sent as multipart/form-data file when present
 }
 

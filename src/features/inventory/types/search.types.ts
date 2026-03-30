@@ -2,7 +2,7 @@
  * Global Search Types - Frontend
  */
 
-export type SearchEntityType = 'serial' | 'item' | 'movement' | 'location';
+export type SearchEntityType = 'serial' | 'item' | 'movement' | 'location' | 'page';
 
 export interface SearchFilters {
   types?: SearchEntityType[];
@@ -66,6 +66,15 @@ export interface LocationSearchResult extends SearchResult {
   name: string;
   locationType: string; // Location type (WAREHOUSE, ZONE, etc.)
   path?: string;
+}
+
+export interface PageSearchResult {
+  type: 'page';
+  id: string;
+  title: string;
+  subtitle?: string;
+  route: string;
+  rank: number;
 }
 
 export interface SearchResponse {

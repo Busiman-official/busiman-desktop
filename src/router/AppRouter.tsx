@@ -17,6 +17,7 @@ const ReportsPage = lazy(() => import('@/pages/Reports/ReportsPage').then(module
 const AdminReportsPage = lazy(() => import('@/pages/Reports/AdminReportsPage').then(module => ({ default: module.AdminReportsPage })));
 const CalendarPage = lazy(() => import('@/pages/Calendar/CalendarPage').then(module => ({ default: module.CalendarPage })));
 const InventoryPage = lazy(() => import('@/pages/Inventory/InventoryPage').then(module => ({ default: module.InventoryPage })));
+const SalesPage = lazy(() => import('@/pages/Sales/SalesPage').then(module => ({ default: module.SalesPage })));
 const ProductDetailPage = lazy(() => import('@/features/inventory/components/ProductDetailPage').then(module => ({ default: module.ProductDetailPage })));
 const SettingsPage = lazy(() => import('@/pages/Settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 const AdminPage = lazy(() => import('@/pages/Admin/AdminPage').then(module => ({ default: module.AdminPage })));
@@ -89,6 +90,7 @@ export const AppRouter: React.FC = () => {
               />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/inventory" element={<InventoryPage />} />
+              <Route path="/sales/*" element={<SalesPage />} />
               <Route path="/inventory/products/:id" element={<ProductDetailPage />} />
               <Route path="/settings" element={<SettingsPage />} />
 

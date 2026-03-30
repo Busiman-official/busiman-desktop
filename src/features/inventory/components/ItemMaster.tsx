@@ -13,7 +13,7 @@
  * Code review guide: CODE_REVIEW_GUIDELINES_ITEM_MASTER.md
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   inventoryService,
@@ -24,13 +24,14 @@ import {
   MovementType,
   SerialResponse,
 } from "@/services/inventory.service";
-import { getDefaultReason } from "../constants/movementReasonMapping";
+import { getDefaultReason, getMovementTypeLabel } from "../constants/movementReasonMapping";
 import {
   Button,
   Input,
   Card,
   Select,
   ImageUpload,
+  Checkbox,
 } from "@/shared/components/ui";
 import { LoadingState, EmptyState } from "@/shared/components/data-display";
 import { extractErrorMessage } from "@/utils/error";
@@ -43,13 +44,27 @@ import { SerialDetailPanel } from "./SerialDetailPanel";
 import { ProductCreationWizard } from "./ProductCreationWizard/ProductCreationWizard";
 import {
   ItemSubTab,
-  validateWizardSteps,
   validateCollapsibleSections,
   validateSubViews,
 } from "../constants/ui-governance.constants";
+import { VARIANT_UNIT_OPTIONS } from "./ProductCreationWizard/variantGridUnits";
 import "./ItemMaster.css";
+import "./ProductCreationWizard/ProductCreationWizard.css";
 
-type ViewMode = "list" | "details" | "add" | "edit";
+type ViewMode = "list" | "details" | "add";
+
+const DEFAULT_ITEM_CATEGORY = "electronics";
+
+type VariantStockRow = {
+  variantId: string;
+  totalOnHand: number;
+  locations: Array<{
+    locationId: string;
+    locationCode: string;
+    locationName: string;
+    quantity: number;
+  }>;
+};
 
 export const ItemMaster: React.FC = () => {
   const navigate = useNavigate();
@@ -78,6 +93,9 @@ export const ItemMaster: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, _setItemsPerPage] = useState(50);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dropTargetItemId, setDropTargetItemId] = useState<string | null>(null);
+  const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
@@ -137,18 +155,16 @@ export const ItemMaster: React.FC = () => {
     (() => void) | null
   >(null);
   const [variants, setVariants] = useState<any[]>([]);
-  const [variantStock, setVariantStock] = useState<
-    Array<{
-      variantId: string;
-      totalOnHand: number;
-      locations: Array<{
-        locationId: string;
-        locationCode: string;
-        locationName: string;
-        quantity: number;
-      }>;
-    }>
-  >([]);
+  const [variantStockByItem, setVariantStockByItem] = useState<
+    Record<string, VariantStockRow[]>
+  >({});
+  const [optimisticMigration, setOptimisticMigration] = useState<{
+    variantId: string;
+    ledgerModified: number;
+    serialModified: number;
+  } | null>(null);
+  const [legacyRebalanceLoading, setLegacyRebalanceLoading] = useState(false);
+  const optimisticMigrationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Batch management state
   const [batches, setBatches] = useState<any[]>([]);
@@ -253,23 +269,17 @@ export const ItemMaster: React.FC = () => {
     margin: undefined,
   });
 
-  // Variants removed from wizard - variants should be created in Product Details after item creation
-
-  // Wizard step state
-  const [currentStep, setCurrentStep] = useState(1);
-  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
-
   // Ref to track if we've processed the edit param
   const editParamProcessed = useRef(false);
 
-  // Refs for form fields for keyboard navigation
-  const formFieldRefs = useRef<
-    Record<
-      string,
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
-    >
-  >({});
-  const stepIndicatorRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const categorySelectOptions = useMemo(() => {
+    const set = new Set<string>([DEFAULT_ITEM_CATEGORY, ...categories]);
+    const cur = formData.category?.trim();
+    if (cur) set.add(cur);
+    return Array.from(set).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+  }, [categories, formData.category]);
 
   // Ref to prevent duplicate loads for same itemId/subTab combination
   const lastLoadedRef = useRef<{
@@ -279,22 +289,6 @@ export const ItemMaster: React.FC = () => {
   const loadingStockRef = useRef(false);
   const loadingItemsRef = useRef(false);
   const lastItemsLoadRef = useRef<string>("");
-
-  // Wizard steps configuration
-  // UI Governance: Maximum 6 steps enforced - add new fields to existing steps or use modals
-  // NOTE: Variants removed from wizard - variants should be created in Product Details after item creation
-  const wizardSteps = [
-    { id: 1, label: "Basic Info", key: "basic" },
-    { id: 2, label: "Images", key: "images" },
-    { id: 3, label: "Dimensions", key: "dimensions" },
-    { id: 4, label: "Industry", key: "industry" },
-    { id: 5, label: "Tags", key: "tags" },
-  ];
-
-  // UI Governance: Runtime validation of wizard steps limit
-  if (process.env.NODE_ENV === "development") {
-    validateWizardSteps(wizardSteps.length);
-  }
 
   // Initial load on mount
   useEffect(() => {
@@ -384,6 +378,13 @@ export const ItemMaster: React.FC = () => {
       // If no itemId in URL, clear selection and return to list view
       setSelectedItemId(null);
       setViewMode("list");
+      // Still apply itemSubTab from URL so "Item Variants" / "Serial Tracking" from global search open with correct sub-tab
+      if (
+        subTab &&
+        ["overview", "edit", "variants", "stock", "tracking", "history"].includes(subTab)
+      ) {
+        setItemSubTab(subTab);
+      }
     }
   }, [searchParams]);
 
@@ -391,104 +392,14 @@ export const ItemMaster: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const isFormMode = viewMode === "add" || viewMode === "edit";
       const isInputField =
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.tagName === "SELECT";
       const isContentEditable = target.isContentEditable;
 
-      // Handle form-specific keyboard navigation
-      if (isFormMode) {
-        // Enter key handling in form fields
-        if (
-          e.key === "Enter" &&
-          !e.shiftKey &&
-          isInputField &&
-          target.tagName !== "TEXTAREA"
-        ) {
-          // If Enter pressed in input/select, move to next field or submit if last step
-          e.preventDefault();
-          const currentFieldId = target.getAttribute("data-field-id");
-          if (currentFieldId) {
-            const fieldIds = Object.keys(formFieldRefs.current).sort();
-            const currentIndex = fieldIds.indexOf(currentFieldId);
-            if (currentIndex < fieldIds.length - 1) {
-              // Focus next field
-              const nextFieldId = fieldIds[currentIndex + 1];
-              const nextField = formFieldRefs.current[nextFieldId];
-              if (nextField) {
-                nextField.focus();
-              }
-            } else if (currentStep === wizardSteps.length) {
-              // Last field on last step - submit form
-              handleSubmit();
-            } else {
-              // Last field on current step - go to next step
-              handleNextStep();
-            }
-          }
-          return;
-        }
-
-        // Ctrl/Cmd + Enter: Submit form
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          e.preventDefault();
-          if (currentStep === wizardSteps.length) {
-            handleSubmit();
-          } else {
-            handleNextStep();
-          }
-          return;
-        }
-
-        // Ctrl/Cmd + S: Save/Submit (if on last step)
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-          e.preventDefault();
-          if (currentStep === wizardSteps.length) {
-            handleSubmit();
-          }
-          return;
-        }
-
-        // Ctrl/Cmd + Arrow Left/Right: Navigate between steps
-        if (
-          (e.ctrlKey || e.metaKey) &&
-          (e.key === "ArrowLeft" || e.key === "ArrowRight")
-        ) {
-          e.preventDefault();
-          if (e.key === "ArrowLeft" && currentStep > 1) {
-            handlePreviousStep();
-          } else if (
-            e.key === "ArrowRight" &&
-            currentStep < wizardSteps.length
-          ) {
-            handleNextStep();
-          }
-          return;
-        }
-
-        // Arrow Left/Right on step indicator: Navigate steps
-        if (
-          (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
-          target.classList.contains("wizard-step")
-        ) {
-          e.preventDefault();
-          if (e.key === "ArrowLeft" && currentStep > 1) {
-            handlePreviousStep();
-          } else if (
-            e.key === "ArrowRight" &&
-            currentStep < wizardSteps.length
-          ) {
-            handleNextStep();
-          }
-          return;
-        }
-      }
-
-      // Don't trigger shortcuts when typing in inputs/textarea (except handled above)
+      // Don't trigger global shortcuts when typing in inputs/textarea
       if (isInputField || isContentEditable) {
-        // Allow Esc to cancel inline editing
         if (e.key === "Escape" && editingField) {
           cancelInlineEdit();
         }
@@ -512,22 +423,17 @@ export const ItemMaster: React.FC = () => {
         setViewMode("add");
       }
 
-      // Esc: Cancel edit mode or deselect item
       if (e.key === "Escape") {
-        if (viewMode === "edit" || viewMode === "add") {
+        if (viewMode === "add") {
           if (hasUnsavedChanges) {
             setPendingNavigation(() => () => {
               setViewMode("list");
               setFieldErrors({});
-              setCurrentStep(1);
-              setCompletedSteps(new Set());
             });
             setShowUnsavedDialog(true);
           } else {
             setViewMode("list");
             setFieldErrors({});
-            setCurrentStep(1);
-            setCompletedSteps(new Set());
           }
         } else if (viewMode === "details" && selectedItemId) {
           setSelectedItemId(null);
@@ -540,7 +446,7 @@ export const ItemMaster: React.FC = () => {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [viewMode, selectedItemId, editingField, currentStep, hasUnsavedChanges]);
+  }, [viewMode, selectedItemId, editingField, hasUnsavedChanges]);
 
   // Define loadItems before useEffect that uses it
   const loadItems = useCallback(async () => {
@@ -554,32 +460,52 @@ export const ItemMaster: React.FC = () => {
         category: filterCategory || undefined,
       });
 
+      let summariesForStockFilter: Record<
+        string,
+        {
+          totalOnHand: number;
+          totalReserved: number;
+          totalAvailable: number;
+          locationCount: number;
+        }
+      > = {};
+      let alertsMapForExpiryFilter: Record<
+        string,
+        { daysUntilExpiry: number; expiryStatus: string }
+      > = {};
+
       // Load stock summaries and expiry alerts if needed for filtering
       if (filterStockStatus || filterExpiryRisk) {
-        const [, expiryAlerts] = await Promise.all([
+        const [summariesFromLoad, expiryAlerts] = await Promise.all([
           loadItemStockSummaries(data),
           filterExpiryRisk
             ? loadExpiryAlertsForFiltering()
             : Promise.resolve([]),
         ]);
 
-        // Build expiry alerts map
-        const alertsMap: Record<
-          string,
-          { daysUntilExpiry: number; expiryStatus: string }
-        > = {};
-        expiryAlerts.forEach((alert: any) => {
-          if (
-            !alertsMap[alert.itemId] ||
-            alertsMap[alert.itemId].daysUntilExpiry > alert.daysUntilExpiry
-          ) {
-            alertsMap[alert.itemId] = {
-              daysUntilExpiry: alert.daysUntilExpiry,
-              expiryStatus: alert.expiryStatus,
-            };
-          }
-        });
-        setExpiryAlertsMap(alertsMap);
+        if (filterStockStatus) {
+          summariesForStockFilter = summariesFromLoad;
+        }
+
+        if (filterExpiryRisk) {
+          const alertsMap: Record<
+            string,
+            { daysUntilExpiry: number; expiryStatus: string }
+          > = {};
+          expiryAlerts.forEach((alert: any) => {
+            if (
+              !alertsMap[alert.itemId] ||
+              alertsMap[alert.itemId].daysUntilExpiry > alert.daysUntilExpiry
+            ) {
+              alertsMap[alert.itemId] = {
+                daysUntilExpiry: alert.daysUntilExpiry,
+                expiryStatus: alert.expiryStatus,
+              };
+            }
+          });
+          alertsMapForExpiryFilter = alertsMap;
+          setExpiryAlertsMap(alertsMap);
+        }
       } else {
         // Load stock summaries in background for inline expansion
         loadItemStockSummaries(data).catch((err) => {
@@ -595,7 +521,7 @@ export const ItemMaster: React.FC = () => {
       }
       if (filterStockStatus) {
         data = data.filter((item) => {
-          const summary = itemStockSummaries[item.id];
+          const summary = summariesForStockFilter[item.id];
           if (!summary) return false;
 
           switch (filterStockStatus) {
@@ -613,7 +539,7 @@ export const ItemMaster: React.FC = () => {
       }
       if (filterExpiryRisk) {
         data = data.filter((item) => {
-          const alert = expiryAlertsMap[item.id];
+          const alert = alertsMapForExpiryFilter[item.id];
           if (!alert) return false;
 
           switch (filterExpiryRisk) {
@@ -689,8 +615,6 @@ export const ItemMaster: React.FC = () => {
     filterExpiryRisk,
     sortColumn,
     sortDirection,
-    itemStockSummaries,
-    expiryAlertsMap,
   ]);
 
   useEffect(() => {
@@ -776,7 +700,7 @@ export const ItemMaster: React.FC = () => {
         margin: selectedItem.margin,
       });
       setHasUnsavedChanges(false);
-    } else if (itemSubTab === "variants" && selectedItem.hasVariants) {
+    } else if (itemSubTab === "variants") {
       loadVariants(selectedItemId);
       loadVariantStock(selectedItemId);
     } else if (itemSubTab === "stock") {
@@ -789,6 +713,33 @@ export const ItemMaster: React.FC = () => {
     // We use selectedItem?.id as a stable dependency instead
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemSubTab, selectedItemId, viewMode, loadStockData, selectedItem?.id]);
+
+  // Clear optimistic migration when server stock data catches up (replica / cache)
+  useEffect(() => {
+    if (!optimisticMigration) return;
+    const total = stockData
+      .filter((s) => s.variantId === optimisticMigration.variantId)
+      .reduce((sum, s) => sum + s.onHandQuantity, 0);
+    if (total >= optimisticMigration.ledgerModified) {
+      setOptimisticMigration(null);
+    }
+  }, [stockData, optimisticMigration]);
+
+  // Safety: clear optimistic migration after 5s to avoid double-counting
+  useEffect(() => {
+    if (!optimisticMigration) return;
+    if (optimisticMigrationTimeoutRef.current) clearTimeout(optimisticMigrationTimeoutRef.current);
+    optimisticMigrationTimeoutRef.current = setTimeout(() => {
+      setOptimisticMigration(null);
+      optimisticMigrationTimeoutRef.current = null;
+    }, 5000);
+    return () => {
+      if (optimisticMigrationTimeoutRef.current) {
+        clearTimeout(optimisticMigrationTimeoutRef.current);
+        optimisticMigrationTimeoutRef.current = null;
+      }
+    };
+  }, [optimisticMigration]);
 
   const loadExpiryAlertsForFiltering = async () => {
     try {
@@ -822,7 +773,11 @@ export const ItemMaster: React.FC = () => {
         setVariants((prevVariants) =>
           prevVariants.filter((v) => v.itemId !== selectedItemId),
         );
-        setVariantStock([]);
+        setVariantStockByItem((prev) => {
+          const next = { ...prev };
+          delete next[selectedItemId];
+          return next;
+        });
       }
 
       // Load batches if item requires batch tracking
@@ -1038,10 +993,37 @@ export const ItemMaster: React.FC = () => {
   const loadVariantStock = async (itemId: string) => {
     try {
       const data = await inventoryService.getVariantStock(itemId);
-      setVariantStock(data);
+      setVariantStockByItem((prev) => ({ ...prev, [itemId]: data }));
     } catch (err: any) {
       logger.error("[ItemMaster] Failed to load variant stock", err);
-      setVariantStock([]);
+      setVariantStockByItem((prev) => ({ ...prev, [itemId]: [] }));
+    }
+  };
+
+  const handleRebalanceLegacyStock = async () => {
+    if (!selectedItemId || legacyRebalanceLoading) return;
+    setLegacyRebalanceLoading(true);
+    setError(null);
+    try {
+      const result =
+        await inventoryService.migrateProductLevelStockToDefaultVariant(
+          selectedItemId,
+        );
+      setOptimisticMigration({
+        variantId: result.defaultVariantId,
+        ledgerModified: result.ledgerModified || 0,
+        serialModified: result.serialModified || 0,
+      });
+      await Promise.all([
+        loadStockData(selectedItemId),
+        loadVariantStock(selectedItemId),
+        loadVariants(selectedItemId),
+      ]);
+      setSuccess("Legacy unassigned stock was rebalanced successfully.");
+    } catch (err: any) {
+      setError(extractErrorMessage(err, "Failed to rebalance legacy stock"));
+    } finally {
+      setLegacyRebalanceLoading(false);
     }
   };
 
@@ -1069,44 +1051,45 @@ export const ItemMaster: React.FC = () => {
         }
       > = {};
 
-      // Load stock summaries for all items in parallel (limit to first 100 for performance)
-      const itemsToLoad = items.slice(0, 100);
-      await Promise.all(
-        itemsToLoad.map(async (item) => {
-          try {
-            const stockData = await inventoryService.getStockByItem(item.id);
-            const totalOnHand = stockData.reduce(
-              (sum, s) => sum + s.onHandQuantity,
-              0,
-            );
-            const totalReserved = stockData.reduce(
-              (sum, s) => sum + s.reservedQuantity,
-              0,
-            );
-            const totalAvailable = stockData.reduce(
-              (sum, s) => sum + s.availableQuantity,
-              0,
-            );
-            const locationCount = new Set(stockData.map((s) => s.locationId))
-              .size;
+      const CHUNK_SIZE = 75;
+      for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+        const chunk = items.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (item) => {
+            try {
+              const stockData = await inventoryService.getStockByItem(item.id);
+              const totalOnHand = stockData.reduce(
+                (sum, s) => sum + s.onHandQuantity,
+                0,
+              );
+              const totalReserved = stockData.reduce(
+                (sum, s) => sum + s.reservedQuantity,
+                0,
+              );
+              const totalAvailable = stockData.reduce(
+                (sum, s) => sum + s.availableQuantity,
+                0,
+              );
+              const locationCount = new Set(stockData.map((s) => s.locationId))
+                .size;
 
-            summaries[item.id] = {
-              totalOnHand,
-              totalReserved,
-              totalAvailable,
-              locationCount,
-            };
-          } catch (err) {
-            // Ignore errors for individual items
-            summaries[item.id] = {
-              totalOnHand: 0,
-              totalReserved: 0,
-              totalAvailable: 0,
-              locationCount: 0,
-            };
-          }
-        }),
-      );
+              summaries[item.id] = {
+                totalOnHand,
+                totalReserved,
+                totalAvailable,
+                locationCount,
+              };
+            } catch (err) {
+              summaries[item.id] = {
+                totalOnHand: 0,
+                totalReserved: 0,
+                totalAvailable: 0,
+                locationCount: 0,
+              };
+            }
+          }),
+        );
+      }
 
       setItemStockSummaries(summaries);
       return summaries;
@@ -1136,16 +1119,23 @@ export const ItemMaster: React.FC = () => {
       );
 
       // Always attempt to load variants - if none exist, API will return empty array
-      try {
-        await loadVariants(itemId);
-      } catch (err) {
+      const [variantsOutcome, stockOutcome] = await Promise.allSettled([
+        loadVariants(itemId),
+        loadVariantStock(itemId),
+      ]);
+      if (variantsOutcome.status === "rejected") {
         logger.error(
           "[ItemMaster] Failed to load variants for expanded row",
-          err,
+          variantsOutcome.reason,
         );
-        // On error, ensure variants array doesn't have stale data for this item
         setVariants((prevVariants) =>
           prevVariants.filter((v) => v.itemId !== itemId),
+        );
+      }
+      if (stockOutcome.status === "rejected") {
+        logger.error(
+          "[ItemMaster] Failed to load variant stock for expanded row",
+          stockOutcome.reason,
         );
       }
     }
@@ -1311,11 +1301,8 @@ export const ItemMaster: React.FC = () => {
     const errors: string[] = [];
     const newFieldErrors: Record<string, string> = {};
 
-    // SKU validation
-    if (!formData.sku?.trim()) {
-      errors.push("SKU is required");
-      newFieldErrors.sku = "SKU is required";
-    } else if (!/^[A-Z0-9-_]+$/.test(formData.sku)) {
+    // SKU: assigned by server on create if omitted; if present, validate format
+    if (formData.sku?.trim() && !/^[A-Z0-9-_]+$/.test(formData.sku)) {
       errors.push(
         "SKU must contain only uppercase letters, numbers, hyphens, and underscores",
       );
@@ -1397,65 +1384,6 @@ export const ItemMaster: React.FC = () => {
     setSuccessTimeout(timeout);
   };
 
-  const handleCreate = async () => {
-    setError(null);
-    setSuccess(null);
-    setFieldErrors({});
-
-    // Validate form before submission
-    const validationErrors = validateForm();
-    if (validationErrors.length > 0) {
-      setError(validationErrors.join(". "));
-      return;
-    }
-
-    try {
-      // Create item
-      const createdItem = await inventoryService.createItem(formData);
-      setSuccess(
-        "Item created successfully. You can now add variants in Product Details.",
-      );
-
-      clearSuccessMessage();
-      // Redirect to Product Details → Variants tab
-      setSelectedItemId(createdItem.id);
-      setSelectedItem(createdItem);
-      setViewMode("details");
-      setItemSubTab("variants");
-      setFieldErrors({});
-      // Reload items list to refresh
-      await loadItems();
-      // Load full item details to ensure all data is available
-      await loadItemDetails();
-      setFormData({
-        sku: "",
-        name: "",
-        description: "",
-        category: "",
-        barcode: "",
-        unitOfMeasure: "pcs",
-        unitConversions: [],
-        industryFlags: {
-          isPerishable: false,
-          requiresBatchTracking: false,
-          requiresSerialTracking: false,
-          hasExpiryDate: false,
-          isHighValue: false,
-          industryType: IndustryType.WAREHOUSE,
-        },
-        images: [],
-        dimensions: undefined,
-        weight: undefined,
-        tags: [],
-      });
-      loadItems();
-    } catch (err: any) {
-      const message = extractErrorMessage(err, "Failed to create item");
-      setError(message);
-      logger.error("[ItemMaster] Failed to create item", err);
-    }
-  };
-
   const handleUpdate = async () => {
     if (!selectedItemId) return;
     setError(null);
@@ -1495,8 +1423,11 @@ export const ItemMaster: React.FC = () => {
       await inventoryService.updateItem(selectedItemId, updateData);
       setSuccess("Item updated successfully");
       clearSuccessMessage();
-      setViewMode("list");
+      setViewMode("details");
+      setItemSubTab("overview");
       setFieldErrors({});
+      setHasUnsavedChanges(false);
+      await loadItemDetails();
       loadItems();
     } catch (err: any) {
       const message = extractErrorMessage(err, "Failed to update item");
@@ -1524,28 +1455,6 @@ export const ItemMaster: React.FC = () => {
       setError(message);
       logger.error("[ItemMaster] Failed to delete item", err);
     }
-  };
-
-  const handleEdit = () => {
-    if (!selectedItem) return;
-    setFormData({
-      sku: selectedItem.sku,
-      name: selectedItem.name,
-      description: selectedItem.description || "",
-      category: selectedItem.category || "",
-      barcode: selectedItem.barcode || "",
-      unitOfMeasure: selectedItem.unitOfMeasure,
-      unitConversions: selectedItem.unitConversions,
-      industryFlags: selectedItem.industryFlags,
-      images: selectedItem.images || [],
-      dimensions: selectedItem.dimensions,
-      weight: selectedItem.weight,
-      tags: selectedItem.tags || [],
-      costPrice: selectedItem.costPrice,
-      sellingPrice: selectedItem.sellingPrice,
-      margin: selectedItem.margin,
-    });
-    setViewMode("edit");
   };
 
   const startInlineEdit = (field: string, value: string | undefined) => {
@@ -1767,6 +1676,9 @@ export const ItemMaster: React.FC = () => {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: "32px" }} aria-label="Reorder">
+                      <span className="drag-handle-icon" title="Drag to reorder">⋮⋮</span>
+                    </th>
                     <th style={{ width: "40px" }}>
                       <input
                         type="checkbox"
@@ -1877,7 +1789,7 @@ export const ItemMaster: React.FC = () => {
                       return (
                         <React.Fragment key={item.id}>
                           <tr
-                            className={`expandable-row ${selectedItemId === item.id ? "selected-row" : ""}`}
+                            className={`expandable-row ${selectedItemId === item.id ? "selected-row" : ""} ${draggingItemId === item.id ? "dragging" : ""} ${dropTargetItemId === item.id ? "drop-target" : ""}`}
                             onClick={() => {
                               setSelectedItemId(item.id);
                               setViewMode("details");
@@ -1895,7 +1807,79 @@ export const ItemMaster: React.FC = () => {
                                   ? "#f0f7ff"
                                   : "transparent",
                             }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (draggingItemId !== item.id) setDropTargetItemId(item.id);
+                            }}
+                            onDragLeave={() => {
+                              setDropTargetItemId((prev) => (prev === item.id ? null : prev));
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const sourceId = e.dataTransfer.getData("text/plain");
+                              if (!sourceId || sourceId === item.id) {
+                                setDropTargetItemId(null);
+                                setDraggingItemId(null);
+                                return;
+                              }
+                              const fromIndex = items.findIndex((i) => i.id === sourceId);
+                              const toIndex = items.findIndex((i) => i.id === item.id);
+                              if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+                                setDropTargetItemId(null);
+                                setDraggingItemId(null);
+                                return;
+                              }
+                              const newItems = [...items];
+                              const [removed] = newItems.splice(fromIndex, 1);
+                              newItems.splice(toIndex, 0, removed);
+                              setItems(newItems);
+                              setDropTargetItemId(null);
+                              setDraggingItemId(null);
+                            }}
+                            onDragEnd={() => {
+                              if (dragPreviewRef.current?.parentNode) {
+                                dragPreviewRef.current.parentNode.removeChild(dragPreviewRef.current);
+                                dragPreviewRef.current = null;
+                              }
+                              setDraggingItemId(null);
+                              setDropTargetItemId(null);
+                            }}
                           >
+                            <td
+                              className="drag-handle-cell"
+                              draggable
+                              onClick={(e) => e.stopPropagation()}
+                              onDragStart={(e) => {
+                                e.dataTransfer.effectAllowed = "move";
+                                e.dataTransfer.setData("text/plain", item.id);
+                                setDraggingItemId(item.id);
+                                const tr = (e.currentTarget as HTMLElement).closest("tr");
+                                if (tr) {
+                                  const rect = tr.getBoundingClientRect();
+                                  const table = document.createElement("table");
+                                  table.className = "item-master-table";
+                                  table.style.width = `${rect.width}px`;
+                                  table.style.tableLayout = "fixed";
+                                  const tbody = document.createElement("tbody");
+                                  tbody.appendChild(tr.cloneNode(true));
+                                  table.appendChild(tbody);
+                                  const wrapper = document.createElement("div");
+                                  wrapper.className = "item-master-drag-preview";
+                                  wrapper.style.width = `${rect.width}px`;
+                                  wrapper.appendChild(table);
+                                  document.body.appendChild(wrapper);
+                                  dragPreviewRef.current = wrapper;
+                                  const offsetX = e.clientX - rect.left;
+                                  const offsetY = e.clientY - rect.top;
+                                  e.dataTransfer.setDragImage(wrapper, offsetX, offsetY);
+                                }
+                              }}
+                              role="button"
+                              aria-label="Drag to reorder"
+                            >
+                              <span className="drag-handle-icon" aria-hidden>⋮⋮</span>
+                            </td>
                             <td onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
@@ -1905,16 +1889,20 @@ export const ItemMaster: React.FC = () => {
                             </td>
                             <td>
                               <div className="expandable-row-header">
-                                <span
-                                  className={`expand-icon ${isExpanded ? "expanded" : ""}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleRowExpand(item.id);
-                                  }}
-                                  style={{ cursor: "pointer" }}
-                                >
-                                  ▶
-                                </span>
+                                {item.hasVariants ? (
+                                  <span
+                                    className={`expand-icon ${isExpanded ? "expanded" : ""}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleRowExpand(item.id);
+                                    }}
+                                    style={{ cursor: "pointer" }}
+                                  >
+                                    ▶
+                                  </span>
+                                ) : (
+                                  <span className="expand-icon-placeholder" aria-hidden />
+                                )}
                                 {item.sku}
                               </div>
                             </td>
@@ -2033,7 +2021,10 @@ export const ItemMaster: React.FC = () => {
                                         </thead>
                                         <tbody>
                                           {itemVariants.map((variant) => {
-                                            const stockInfo = variantStock.find(
+                                            const stockRows =
+                                              variantStockByItem[item.id] ??
+                                              [];
+                                            const stockInfo = stockRows.find(
                                               (vs) =>
                                                 vs.variantId === variant.id,
                                             );
@@ -2094,1030 +2085,6 @@ export const ItemMaster: React.FC = () => {
         )}
       </div>
     </div>
-  );
-
-  // Step validation - validates only the current step
-  const validateStep = (step: number): boolean => {
-    const newFieldErrors: Record<string, string> = {};
-    let isValid = true;
-
-    // Step 1: Basic Information - SKU, Name, Unit of Measure are required
-    if (step === 1) {
-      if (!formData.sku?.trim()) {
-        newFieldErrors.sku = "SKU is required";
-        isValid = false;
-      } else if (!/^[A-Z0-9-_]+$/.test(formData.sku)) {
-        newFieldErrors.sku =
-          "SKU must contain only uppercase letters, numbers, hyphens, and underscores";
-        isValid = false;
-      }
-
-      if (!formData.name?.trim()) {
-        newFieldErrors.name = "Name is required";
-        isValid = false;
-      } else if (formData.name.trim().length > 500) {
-        newFieldErrors.name = "Name must be 500 characters or less";
-        isValid = false;
-      }
-
-      if (!formData.unitOfMeasure?.trim()) {
-        newFieldErrors.unitOfMeasure = "Unit of Measure is required";
-        isValid = false;
-      }
-    }
-
-    // Step 4: Industry Settings - Validate industry flags
-    if (step === 4) {
-      const flags = formData.industryFlags;
-
-      // Rule 1: Serial Tracking + Batch Tracking are mutually exclusive
-      if (flags.requiresSerialTracking && flags.requiresBatchTracking) {
-        newFieldErrors["industryFlags.batchSerial"] =
-          "Serial tracking and batch tracking cannot both be enabled";
-        isValid = false;
-      }
-
-      // Rule 2: Perishable + Batch Tracking → Must have Expiry Date
-      if (
-        flags.requiresBatchTracking &&
-        flags.isPerishable &&
-        !flags.hasExpiryDate
-      ) {
-        newFieldErrors["industryFlags.perishableExpiry"] =
-          "Perishable items with batch tracking must have expiry date enabled";
-        isValid = false;
-      }
-    }
-
-    // Step 5: Tags - no validation needed (optional field)
-
-    // Update field errors
-    if (!isValid) {
-      setFieldErrors(newFieldErrors);
-      setError("Please fix the errors before proceeding to the next step");
-    } else {
-      // Clear errors for this step
-      const updatedErrors = { ...fieldErrors };
-      Object.keys(newFieldErrors).forEach((key) => {
-        delete updatedErrors[key];
-      });
-      setFieldErrors(updatedErrors);
-      setError(null);
-    }
-
-    return isValid;
-  };
-
-  // Step navigation handlers
-  const handleNextStep = () => {
-    if (validateStep(currentStep)) {
-      const newCompleted = new Set(completedSteps);
-      newCompleted.add(currentStep);
-      setCompletedSteps(newCompleted);
-      if (currentStep < wizardSteps.length) {
-        setCurrentStep(currentStep + 1);
-        setError(null);
-      }
-    }
-  };
-
-  const handlePreviousStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-      setError(null);
-    }
-  };
-
-  const handleStepClick = (stepId: number) => {
-    // Allow clicking on completed steps or current step
-    if (
-      completedSteps.has(stepId) ||
-      stepId === currentStep ||
-      stepId < currentStep
-    ) {
-      setCurrentStep(stepId);
-      setError(null);
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (viewMode === "add") {
-      await handleCreate();
-    } else if (viewMode === "edit") {
-      await handleUpdate();
-    }
-  };
-
-  // Reset wizard when form mode changes
-  useEffect(() => {
-    if (viewMode === "add" || viewMode === "edit") {
-      setCurrentStep(1);
-      setCompletedSteps(new Set());
-    }
-  }, [viewMode]);
-
-  // Step Indicator Component
-  const renderStepIndicator = () => (
-    <div className="wizard-step-indicator">
-      {wizardSteps.map((step, index) => {
-        const isActive = step.id === currentStep;
-        const isCompleted = completedSteps.has(step.id);
-        const isClickable = isCompleted || step.id < currentStep || isActive;
-
-        return (
-          <div
-            key={step.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              flex: 1,
-              position: "relative",
-            }}
-          >
-            <div
-              ref={(el) => {
-                stepIndicatorRefs.current[step.id] = el;
-              }}
-              className={`wizard-step ${isActive ? "active" : ""} ${isCompleted ? "completed" : ""} ${isClickable ? "clickable" : ""}`}
-              onClick={() => isClickable && handleStepClick(step.id)}
-              onKeyDown={(e) => {
-                if (isClickable && (e.key === "Enter" || e.key === " ")) {
-                  e.preventDefault();
-                  handleStepClick(step.id);
-                }
-              }}
-              tabIndex={isClickable ? 0 : -1}
-              role="button"
-              aria-label={`Step ${step.id}: ${step.label}`}
-              aria-current={isActive ? "step" : undefined}
-              id={`step-${step.id}`}
-            >
-              <div className="wizard-step-number">
-                {isCompleted ? "✓" : step.id}
-              </div>
-              <div className="wizard-step-label">{step.label}</div>
-            </div>
-            {index < wizardSteps.length - 1 && (
-              <div
-                className={`wizard-step-connector ${isCompleted ? "completed" : ""}`}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-
-  const renderForm = () => (
-    <Card className="item-form-wizard">
-      <div className="wizard-header">
-        <h2>{viewMode === "add" ? "Create New Item" : "Edit Item"}</h2>
-        {renderStepIndicator()}
-      </div>
-
-      {error && <div className="error-message">{error}</div>}
-      {success && <div className="success-message">{success}</div>}
-
-      <div className="wizard-content">
-        {/* Step 1: Basic Information */}
-        {currentStep === 1 && (
-          <div
-            className="step-content"
-            data-step="basic"
-            role="tabpanel"
-            aria-labelledby={`step-${currentStep}`}
-          >
-            <div className="form-section">
-              <h3 className="form-section-title">Basic Information</h3>
-
-              <div className="form-group">
-                <label htmlFor="sku-field">SKU *</label>
-                <Input
-                  id="sku-field"
-                  data-field-id="sku"
-                  ref={(el) => {
-                    formFieldRefs.current["sku"] = el;
-                  }}
-                  value={formData.sku}
-                  onChange={(e) => {
-                    setFormData({
-                      ...formData,
-                      sku: e.target.value.toUpperCase(),
-                    });
-                    setHasUnsavedChanges(true);
-                    if (fieldErrors.sku) {
-                      const newErrors = { ...fieldErrors };
-                      delete newErrors.sku;
-                      setFieldErrors(newErrors);
-                    }
-                  }}
-                  disabled={viewMode === "edit"}
-                  placeholder="ITEM-001"
-                  className={fieldErrors.sku ? "error-input" : ""}
-                  aria-invalid={!!fieldErrors.sku}
-                  aria-describedby={fieldErrors.sku ? "sku-error" : undefined}
-                />
-                {fieldErrors.sku && (
-                  <div id="sku-error" className="field-error" role="alert">
-                    {fieldErrors.sku}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="barcode-field">Barcode</label>
-                <Input
-                  id="barcode-field"
-                  data-field-id="barcode"
-                  ref={(el) => {
-                    formFieldRefs.current["barcode"] = el;
-                  }}
-                  value={formData.barcode || ""}
-                  onChange={(e) => {
-                    setFormData({ ...formData, barcode: e.target.value });
-                    setHasUnsavedChanges(true);
-                    if (fieldErrors.barcode) {
-                      const newErrors = { ...fieldErrors };
-                      delete newErrors.barcode;
-                      setFieldErrors(newErrors);
-                    }
-                  }}
-                  placeholder="1234567890123"
-                  aria-invalid={!!fieldErrors.barcode}
-                  aria-describedby={
-                    fieldErrors.barcode ? "barcode-error" : undefined
-                  }
-                />
-                {fieldErrors.barcode && (
-                  <div id="barcode-error" className="field-error" role="alert">
-                    {fieldErrors.barcode}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="name-field">Name *</label>
-                <Input
-                  id="name-field"
-                  data-field-id="name"
-                  ref={(el) => {
-                    formFieldRefs.current["name"] = el;
-                  }}
-                  value={formData.name}
-                  onChange={(e) => {
-                    setFormData({ ...formData, name: e.target.value });
-                    setHasUnsavedChanges(true);
-                    if (fieldErrors.name) {
-                      const newErrors = { ...fieldErrors };
-                      delete newErrors.name;
-                      setFieldErrors(newErrors);
-                    }
-                  }}
-                  placeholder="Item Name"
-                  className={fieldErrors.name ? "error-input" : ""}
-                  aria-invalid={!!fieldErrors.name}
-                  aria-describedby={fieldErrors.name ? "name-error" : undefined}
-                />
-                {fieldErrors.name && (
-                  <div id="name-error" className="field-error" role="alert">
-                    {fieldErrors.name}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="description-field">Description</label>
-                <textarea
-                  id="description-field"
-                  data-field-id="description"
-                  ref={(el: HTMLTextAreaElement | null) => {
-                    formFieldRefs.current["description"] = el;
-                  }}
-                  value={formData.description}
-                  onChange={(e) => {
-                    setFormData({ ...formData, description: e.target.value });
-                    setHasUnsavedChanges(true);
-                  }}
-                  rows={4}
-                  placeholder="Item description"
-                  maxLength={2000}
-                />
-                <div className="field-helper-text">
-                  {formData.description?.length || 0} / 2000 characters
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label htmlFor="category-field">Category</label>
-                  <Input
-                    id="category-field"
-                    data-field-id="category"
-                    ref={(el) => {
-                      formFieldRefs.current["category"] = el;
-                    }}
-                    value={formData.category}
-                    onChange={(e) => {
-                      setFormData({ ...formData, category: e.target.value });
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="Category"
-                    list="categories-list"
-                  />
-                  <datalist id="categories-list">
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat} />
-                    ))}
-                  </datalist>
-                </div>
-                <div className="form-group">
-                  <label htmlFor="unit-field">Unit of Measure *</label>
-                  <Select
-                    id="unit-field"
-                    data-field-id="unitOfMeasure"
-                    ref={(el) => {
-                      formFieldRefs.current["unitOfMeasure"] = el;
-                    }}
-                    value={formData.unitOfMeasure}
-                    onChange={(e) => {
-                      setFormData({
-                        ...formData,
-                        unitOfMeasure: e.target.value,
-                      });
-                      setHasUnsavedChanges(true);
-                      if (fieldErrors.unitOfMeasure) {
-                        const newErrors = { ...fieldErrors };
-                        delete newErrors.unitOfMeasure;
-                        setFieldErrors(newErrors);
-                      }
-                    }}
-                    className={fieldErrors.unitOfMeasure ? "error-input" : ""}
-                    aria-invalid={!!fieldErrors.unitOfMeasure}
-                    aria-describedby={
-                      fieldErrors.unitOfMeasure ? "unit-error" : undefined
-                    }
-                  >
-                    <option value="">Select unit</option>
-                    <option value="pcs">pcs (Pieces)</option>
-                    <option value="kg">kg (Kilograms)</option>
-                    <option value="g">g (Grams)</option>
-                    <option value="l">l (Liters)</option>
-                    <option value="ml">ml (Milliliters)</option>
-                    <option value="m">m (Meters)</option>
-                    <option value="cm">cm (Centimeters)</option>
-                    <option value="box">box (Boxes)</option>
-                    <option value="pack">pack (Packs)</option>
-                    <option value="carton">carton (Cartons)</option>
-                  </Select>
-                  {fieldErrors.unitOfMeasure && (
-                    <div id="unit-error" className="field-error" role="alert">
-                      {fieldErrors.unitOfMeasure}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Images & Media */}
-        {currentStep === 2 && (
-          <div
-            className="step-content"
-            data-step="images"
-            role="tabpanel"
-            aria-labelledby={`step-${currentStep}`}
-          >
-            <div className="form-section">
-              <h3 className="form-section-title">Product Images</h3>
-              <p className="form-section-description">
-                Upload product images. The first image will be used as the
-                primary image.
-              </p>
-              <ImageUpload
-                images={formData.images || []}
-                onChange={(images) => {
-                  setFormData({ ...formData, images });
-                  setHasUnsavedChanges(true);
-                }}
-                maxImages={10}
-                folder="inventory"
-                disabled={loading}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Physical Attributes */}
-        {currentStep === 3 && (
-          <div
-            className="step-content"
-            data-step="dimensions"
-            role="tabpanel"
-            aria-labelledby={`step-${currentStep}`}
-          >
-            <div className="form-section">
-              <h3 className="form-section-title">Dimensions & Weight</h3>
-              <div className="dimensions-grid">
-                <div className="form-group">
-                  <label>Length</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.dimensions?.length || ""}
-                    onChange={(e) => {
-                      const value = e.target.value
-                        ? parseFloat(e.target.value)
-                        : undefined;
-                      setFormData({
-                        ...formData,
-                        dimensions: {
-                          ...formData.dimensions,
-                          length: value || 0,
-                          width: formData.dimensions?.width || 0,
-                          height: formData.dimensions?.height || 0,
-                          unit: formData.dimensions?.unit || "cm",
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Width</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.dimensions?.width || ""}
-                    onChange={(e) => {
-                      const value = e.target.value
-                        ? parseFloat(e.target.value)
-                        : undefined;
-                      setFormData({
-                        ...formData,
-                        dimensions: {
-                          ...formData.dimensions,
-                          length: formData.dimensions?.length || 0,
-                          width: value || 0,
-                          height: formData.dimensions?.height || 0,
-                          unit: formData.dimensions?.unit || "cm",
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Height</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.dimensions?.height || ""}
-                    onChange={(e) => {
-                      const value = e.target.value
-                        ? parseFloat(e.target.value)
-                        : undefined;
-                      setFormData({
-                        ...formData,
-                        dimensions: {
-                          ...formData.dimensions,
-                          length: formData.dimensions?.length || 0,
-                          width: formData.dimensions?.width || 0,
-                          height: value || 0,
-                          unit: formData.dimensions?.unit || "cm",
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Unit</label>
-                  <Select
-                    value={formData.dimensions?.unit || "cm"}
-                    onChange={(e) => {
-                      setFormData({
-                        ...formData,
-                        dimensions: {
-                          ...formData.dimensions,
-                          length: formData.dimensions?.length || 0,
-                          width: formData.dimensions?.width || 0,
-                          height: formData.dimensions?.height || 0,
-                          unit: e.target.value,
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                  >
-                    <option value="cm">cm</option>
-                    <option value="m">m</option>
-                    <option value="inches">inches</option>
-                    <option value="ft">ft</option>
-                  </Select>
-                </div>
-                <div className="form-group">
-                  <label>Weight</label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={formData.weight?.value || ""}
-                    onChange={(e) => {
-                      const value = e.target.value
-                        ? parseFloat(e.target.value)
-                        : undefined;
-                      setFormData({
-                        ...formData,
-                        weight: {
-                          value: value || 0,
-                          unit: formData.weight?.unit || "kg",
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Weight Unit</label>
-                  <Select
-                    value={formData.weight?.unit || "kg"}
-                    onChange={(e) => {
-                      setFormData({
-                        ...formData,
-                        weight: {
-                          value: formData.weight?.value || 0,
-                          unit: e.target.value,
-                        } as any,
-                      });
-                      setHasUnsavedChanges(true);
-                    }}
-                  >
-                    <option value="kg">kg</option>
-                    <option value="g">g</option>
-                    <option value="lbs">lbs</option>
-                    <option value="oz">oz</option>
-                  </Select>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 5: Industry Settings */}
-        {currentStep === 5 && (
-          <div
-            className="step-content"
-            data-step="industry"
-            role="tabpanel"
-            aria-labelledby={`step-${currentStep}`}
-          >
-            <div className="form-section">
-              <h3 className="form-section-title">Industry Type</h3>
-              <div className="form-group">
-                <label>Industry Type *</label>
-                <Select
-                  value={formData.industryFlags.industryType}
-                  onChange={(e) => {
-                    setFormData({
-                      ...formData,
-                      industryFlags: {
-                        ...formData.industryFlags,
-                        industryType: e.target.value as IndustryType,
-                      },
-                    });
-                    setHasUnsavedChanges(true);
-                  }}
-                >
-                  {Object.values(IndustryType).map((type) => (
-                    <option key={type} value={type}>
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-
-            <div className="form-section">
-              <h3 className="form-section-title">Industry Flags</h3>
-              <div className="industry-flags-grid">
-                <div className="form-group checkbox-enhanced">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.industryFlags.isPerishable}
-                      onChange={(e) => {
-                        const newFlags = {
-                          ...formData.industryFlags,
-                          isPerishable: e.target.checked,
-                        };
-                        // Auto-check expiry date if perishable + batch tracking
-                        if (
-                          e.target.checked &&
-                          formData.industryFlags.requiresBatchTracking &&
-                          !formData.industryFlags.hasExpiryDate
-                        ) {
-                          newFlags.hasExpiryDate = true;
-                        }
-                        setFormData({
-                          ...formData,
-                          industryFlags: newFlags,
-                        });
-                        setHasUnsavedChanges(true);
-                      }}
-                    />
-                    <span className="checkbox-text">
-                      <strong>Perishable</strong>
-                      <span className="checkbox-description">
-                        Item has limited shelf life and degrades over time
-                      </span>
-                    </span>
-                  </label>
-                  {formData.industryFlags.isPerishable && (
-                    <div
-                      className="flag-hint"
-                      style={{
-                        marginTop: "4px",
-                        fontSize: "12px",
-                        color: "#666",
-                      }}
-                    >
-                      ℹ️ This will enable expiry date tracking in Inventory
-                      Management
-                    </div>
-                  )}
-                </div>
-                <div className="form-group checkbox-enhanced">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.industryFlags.requiresBatchTracking}
-                      disabled={formData.industryFlags.requiresSerialTracking}
-                      onChange={(e) => {
-                        const newFlags = {
-                          ...formData.industryFlags,
-                          requiresBatchTracking: e.target.checked,
-                        };
-                        // Auto-check expiry date if perishable + batch tracking
-                        if (
-                          e.target.checked &&
-                          formData.industryFlags.isPerishable &&
-                          !formData.industryFlags.hasExpiryDate
-                        ) {
-                          newFlags.hasExpiryDate = true;
-                        }
-                        setFormData({
-                          ...formData,
-                          industryFlags: newFlags,
-                        });
-                        setHasUnsavedChanges(true);
-                      }}
-                    />
-                    <span className="checkbox-text">
-                      <strong>Requires Batch Tracking</strong>
-                      <span className="checkbox-description">
-                        Track items by batch/lot number for traceability
-                      </span>
-                    </span>
-                  </label>
-                  {formData.industryFlags.requiresSerialTracking && (
-                    <div
-                      className="flag-error"
-                      style={{
-                        marginTop: "4px",
-                        fontSize: "12px",
-                        color: "#d32f2f",
-                      }}
-                    >
-                      ⚠️ Cannot enable batch tracking when serial tracking is
-                      enabled
-                    </div>
-                  )}
-                  {formData.industryFlags.requiresBatchTracking &&
-                    !formData.industryFlags.requiresSerialTracking && (
-                      <div
-                        className="flag-hint"
-                        style={{
-                          marginTop: "4px",
-                          fontSize: "12px",
-                          color: "#666",
-                        }}
-                      >
-                        ℹ️ Batch numbers will be required on all stock movements
-                      </div>
-                    )}
-                </div>
-                <div className="form-group checkbox-enhanced">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.industryFlags.requiresSerialTracking}
-                      disabled={formData.industryFlags.requiresBatchTracking}
-                      onChange={(e) => {
-                        const newFlags = {
-                          ...formData.industryFlags,
-                          requiresSerialTracking: e.target.checked,
-                        };
-                        // If enabling serial tracking, disable batch tracking
-                        if (
-                          e.target.checked &&
-                          formData.industryFlags.requiresBatchTracking
-                        ) {
-                          newFlags.requiresBatchTracking = false;
-                        }
-                        setFormData({
-                          ...formData,
-                          industryFlags: newFlags,
-                        });
-                        setHasUnsavedChanges(true);
-                      }}
-                    />
-                    <span className="checkbox-text">
-                      <strong>Requires Serial Tracking</strong>
-                      <span className="checkbox-description">
-                        Track items by unique serial number (one per unit)
-                      </span>
-                    </span>
-                  </label>
-                  {formData.industryFlags.requiresBatchTracking && (
-                    <div
-                      className="flag-error"
-                      style={{
-                        marginTop: "4px",
-                        fontSize: "12px",
-                        color: "#d32f2f",
-                      }}
-                    >
-                      ⚠️ Cannot enable serial tracking when batch tracking is
-                      enabled
-                    </div>
-                  )}
-                  {formData.industryFlags.requiresSerialTracking &&
-                    !formData.industryFlags.requiresBatchTracking && (
-                      <div
-                        className="flag-hint"
-                        style={{
-                          marginTop: "4px",
-                          fontSize: "12px",
-                          color: "#666",
-                        }}
-                      >
-                        ℹ️ Serial numbers will be required for each unit
-                        {!formData.industryFlags.isHighValue && (
-                          <span
-                            style={{
-                              display: "block",
-                              marginTop: "2px",
-                              color: "#f57c00",
-                            }}
-                          >
-                            💡 Consider marking as High Value for enhanced
-                            security
-                          </span>
-                        )}
-                      </div>
-                    )}
-                </div>
-                <div className="form-group checkbox-enhanced">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.industryFlags.hasExpiryDate}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          industryFlags: {
-                            ...formData.industryFlags,
-                            hasExpiryDate: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <span className="checkbox-text">
-                      <strong>Has Expiry Date</strong>
-                      <span className="checkbox-description">
-                        Item has an expiration date that must be monitored
-                      </span>
-                    </span>
-                  </label>
-                  {formData.industryFlags.hasExpiryDate && (
-                    <div
-                      className="flag-hint"
-                      style={{
-                        marginTop: "4px",
-                        fontSize: "12px",
-                        color: "#666",
-                      }}
-                    >
-                      ℹ️ Expiry dates will be tracked and monitored
-                      {!formData.industryFlags.isPerishable && (
-                        <span style={{ display: "block", marginTop: "2px" }}>
-                          Note: Non-perishable items can still have expiry dates
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="form-group checkbox-enhanced">
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.industryFlags.isHighValue}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          industryFlags: {
-                            ...formData.industryFlags,
-                            isHighValue: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    <span className="checkbox-text">
-                      <strong>High Value Item</strong>
-                      <span className="checkbox-description">
-                        Item has high monetary value requiring additional
-                        security
-                      </span>
-                    </span>
-                  </label>
-                  {formData.industryFlags.isHighValue && (
-                    <div
-                      className="flag-hint"
-                      style={{
-                        marginTop: "4px",
-                        fontSize: "12px",
-                        color: "#666",
-                      }}
-                    >
-                      ℹ️ Additional security controls will be applied in
-                      Inventory Management
-                      {!formData.industryFlags.requiresSerialTracking && (
-                        <span
-                          style={{
-                            display: "block",
-                            marginTop: "2px",
-                            color: "#f57c00",
-                          }}
-                        >
-                          💡 Consider enabling Serial Tracking for better
-                          traceability
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-              {/* Validation errors display */}
-              {(fieldErrors["industryFlags"] ||
-                fieldErrors["industryFlags.batchSerial"] ||
-                fieldErrors["industryFlags.perishableExpiry"]) && (
-                <div
-                  className="validation-errors"
-                  style={{
-                    marginTop: "12px",
-                    padding: "8px",
-                    backgroundColor: "#ffebee",
-                    borderRadius: "4px",
-                  }}
-                >
-                  {fieldErrors["industryFlags"] && (
-                    <div
-                      className="field-error"
-                      style={{ color: "#d32f2f", fontSize: "13px" }}
-                    >
-                      ⚠️ {fieldErrors["industryFlags"]}
-                    </div>
-                  )}
-                  {fieldErrors["industryFlags.batchSerial"] && (
-                    <div
-                      className="field-error"
-                      style={{ color: "#d32f2f", fontSize: "13px" }}
-                    >
-                      ⚠️ {fieldErrors["industryFlags.batchSerial"]}
-                    </div>
-                  )}
-                  {fieldErrors["industryFlags.perishableExpiry"] && (
-                    <div
-                      className="field-error"
-                      style={{ color: "#d32f2f", fontSize: "13px" }}
-                    >
-                      ⚠️ {fieldErrors["industryFlags.perishableExpiry"]}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Step 5: Tags & Metadata */}
-        {currentStep === 5 && (
-          <div
-            className="step-content"
-            data-step="tags"
-            role="tabpanel"
-            aria-labelledby={`step-${currentStep}`}
-          >
-            <div className="form-section">
-              <h3 className="form-section-title">Tags</h3>
-              <p className="form-section-description">
-                Add tags to help categorize and search for this item
-              </p>
-              <div className="form-group">
-                <Input
-                  value={(formData.tags || []).join(", ")}
-                  onChange={(e) => {
-                    const tags = e.target.value
-                      .split(",")
-                      .map((tag) => tag.trim())
-                      .filter((tag) => tag.length > 0);
-                    setFormData({ ...formData, tags });
-                    setHasUnsavedChanges(true);
-                  }}
-                  placeholder="Enter tags separated by commas (e.g., electronics, popular, sale)"
-                />
-                <div className="tags-hint">Separate tags with commas</div>
-                {formData.tags && formData.tags.length > 0 && (
-                  <div className="tags-display">
-                    {formData.tags.map((tag, index) => (
-                      <span key={index} className="tag-chip">
-                        {tag}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newTags =
-                              formData.tags?.filter((_, i) => i !== index) ||
-                              [];
-                            setFormData({ ...formData, tags: newTags });
-                            setHasUnsavedChanges(true);
-                          }}
-                          className="tag-remove"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="wizard-footer">
-        <div className="wizard-footer-left">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (hasUnsavedChanges) {
-                setPendingNavigation(() => () => {
-                  setViewMode("list");
-                  setFieldErrors({});
-                  setCurrentStep(1);
-                  setCompletedSteps(new Set());
-                });
-                setShowUnsavedDialog(true);
-              } else {
-                setViewMode("list");
-                setFieldErrors({});
-                setCurrentStep(1);
-                setCompletedSteps(new Set());
-              }
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-        <div className="wizard-footer-right">
-          {currentStep > 1 && (
-            <Button variant="ghost" onClick={handlePreviousStep}>
-              Previous
-            </Button>
-          )}
-          {currentStep < wizardSteps.length ? (
-            <Button variant="primary" onClick={handleNextStep}>
-              Next
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={viewMode === "add" ? handleCreate : handleUpdate}
-              disabled={loading}
-            >
-              {loading
-                ? "Saving..."
-                : viewMode === "add"
-                  ? "Create Item"
-                  : "Save Changes"}
-            </Button>
-          )}
-        </div>
-      </div>
-    </Card>
   );
 
   const handleToggleActive = async () => {
@@ -3885,6 +2852,48 @@ export const ItemMaster: React.FC = () => {
     );
     const locationCount = new Set(stockData.map((s) => s.locationId)).size;
 
+    // Build variant stock for summary: only variants for THIS item (state can hold variants from other items)
+    const itemVariants = variants.filter(
+      (v: { itemId?: string }) => v.itemId === selectedItem.id,
+    );
+    const defaultVariant =
+      selectedItem.hasVariants && itemVariants.length > 0
+        ? (itemVariants.find((v: { isDefault?: boolean }) => v.isDefault) ??
+          itemVariants[0])
+        : null;
+    const unassignedStock = stockByVariant["none"] ?? null;
+    const variantStockDisplay =
+      selectedItem.hasVariants && itemVariants.length > 0
+        ? itemVariants.map((v: { id: string }) => {
+            const bucket = stockByVariant[v.id] ?? {
+              onHand: 0,
+              locations: {} as Record<
+                string,
+                {
+                  location: { id: string; code: string; name: string; type: string };
+                  onHand: number;
+                }
+              >,
+            };
+            let mergedOnHand = bucket.onHand;
+            if (optimisticMigration?.variantId === v.id) {
+              mergedOnHand += optimisticMigration.ledgerModified;
+            }
+            return {
+              variantId: v.id,
+              totalOnHand: mergedOnHand,
+              locations: Object.entries(bucket.locations).map(
+                ([locationId, loc]) => ({
+                  locationId,
+                  locationCode: loc.location?.code ?? "",
+                  locationName: loc.location?.name ?? "",
+                  quantity: loc.onHand,
+                }),
+              ),
+            };
+          })
+        : [];
+
     // For location breakdown, aggregate across all variants
     const stockByLocation = stockData.reduce(
       (acc, stock) => {
@@ -4110,13 +3119,17 @@ export const ItemMaster: React.FC = () => {
           )}
         </div>
 
-        {/* Variant Stock (if item has variants) */}
-        {selectedItem.hasVariants && variantStock.length > 0 && (
+        {/* Variant Stock (if item has variants) - use same stockData so totals match summary cards */}
+        {selectedItem.hasVariants && variantStockDisplay.length > 0 && (
           <div className="variant-stock-section">
             <h4>Variant Stock Summary</h4>
+            <p className="variant-stock-legacy-note" style={{ fontSize: '0.875rem', color: '#6c757d', marginTop: '0.25rem', marginBottom: '0.75rem' }}>
+              Variant totals are shown exactly as stored in the ledger. Legacy product-level rows (without variant) are shown separately as Unassigned / Legacy.
+            </p>
             <div className="variant-stock-grid">
-              {variantStock.map((stock) => {
+              {variantStockDisplay.map((stock) => {
                 const variant = variants.find((v) => v.id === stock.variantId);
+                const isDefaultVariant = defaultVariant?.id === stock.variantId;
                 return (
                   <div key={stock.variantId} className="variant-stock-card">
                     <div className="variant-stock-header">
@@ -4125,7 +3138,7 @@ export const ItemMaster: React.FC = () => {
                           ? `${variant.code} - ${variant.name}`
                           : stock.variantId}
                       </strong>
-                      {variant?.isDefault && (
+                      {isDefaultVariant && (
                         <span className="badge badge-primary">Default</span>
                       )}
                     </div>
@@ -4153,6 +3166,40 @@ export const ItemMaster: React.FC = () => {
                   </div>
                 );
               })}
+              {unassignedStock && unassignedStock.onHand > 0 && (
+                <div key="unassigned-legacy" className="variant-stock-card">
+                  <div className="variant-stock-header">
+                    <strong>Unassigned / Legacy</strong>
+                    <span className="badge badge-warning">Needs Rebalance</span>
+                  </div>
+                  <div className="variant-stock-total">
+                    Total: <strong>{unassignedStock.onHand}</strong>
+                  </div>
+                  <div style={{ marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleRebalanceLegacyStock}
+                      disabled={legacyRebalanceLoading}
+                    >
+                      {legacyRebalanceLoading ? "Rebalancing..." : "Rebalance Legacy Stock"}
+                    </Button>
+                  </div>
+                  {Object.values(unassignedStock.locations ?? {}).length > 0 && (
+                    <div className="variant-stock-locations">
+                      <div className="locations-header">By Location:</div>
+                      {Object.entries(unassignedStock.locations).map(([locationId, loc]) => (
+                        <div key={locationId} className="location-stock-item">
+                          <span>
+                            {loc.location?.code} - {loc.location?.name}
+                          </span>
+                          <span className="location-quantity">{loc.onHand}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -4568,104 +3615,410 @@ export const ItemMaster: React.FC = () => {
   const renderEditView = () => {
     if (!selectedItem) return null;
 
+    const primaryUom = (formData.unitOfMeasure || "pcs").trim();
+    const conv0 = formData.unitConversions?.[0];
+    const secondaryUnit =
+      conv0 && conv0.toUnit === primaryUom ? conv0.fromUnit : "";
+    const conversionFactorStr =
+      conv0 && conv0.toUnit === primaryUom && conv0.conversionFactor != null
+        ? String(conv0.conversionFactor)
+        : "";
+
+    const setRequiresBatchTracking = (checked: boolean) => {
+      setFormData((prev) => {
+        const nf = { ...prev.industryFlags, requiresBatchTracking: checked };
+        if (checked) nf.requiresSerialTracking = false;
+        if (checked && nf.isPerishable && !nf.hasExpiryDate) nf.hasExpiryDate = true;
+        return { ...prev, industryFlags: nf };
+      });
+      setFieldErrors((er) => {
+        const n = { ...er };
+        delete n["industryFlags.batchSerial"];
+        if (checked) delete n["industryFlags.perishableExpiry"];
+        return n;
+      });
+      setHasUnsavedChanges(true);
+    };
+
+    const setRequiresSerialTracking = (checked: boolean) => {
+      setFormData((prev) => ({
+        ...prev,
+        industryFlags: {
+          ...prev.industryFlags,
+          requiresSerialTracking: checked,
+          ...(checked ? { requiresBatchTracking: false } : {}),
+        },
+      }));
+      setFieldErrors((er) => {
+        const n = { ...er };
+        delete n["industryFlags.batchSerial"];
+        return n;
+      });
+      setHasUnsavedChanges(true);
+    };
+
+    const syncUnitConversion = (
+      secondary: string,
+      factorRaw: string,
+      primary: string,
+    ) => {
+      const sec = secondary.trim();
+      const factor = parseFloat(factorRaw);
+      const p = primary.trim() || "pcs";
+      if (!sec || !factor || factor <= 0 || Number.isNaN(factor)) {
+        setFormData((prev) => ({ ...prev, unitConversions: [] }));
+      } else {
+        setFormData((prev) => ({
+          ...prev,
+          unitConversions: [
+            { fromUnit: sec, toUnit: p, conversionFactor: factor },
+          ],
+        }));
+      }
+      setHasUnsavedChanges(true);
+    };
+
     return (
       <div className="edit-view">
         <div className="edit-form-sections">
-          {/* Basic Info Section */}
-          <div className="form-section">
-            <h3 className="form-section-title">Basic Information</h3>
-            <div className="form-group">
-              <label>SKU</label>
-              <Input
-                value={selectedItem.sku}
-                disabled
-                style={{ backgroundColor: "#f5f5f5" }}
-              />
-              <div className="field-helper-text">
-                SKU cannot be changed after creation
-              </div>
-            </div>
-            <div className="form-group">
-              <label>Barcode</label>
-              <Input
-                value={formData.barcode || ""}
-                onChange={(e) => {
-                  setFormData({ ...formData, barcode: e.target.value });
-                  setHasUnsavedChanges(true);
-                }}
-                placeholder="Optional barcode"
-              />
-            </div>
-            <div className="form-group">
-              <label>Name *</label>
-              <Input
-                value={formData.name}
-                onChange={(e) => {
-                  setFormData({ ...formData, name: e.target.value });
-                  setHasUnsavedChanges(true);
-                }}
-                placeholder="Item Name"
-              />
-            </div>
-            <div className="form-group">
-              <label>Description</label>
-              <textarea
-                value={formData.description}
-                onChange={(e) => {
-                  setFormData({ ...formData, description: e.target.value });
-                  setHasUnsavedChanges(true);
-                }}
-                rows={4}
-                placeholder="Item description"
-                maxLength={2000}
-              />
-              <div className="field-helper-text">
-                {formData.description?.length || 0} / 2000 characters
-              </div>
-            </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label>Category</label>
-                <Input
-                  value={formData.category}
-                  onChange={(e) => {
-                    setFormData({ ...formData, category: e.target.value });
+          <div className="wizard-step-content wizard-step-content--master">
+            <div className="wizard-master-split">
+              <div className="wizard-master-images">
+                <ImageUpload
+                  images={formData.images || []}
+                  onChange={(images) => {
+                    setFormData({ ...formData, images });
                     setHasUnsavedChanges(true);
                   }}
-                  placeholder="Category"
-                  list="categories-list"
+                  maxImages={10}
+                  folder="inventory"
+                  disabled={loading}
                 />
-                <datalist id="categories-list">
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat} />
-                  ))}
-                </datalist>
               </div>
-              <div className="form-group">
-                <label>Unit of Measure *</label>
-                <Select
-                  value={formData.unitOfMeasure}
-                  onChange={(e) => {
-                    setFormData({ ...formData, unitOfMeasure: e.target.value });
-                    setHasUnsavedChanges(true);
+              <div className="wizard-master-fields">
+                <div className="wizard-form-group">
+                  <label>SKU</label>
+                  <Input
+                    value={selectedItem.sku}
+                    disabled
+                    style={{ backgroundColor: "#f5f5f5" }}
+                  />
+                  <span className="wizard-summary-label" style={{ fontSize: 11 }}>
+                    SKU cannot be changed after creation
+                  </span>
+                </div>
+                <div className="wizard-form-group">
+                  <label htmlFor="item-edit-barcode">Barcode</label>
+                  <Input
+                    id="item-edit-barcode"
+                    value={formData.barcode || ""}
+                    onChange={(e) => {
+                      setFormData({ ...formData, barcode: e.target.value });
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="Optional barcode"
+                  />
+                </div>
+                <div className="wizard-form-group">
+                  <label htmlFor="item-edit-name" className="required">
+                    Item name
+                  </label>
+                  <Input
+                    id="item-edit-name"
+                    value={formData.name}
+                    onChange={(e) => {
+                      setFormData({ ...formData, name: e.target.value });
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="e.g. Organic whole milk 1L"
+                  />
+                </div>
+                <div className="wizard-form-group wizard-form-group--grow">
+                  <label htmlFor="item-edit-desc">Description</label>
+                  <textarea
+                    id="item-edit-desc"
+                    className="input wizard-master-description"
+                    rows={6}
+                    value={formData.description}
+                    onChange={(e) => {
+                      setFormData({ ...formData, description: e.target.value });
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="Ingredients, storage, shelf life, or anything staff should know."
+                    maxLength={2000}
+                  />
+                  <span className="wizard-summary-label" style={{ fontSize: 11 }}>
+                    {formData.description?.length || 0} / 2000
+                  </span>
+                </div>
+                <div className="wizard-form-group">
+                  <label htmlFor="item-edit-category">Category</label>
+                  <Select
+                    id="item-edit-category"
+                    value={formData.category ?? ""}
+                    onChange={(e) => {
+                      setFormData({ ...formData, category: e.target.value });
+                      setHasUnsavedChanges(true);
+                    }}
+                  >
+                    <option value="">—</option>
+                    {categorySelectOptions.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="wizard-form-group">
+                  <span
+                    className="wizard-summary-label"
+                    style={{ display: "block", marginBottom: 6 }}
+                  >
+                    {"Tracking & handling"}
+                  </span>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "12px 20px",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        cursor: "pointer",
+                        fontSize: 12,
+                      }}
+                    >
+                      <Checkbox
+                        checked={formData.industryFlags.requiresBatchTracking}
+                        onChange={(e) =>
+                          setRequiresBatchTracking(e.target.checked)
+                        }
+                        aria-label="Track batch number"
+                      />
+                      Track batch number
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        cursor: "pointer",
+                        fontSize: 12,
+                      }}
+                    >
+                      <Checkbox
+                        checked={formData.industryFlags.requiresSerialTracking}
+                        onChange={(e) =>
+                          setRequiresSerialTracking(e.target.checked)
+                        }
+                        aria-label="Track serial number"
+                      />
+                      Track serial number
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        cursor: "pointer",
+                        fontSize: 12,
+                      }}
+                    >
+                      <Checkbox
+                        checked={formData.industryFlags.hasExpiryDate}
+                        onChange={(e) => {
+                          setFormData({
+                            ...formData,
+                            industryFlags: {
+                              ...formData.industryFlags,
+                              hasExpiryDate: e.target.checked,
+                            },
+                          });
+                          setHasUnsavedChanges(true);
+                        }}
+                        aria-label="Has expiry date"
+                      />
+                      Has expiry date
+                    </label>
+                  </div>
+                  <p
+                    className="wizard-summary-label"
+                    style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}
+                  >
+                    Batch and serial tracking cannot both be enabled — selecting
+                    one turns the other off.
+                  </p>
+                  {(fieldErrors["industryFlags.batchSerial"] ||
+                    fieldErrors["industryFlags.perishableExpiry"]) && (
+                    <p className="field-error" role="alert" style={{ marginTop: 8 }}>
+                      {fieldErrors["industryFlags.batchSerial"] ||
+                        fieldErrors["industryFlags.perishableExpiry"]}
+                    </p>
+                  )}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "12px 20px",
                   }}
                 >
-                  <option value="pcs">pcs (Pieces)</option>
-                  <option value="kg">kg (Kilograms)</option>
-                  <option value="g">g (Grams)</option>
-                  <option value="l">l (Liters)</option>
-                  <option value="ml">ml (Milliliters)</option>
-                  <option value="m">m (Meters)</option>
-                  <option value="cm">cm (Centimeters)</option>
-                  <option value="box">box (Boxes)</option>
-                  <option value="pack">pack (Packs)</option>
-                  <option value="carton">carton (Cartons)</option>
-                </Select>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    <Checkbox
+                      checked={formData.industryFlags.isPerishable}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setFormData((prev) => {
+                          const nf = {
+                            ...prev.industryFlags,
+                            isPerishable: checked,
+                          };
+                          if (
+                            checked &&
+                            nf.requiresBatchTracking &&
+                            !nf.hasExpiryDate
+                          ) {
+                            nf.hasExpiryDate = true;
+                          }
+                          return { ...prev, industryFlags: nf };
+                        });
+                        setHasUnsavedChanges(true);
+                      }}
+                      aria-label="Perishable"
+                    />
+                    Perishable
+                  </label>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    <Checkbox
+                      checked={formData.industryFlags.isHighValue}
+                      onChange={(e) => {
+                        setFormData({
+                          ...formData,
+                          industryFlags: {
+                            ...formData.industryFlags,
+                            isHighValue: e.target.checked,
+                          },
+                        });
+                        setHasUnsavedChanges(true);
+                      }}
+                      aria-label="High value item"
+                    />
+                    High value item
+                  </label>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Pricing Section */}
+          <div className="form-section">
+            <h3 className="form-section-title">Units</h3>
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="item-edit-uom">Primary unit *</label>
+                <Select
+                  id="item-edit-uom"
+                  value={formData.unitOfMeasure}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFormData((prev) => {
+                      const c = prev.unitConversions?.[0];
+                      const uc =
+                        c && prev.unitConversions?.length === 1
+                          ? [{ ...c, toUnit: v }]
+                          : prev.unitConversions || [];
+                      return { ...prev, unitOfMeasure: v, unitConversions: uc };
+                    });
+                    setHasUnsavedChanges(true);
+                  }}
+                >
+                  {VARIANT_UNIT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="item-edit-secondary-uom">Secondary unit</label>
+                <Select
+                  id="item-edit-secondary-uom"
+                  value={secondaryUnit}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    syncUnitConversion(
+                      v,
+                      v ? conversionFactorStr || "1" : "",
+                      primaryUom,
+                    );
+                  }}
+                >
+                  <option value="">None</option>
+                  {VARIANT_UNIT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            {secondaryUnit ? (
+              <div className="form-group wizard-conditional-section">
+                <label htmlFor="item-edit-conv-factor">
+                  Conversion (1 secondary = X primary)
+                </label>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span style={{ fontSize: 12 }}>1</span>
+                  <Input
+                    id="item-edit-conv-factor"
+                    type="number"
+                    min={0.001}
+                    step={0.1}
+                    value={conversionFactorStr}
+                    onChange={(e) => {
+                      syncUnitConversion(
+                        secondaryUnit,
+                        e.target.value,
+                        primaryUom,
+                      );
+                    }}
+                    placeholder="1"
+                    style={{ width: 80 }}
+                  />
+                  <span style={{ fontSize: 12 }}>
+                    {primaryUom} = 1 {secondaryUnit}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           <div className="form-section">
             <h3 className="form-section-title">Pricing</h3>
             <div className="form-row">
@@ -4716,24 +4069,8 @@ export const ItemMaster: React.FC = () => {
             </div>
           </div>
 
-          {/* Images Section */}
           <div className="form-section">
-            <h3 className="form-section-title">Product Images</h3>
-            <ImageUpload
-              images={formData.images || []}
-              onChange={(images) => {
-                setFormData({ ...formData, images });
-                setHasUnsavedChanges(true);
-              }}
-              maxImages={10}
-              folder="inventory"
-              disabled={loading}
-            />
-          </div>
-
-          {/* Dimensions & Weight Section */}
-          <div className="form-section">
-            <h3 className="form-section-title">Dimensions & Weight</h3>
+            <h3 className="form-section-title">{"Dimensions & weight"}</h3>
             <div className="dimensions-grid">
               <div className="form-group">
                 <label>Length</label>
@@ -4854,7 +4191,7 @@ export const ItemMaster: React.FC = () => {
                 />
               </div>
               <div className="form-group">
-                <label>Weight Unit</label>
+                <label>Weight unit</label>
                 <Select
                   value={formData.weight?.unit || "kg"}
                   onChange={(e) => {
@@ -4877,11 +4214,10 @@ export const ItemMaster: React.FC = () => {
             </div>
           </div>
 
-          {/* Industry Section */}
           <div className="form-section">
-            <h3 className="form-section-title">Industry Type</h3>
+            <h3 className="form-section-title">Industry</h3>
             <div className="form-group">
-              <label>Industry Type *</label>
+              <label>Industry type *</label>
               <Select
                 value={formData.industryFlags.industryType}
                 onChange={(e) => {
@@ -4904,147 +4240,6 @@ export const ItemMaster: React.FC = () => {
             </div>
           </div>
 
-          <div className="form-section">
-            <h3 className="form-section-title">Industry Flags</h3>
-            <div className="industry-flags-grid">
-              <div className="form-group checkbox-enhanced">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.industryFlags.isPerishable}
-                    onChange={(e) => {
-                      const newFlags = {
-                        ...formData.industryFlags,
-                        isPerishable: e.target.checked,
-                      };
-                      if (
-                        e.target.checked &&
-                        formData.industryFlags.requiresBatchTracking &&
-                        !formData.industryFlags.hasExpiryDate
-                      ) {
-                        newFlags.hasExpiryDate = true;
-                      }
-                      setFormData({ ...formData, industryFlags: newFlags });
-                      setHasUnsavedChanges(true);
-                    }}
-                  />
-                  <span className="checkbox-text">
-                    <strong>Perishable</strong>
-                    <span className="checkbox-description">
-                      Item has limited shelf life and degrades over time
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <div className="form-group checkbox-enhanced">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.industryFlags.requiresBatchTracking}
-                    disabled={formData.industryFlags.requiresSerialTracking}
-                    onChange={(e) => {
-                      const newFlags = {
-                        ...formData.industryFlags,
-                        requiresBatchTracking: e.target.checked,
-                      };
-                      if (
-                        e.target.checked &&
-                        formData.industryFlags.isPerishable &&
-                        !formData.industryFlags.hasExpiryDate
-                      ) {
-                        newFlags.hasExpiryDate = true;
-                      }
-                      setFormData({ ...formData, industryFlags: newFlags });
-                      setHasUnsavedChanges(true);
-                    }}
-                  />
-                  <span className="checkbox-text">
-                    <strong>Requires Batch Tracking</strong>
-                    <span className="checkbox-description">
-                      Track items by batch/lot number for traceability
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <div className="form-group checkbox-enhanced">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.industryFlags.requiresSerialTracking}
-                    disabled={formData.industryFlags.requiresBatchTracking}
-                    onChange={(e) => {
-                      const newFlags = {
-                        ...formData.industryFlags,
-                        requiresSerialTracking: e.target.checked,
-                      };
-                      if (
-                        e.target.checked &&
-                        formData.industryFlags.requiresBatchTracking
-                      ) {
-                        newFlags.requiresBatchTracking = false;
-                      }
-                      setFormData({ ...formData, industryFlags: newFlags });
-                      setHasUnsavedChanges(true);
-                    }}
-                  />
-                  <span className="checkbox-text">
-                    <strong>Requires Serial Tracking</strong>
-                    <span className="checkbox-description">
-                      Track items by unique serial number (one per unit)
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <div className="form-group checkbox-enhanced">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.industryFlags.hasExpiryDate}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        industryFlags: {
-                          ...formData.industryFlags,
-                          hasExpiryDate: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                  <span className="checkbox-text">
-                    <strong>Has Expiry Date</strong>
-                    <span className="checkbox-description">
-                      Item has an expiration date that must be monitored
-                    </span>
-                  </span>
-                </label>
-              </div>
-              <div className="form-group checkbox-enhanced">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={formData.industryFlags.isHighValue}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        industryFlags: {
-                          ...formData.industryFlags,
-                          isHighValue: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                  <span className="checkbox-text">
-                    <strong>High Value Item</strong>
-                    <span className="checkbox-description">
-                      Item has high monetary value requiring additional security
-                    </span>
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Tags Section */}
           <div className="form-section">
             <h3 className="form-section-title">Tags</h3>
             <div className="form-group">
@@ -5092,8 +4287,28 @@ export const ItemMaster: React.FC = () => {
             onClick={() => {
               if (hasUnsavedChanges) {
                 setPendingNavigation(() => () => {
+                  if (selectedItem) {
+                    setFormData({
+                      sku: selectedItem.sku,
+                      name: selectedItem.name,
+                      description: selectedItem.description || "",
+                      category: selectedItem.category || "",
+                      barcode: selectedItem.barcode || "",
+                      unitOfMeasure: selectedItem.unitOfMeasure,
+                      unitConversions: selectedItem.unitConversions,
+                      industryFlags: selectedItem.industryFlags,
+                      images: selectedItem.images || [],
+                      dimensions: selectedItem.dimensions,
+                      weight: selectedItem.weight,
+                      tags: selectedItem.tags || [],
+                      costPrice: selectedItem.costPrice,
+                      sellingPrice: selectedItem.sellingPrice,
+                      margin: selectedItem.margin,
+                    });
+                  }
+                  setHasUnsavedChanges(false);
+                  setFieldErrors({});
                   setItemSubTab("overview");
-                  handleEdit();
                 });
                 setShowUnsavedDialog(true);
               } else {
@@ -5223,6 +4438,7 @@ export const ItemMaster: React.FC = () => {
                 <option value="ISSUE">Issue</option>
                 <option value="TRANSFER">Transfer</option>
                 <option value="ADJUSTMENT">Adjustment</option>
+                <option value="STOCK_MIGRATION">Stock Migration</option>
               </Select>
             </div>
             <Button
@@ -5259,7 +4475,7 @@ export const ItemMaster: React.FC = () => {
                 {historyData.map((movement) => (
                   <tr key={movement.id}>
                     <td>{new Date(movement.createdAt).toLocaleDateString()}</td>
-                    <td>{movement.movementType}</td>
+                    <td>{getMovementTypeLabel(movement.movementType)}</td>
                     <td>{movement.fromLocation?.code || "-"}</td>
                     <td>{movement.toLocation?.code || "-"}</td>
                     <td>{movement.quantity}</td>
@@ -5355,10 +4571,21 @@ export const ItemMaster: React.FC = () => {
                 <VariantManagement
                   itemId={selectedItemId}
                   itemName={selectedItem.name}
+                  itemDefaultUnitOfMeasure={selectedItem.unitOfMeasure || "pcs"}
                   selectedVariantId={selectedVariantId || undefined}
+                  onVariantCreated={(variant, migration) => {
+                    if (migration) {
+                      setOptimisticMigration({
+                        variantId: variant.id,
+                        ledgerModified: migration.ledgerModified,
+                        serialModified: migration.serialModified,
+                      });
+                    }
+                  }}
                   onVariantChange={async () => {
                     await loadVariants(selectedItemId);
                     await loadVariantStock(selectedItemId);
+                    await loadStockData(selectedItemId);
                   }}
                   onVariantSelect={(variantId) => {
                     setSelectedVariantId(variantId);
@@ -5421,7 +4648,6 @@ export const ItemMaster: React.FC = () => {
           onCancel={() => setViewMode("list")}
         />
       )}
-      {viewMode === "edit" && renderForm()}
       {(viewMode === "list" || viewMode === "details") && (
         <div
           className={`item-master-container ${selectedItemId && viewMode === "details" ? "split-view" : "full-view"}`}
