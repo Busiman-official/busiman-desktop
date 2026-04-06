@@ -4,7 +4,7 @@
 export type VariantUnitOption = { value: string; label: string };
 
 export const VARIANT_UNIT_OPTIONS: VariantUnitOption[] = [
-  { value: 'pcs', label: 'pcs (Pieces)' },
+  { value: 'pcs', label: 'pcs' },
   { value: 'kg', label: 'kg' },
   { value: 'g', label: 'g' },
   { value: 'l', label: 'l' },

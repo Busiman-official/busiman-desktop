@@ -7,10 +7,18 @@ import { Button, Card, Input, ImageUpload, Tooltip, Select, Checkbox, Badge } fr
 import {
   inventoryService,
   IndustryType,
+  ItemType,
+  ProductType,
   IndustryFlags,
   UnitConversion,
   CreateInventoryItemRequest,
 } from '@/services/inventory.service';
+import {
+  CATEGORY_OPTIONS,
+  getPresetForCategory,
+  PRODUCT_TYPE_OPTIONS,
+  resolveInventoryBehavior,
+} from '@/features/inventory/constants/productCatalog';
 import {
   createEmptyVariantRow,
   normalizeVariantRows,
@@ -18,6 +26,7 @@ import {
 } from './variantGridModel';
 import { VARIANT_UNIT_OPTIONS, resolveVariantUnit } from './variantGridUnits';
 import { validateAllVariantRows } from './variantGridValidation';
+import { computeVariantSuffixes } from './variantSuffix';
 import { VariantSpreadsheetGrid, type VariantSpreadsheetGridHandle } from './VariantSpreadsheetGrid';
 import {
   ProductVariantDetailsDrawer,
@@ -26,8 +35,8 @@ import {
 import './ProductCreationWizard.css';
 
 const WIZARD_STEPS = [
-  { id: 1, label: 'Master Registration', key: 'master' },
-  { id: 2, label: 'Variants', key: 'variants' },
+  { id: 1, label: 'Product', key: 'master' },
+  { id: 2, label: 'Variants & SKU', key: 'variants' },
 ] as const;
 
 const INDUSTRY_OPTIONS: { value: IndustryType; label: string }[] = [
@@ -61,6 +70,8 @@ export interface WizardFormState {
   dimensionUnit: string;
   weightValue: string;
   weightUnit: string;
+  isMisc: boolean;
+  itemType: ItemType;
   industryType: IndustryType;
   isPerishable: boolean;
   requiresBatchTracking: boolean;
@@ -73,8 +84,7 @@ export interface WizardFormState {
   variantRows: WizardVariantRow[];
   tags: string[];
   tagInputValue: string;
-  /** Product SKU (optional). Empty = server auto-generates unless locked base is set at step transition. */
-  sku: string;
+  productType: ProductType;
 }
 
 const defaultIndustryFlags: IndustryFlags = {
@@ -86,8 +96,7 @@ const defaultIndustryFlags: IndustryFlags = {
   industryType: IndustryType.FMCG,
 };
 
-/** Default product category for new items and when none is chosen. */
-const DEFAULT_CATEGORY = 'electronics';
+const DEFAULT_CATEGORY = 'general';
 
 export const getInitialFormState = (): WizardFormState => ({
   name: '',
@@ -110,6 +119,8 @@ export const getInitialFormState = (): WizardFormState => ({
   dimensionUnit: 'cm',
   weightValue: '',
   weightUnit: 'kg',
+  isMisc: false,
+  itemType: ItemType.STOCK,
   industryType: IndustryType.FMCG,
   isPerishable: false,
   requiresBatchTracking: false,
@@ -122,7 +133,7 @@ export const getInitialFormState = (): WizardFormState => ({
   variantRows: [],
   tags: [],
   tagInputValue: '',
-  sku: '',
+  productType: ProductType.STOCK_ITEM,
 });
 
 export interface ProductCreationWizardProps {
@@ -135,10 +146,7 @@ export type { WizardVariantRow };
 const DRAFT_KEY = 'busiman-product-draft';
 const DRAFT_SAVE_INTERVAL_MS = 10000;
 const TOAST_DURATION_MS = 2000;
-const SKU_DEBOUNCE_MS = 350;
 const VARIANT_CODE_DEBOUNCE_MS = 350;
-/** Matches server inventory validator for SKU / variant code (uppercase). */
-const SKU_INPUT_PATTERN = /^[A-Z0-9-_]+$/;
 
 /** Batch vs serial are mutually exclusive on the server; normalize bad drafts. */
 function normalizeExclusiveTrackingFlags(data: WizardFormState): void {
@@ -162,17 +170,19 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as Partial<WizardFormState>;
+        const parsed = JSON.parse(raw) as Partial<WizardFormState> & { sku?: string };
+        const { sku: _legacyDraftSku, ...parsedRest } = parsed;
         const base = getInitialFormState();
         const draftUnit =
-          typeof parsed.unitOfMeasure === 'string' && parsed.unitOfMeasure.trim()
-            ? parsed.unitOfMeasure.trim()
+          typeof parsedRest.unitOfMeasure === 'string' && parsedRest.unitOfMeasure.trim()
+            ? parsedRest.unitOfMeasure.trim()
             : base.unitOfMeasure;
         const merged: WizardFormState = {
           ...base,
-          ...parsed,
-          variantRows: parsed.variantRows?.length
-            ? normalizeVariantRows(parsed.variantRows, draftUnit)
+          ...parsedRest,
+          productType: parsedRest.productType ?? base.productType,
+          variantRows: parsedRest.variantRows?.length
+            ? normalizeVariantRows(parsedRest.variantRows, draftUnit)
             : base.variantRows,
         };
         normalizeExclusiveTrackingFlags(merged);
@@ -189,11 +199,57 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const categorySelectOptions = useMemo(() => {
-    const set = new Set<string>([DEFAULT_CATEGORY, ...categoryOptionsFromApi]);
+    const set = new Set<string>([
+      ...CATEGORY_OPTIONS.map((o) => o.value),
+      ...categoryOptionsFromApi,
+    ]);
     const cur = formData.category.trim();
     if (cur) set.add(cur);
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [categoryOptionsFromApi, formData.category]);
+
+  const resolvedBehavior = useMemo(
+    () =>
+      resolveInventoryBehavior({
+        productType: formData.productType,
+        isMisc: formData.isMisc,
+        itemType: formData.itemType,
+      }),
+    [formData.productType, formData.isMisc, formData.itemType]
+  );
+
+  const categoryOptionLabel = useCallback((value: string) => {
+    const o = CATEGORY_OPTIONS.find((x) => x.value === value);
+    return o?.label ?? value;
+  }, []);
+
+  const onCategoryChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    const preset = getPresetForCategory(value);
+    setFormData((prev) => {
+      const next: WizardFormState = {
+        ...prev,
+        ...preset,
+        category: preset.category ?? value.trim(),
+      };
+      normalizeExclusiveTrackingFlags(next);
+      return next;
+    });
+  }, []);
+
+  const onProductTypeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    const pt = e.target.value as ProductType;
+    setFormData((prev) => {
+      const next: WizardFormState = { ...prev, productType: pt };
+      if (pt === ProductType.ASSET) {
+        next.isHighValue = true;
+        next.requiresBatchTracking = false;
+        next.requiresSerialTracking = false;
+        next.hasExpiryDate = false;
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +267,9 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   }, []);
   const [toast, setToast] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [variantRowErrors, setVariantRowErrors] = useState<Record<number, { value?: string; name?: string; barcode?: string }>>({});
+  const [variantRowErrors, setVariantRowErrors] = useState<
+    Record<number, { hsn?: string; value?: string; name?: string; barcode?: string }>
+  >({});
   const [detailsDrawerOpen, setDetailsDrawerOpen] = useState(false);
   const [detailsDrawerRowIndex, setDetailsDrawerRowIndex] = useState<number | null>(null);
   const [submitProgressLabel, setSubmitProgressLabel] = useState<string>('');
@@ -225,20 +283,12 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   /** Latest step for window/visibility focus handlers (avoid stale closures). */
   const currentStepRef = useRef(currentStep);
 
-  /** Locked when leaving step 1 (typed SKU or server-suggested for auto mode). Used for variant full-code preview and create payload. */
-  const [lockedBaseSku, setLockedBaseSku] = useState<string | null>(null);
-  const [skuApiStatus, setSkuApiStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [variantCodeApiByRow, setVariantCodeApiByRow] = useState<
     Record<number, 'idle' | 'checking' | 'available' | 'taken'>
   >({});
-  const [suggestingSku, setSuggestingSku] = useState(false);
-  const [step1NextBusy, setStep1NextBusy] = useState(false);
-  const skuCheckAbortRef = useRef<AbortController | null>(null);
   const variantCodeCheckAbortRef = useRef<AbortController | null>(null);
 
   const progressPercent = Math.round((currentStep / WIZARD_STEPS.length) * 100);
-
-  const effectiveBaseSku = (lockedBaseSku || formData.sku.trim().toUpperCase() || '').trim() || null;
 
   const openDetailsDrawer = useCallback((rowIndex: number) => {
     setDetailsDrawerRowIndex(rowIndex);
@@ -293,14 +343,11 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   const detailsDrawerVariantRow =
     detailsDrawerRowIndex !== null ? formData.variantRows[detailsDrawerRowIndex] ?? null : null;
 
-  const detailsDrawerSkuPreview =
-    detailsDrawerRowIndex !== null && detailsDrawerVariantRow
-      ? detailsDrawerVariantRow.value.trim() && effectiveBaseSku
-        ? `${effectiveBaseSku}-${detailsDrawerVariantRow.value.trim().toUpperCase()}`
-        : detailsDrawerVariantRow.value.trim()
-          ? `…-${detailsDrawerVariantRow.value.trim().toUpperCase()}`
-          : '—'
-      : '—';
+  const detailsDrawerSkuPreview = useMemo(() => {
+    if (detailsDrawerRowIndex === null || !detailsDrawerVariantRow) return '—';
+    const suf = computeVariantSuffixes([detailsDrawerVariantRow])[0] ?? '';
+    return suf || '—';
+  }, [detailsDrawerRowIndex, detailsDrawerVariantRow]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -457,43 +504,39 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     });
   }, []);
 
-  useEffect(() => {
-    const raw = formData.sku.trim();
-    if (!raw) {
-      setSkuApiStatus('idle');
-      skuCheckAbortRef.current?.abort();
-      return;
-    }
-    const upper = raw.toUpperCase();
-    if (upper.length > 100 || !SKU_INPUT_PATTERN.test(upper)) {
-      setSkuApiStatus('idle');
-      return;
-    }
-    setSkuApiStatus('checking');
-    skuCheckAbortRef.current?.abort();
-    const ac = new AbortController();
-    skuCheckAbortRef.current = ac;
-    const timer = window.setTimeout(() => {
-      inventoryService
-        .checkSkuAvailable(upper, { signal: ac.signal })
-        .then(({ available }) => {
-          setSkuApiStatus(available ? 'available' : 'taken');
-        })
-        .catch((err: unknown) => {
-          const name = err && typeof err === 'object' && 'name' in err ? (err as { name?: string }).name : '';
-          const code = err && typeof err === 'object' && 'code' in err ? (err as { code?: string }).code : '';
-          if (name === 'CanceledError' || code === 'ERR_CANCELED') return;
-          setSkuApiStatus('idle');
-        });
-    }, SKU_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-      ac.abort();
-    };
-  }, [formData.sku]);
+  const setResolvedConfig = useCallback((nextFields: Partial<WizardFormState>) => {
+    setFormData((prev) => ({
+      ...prev,
+      ...nextFields,
+      ...(resolveInventoryBehavior({
+        productType: nextFields.productType ?? prev.productType,
+        isMisc: nextFields.isMisc ?? prev.isMisc,
+        itemType: nextFields.itemType ?? prev.itemType,
+      }).trackingAllowed
+        ? {}
+        : {
+          requiresBatchTracking: false,
+          requiresSerialTracking: false,
+          hasExpiryDate: false,
+        }),
+    }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.requiresBatchTracking;
+      delete next.requiresSerialTracking;
+      delete next.hasExpiryDate;
+      return next;
+    });
+  }, []);
+
+  const setIsMisc = useCallback((value: boolean) => {
+    setResolvedConfig({
+      isMisc: value,
+    });
+  }, [setResolvedConfig]);
 
   useEffect(() => {
-    if (currentStep !== 2 || !effectiveBaseSku) {
+    if (currentStep !== 2) {
       variantCodeCheckAbortRef.current?.abort();
       return;
     }
@@ -502,11 +545,11 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     variantCodeCheckAbortRef.current = ac;
     const timer = window.setTimeout(() => {
       const rows = formData.variantRows;
+      const suffixes = computeVariantSuffixes(rows);
       void Promise.all(
-        rows.map(async (r, i) => {
-          const suf = r.value.trim().toUpperCase();
-          if (!suf) return { i, st: 'idle' as const };
-          const full = `${effectiveBaseSku}-${suf}`;
+        rows.map(async (_r, i) => {
+          const full = (suffixes[i] || '').toUpperCase();
+          if (!full) return { i, st: 'idle' as const };
           try {
             const { available } = await inventoryService.checkVariantCodeAvailable(full, {
               signal: ac.signal,
@@ -529,45 +572,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       window.clearTimeout(timer);
       ac.abort();
     };
-  }, [currentStep, effectiveBaseSku, formData.variantRows]);
-
-  useEffect(() => {
-    if (currentStep !== 2 || lockedBaseSku) return;
-    let cancelled = false;
-    void (async () => {
-      const manual = formData.sku.trim().toUpperCase();
-      if (manual) {
-        if (!cancelled) setLockedBaseSku(manual);
-        return;
-      }
-      try {
-        const { sku } = await inventoryService.suggestItemSku();
-        if (!cancelled) setLockedBaseSku(sku);
-      } catch {
-        if (!cancelled) {
-          setError('Could not reserve a product code. Enter a SKU on step 1 or try again.');
-          setCurrentStep(1);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentStep, lockedBaseSku, formData.sku]);
-
-  const handleGenerateSku = useCallback(async () => {
-    setSuggestingSku(true);
-    setError(null);
-    try {
-      const { sku } = await inventoryService.suggestItemSku();
-      setField('sku', sku);
-      setSkuApiStatus('available');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not generate SKU');
-    } finally {
-      setSuggestingSku(false);
-    }
-  }, [setField]);
+  }, [currentStep, formData.variantRows]);
 
   const buildCreatePayload = useCallback((): CreateInventoryItemRequest => {
     const unitConversions: UnitConversion[] = [];
@@ -584,36 +589,75 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     }
     const costPrice = formData.costPrice ? parseFloat(formData.costPrice) : undefined;
     const sellingPrice = formData.sellingPrice ? parseFloat(formData.sellingPrice) : undefined;
-    let margin: number | undefined;
-    if (costPrice != null && sellingPrice != null && costPrice > 0) {
-      margin = ((sellingPrice - costPrice) / costPrice) * 100;
-    }
-    const manualSku = formData.sku.trim().toUpperCase();
-    const resolvedSku = manualSku || lockedBaseSku || undefined;
+    const mrp = formData.mrp ? parseFloat(formData.mrp) : undefined;
+    const tax = formData.gstPercent ? parseFloat(formData.gstPercent) : undefined;
     let requiresBatch = formData.requiresBatchTracking;
     let requiresSerial = formData.requiresSerialTracking;
     if (requiresBatch && requiresSerial) {
       requiresSerial = false;
     }
+    const behavior = resolveInventoryBehavior({
+      productType: formData.productType,
+      isMisc: formData.isMisc,
+      itemType: formData.itemType,
+    });
+    const masterUom = formData.unitOfMeasure.trim() || 'pcs';
+    const skus = computeVariantSuffixes(formData.variantRows);
+    const variantLines = formData.variantRows
+      .map((row, i) => ({
+        row,
+        sku: (skus[i] || '').toUpperCase(),
+        originalIndex: i,
+      }))
+      .filter((x) => x.row.name.trim() && x.sku);
+
+    const variants = variantLines.map(({ row, sku }, vi) => {
+      const effectiveUnit = resolveVariantUnit(row.unitOfMeasure, masterUom);
+      return {
+        sku,
+        name: row.name.trim(),
+        isDefault: vi === 0,
+        barcode: row.barcode?.trim() || undefined,
+        hsn: row.hsn?.trim() || undefined,
+        unitOfMeasure: effectiveUnit,
+        costPrice: row.costPriceOverride ?? costPrice,
+        sellingPrice: row.sellingPriceOverride ?? sellingPrice,
+        mrp: row.mrpOverride ?? mrp,
+        tax: row.taxOverride ?? tax,
+        reorderLevel: row.reorderLevel,
+        minStock: row.minStock,
+        maxStock: row.maxStock,
+        allowBackorder: row.allowBackorder,
+        trackSerialOverride: row.trackSerialOverride ?? (behavior.trackingAllowed ? requiresSerial : undefined),
+        trackBatchOverride: row.trackBatchOverride ?? (behavior.trackingAllowed ? requiresBatch : undefined),
+        weightOverride: row.weightOverride,
+        dimensionsOverride: row.dimensionsOverride,
+        packSize: row.packSize,
+        unitsPerBox: row.unitsPerBox,
+        shelfLifeDaysOverride: row.shelfLifeDaysOverride,
+        images: row.images?.length ? row.images : undefined,
+      };
+    });
+
     return {
-      ...(resolvedSku ? { sku: resolvedSku } : {}),
       name: formData.name.trim(),
+      variants,
       description: formData.description.trim() || undefined,
       category: formData.category.trim() || undefined,
-      unitOfMeasure: formData.unitOfMeasure,
+      productType: behavior.productType,
+      isMisc: behavior.isMisc,
+      unitOfMeasure: masterUom,
       unitConversions: unitConversions.length ? unitConversions : undefined,
+      itemType: behavior.itemType,
       industryFlags: {
         ...defaultIndustryFlags,
         industryType: formData.industryType,
         isPerishable: formData.isPerishable,
-        requiresBatchTracking: requiresBatch,
-        requiresSerialTracking: requiresSerial,
-        hasExpiryDate: formData.hasExpiryDate,
+        requiresBatchTracking: behavior.trackingAllowed ? requiresBatch : false,
+        requiresSerialTracking: behavior.trackingAllowed ? requiresSerial : false,
+        hasExpiryDate: behavior.trackingAllowed ? formData.hasExpiryDate : false,
         isHighValue: formData.isHighValue,
       },
-      costPrice,
-      sellingPrice,
-      margin,
       images: formData.images.length ? formData.images.map((img, i) => ({
         url: img.url,
         publicId: img.publicId,
@@ -637,51 +681,43 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
           : undefined,
       tags: formData.tags.length ? formData.tags : undefined,
     };
-  }, [formData, lockedBaseSku]);
+  }, [formData]);
 
   const validateStep = useCallback(
     (step: number): boolean => {
       if (step === 1) {
         const err: Record<string, string> = {};
         if (!formData.name.trim()) err.name = 'Item name is required';
-        const skuRaw = formData.sku.trim();
-        if (skuRaw) {
-          const u = skuRaw.toUpperCase();
-          if (u.length > 100 || !SKU_INPUT_PATTERN.test(u)) {
-            err.sku = 'Use 1–100 characters: letters, numbers, hyphens, underscores only';
-          } else if (skuApiStatus === 'checking') {
-            err.sku = 'Checking SKU availability…';
-          } else if (skuApiStatus === 'taken') {
-            err.sku = 'This SKU or code is already used in your branch';
-          }
-        }
         setFieldErrors((prev) => {
           const next = { ...prev };
           if (err.name) next.name = err.name;
           else delete next.name;
-          if (err.sku) next.sku = err.sku;
-          else delete next.sku;
           return next;
         });
-        return !err.name && !err.sku;
+        return !err.name;
       }
       if (step === 2) {
-        if (!effectiveBaseSku) {
-          setError('Product code is not ready. Return to step 1 or wait a moment.');
-          return false;
-        }
         const rowErrors = validateAllVariantRows(formData.variantRows);
+        const suffixes = computeVariantSuffixes(formData.variantRows);
         formData.variantRows.forEach((r, i) => {
-          const suf = r.value.trim();
-          if (suf && variantCodeApiByRow[i] === 'taken') {
+          if (!r.name.trim()) return;
+          if (suffixes[i] && variantCodeApiByRow[i] === 'taken') {
+            const cur = rowErrors[i] || {};
             rowErrors[i] = {
-              ...rowErrors[i],
-              value: 'This full variant code is already used in your branch',
+              ...cur,
+              ...(cur.name
+                ? {}
+                : {
+                    name: 'This variant code is already used. Change the variant name or open Details to set a unique code suffix.',
+                  }),
             };
           }
         });
         setVariantRowErrors(rowErrors);
-        if (formData.variantRows.length === 0 || formData.variantRows.every((r) => !r.value.trim() || !r.name.trim())) {
+        if (
+          formData.variantRows.length === 0 ||
+          formData.variantRows.every((r) => !r.name.trim())
+        ) {
           setError('Add at least one valid variant to continue.');
           return false;
         }
@@ -693,14 +729,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       }
       return true;
     },
-    [
-      formData.name,
-      formData.sku,
-      formData.variantRows,
-      skuApiStatus,
-      variantCodeApiByRow,
-      effectiveBaseSku,
-    ]
+    [formData.name, formData.variantRows, variantCodeApiByRow]
   );
 
   const handleSave = useCallback(
@@ -711,92 +740,23 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       }
       setLoading(true);
       setError(null);
-      setSubmitProgressLabel('Creating product master...');
+      setSubmitProgressLabel('Creating product and variants...');
       try {
         const payload = buildCreatePayload();
-        const item = await inventoryService.createItem(payload);
-        const itemId = item.id;
-        const itemUnit = (item.unitOfMeasure || formData.unitOfMeasure || 'pcs').trim();
-        const baseSku = item.sku.trim().toUpperCase();
-        const validRows = formData.variantRows.filter((row) => {
-          const code = row.value.trim() ? `${baseSku}-${row.value.trim().toUpperCase()}` : '';
-          return code && row.name.trim();
-        });
-        const apiRowErrors: Record<number, { value?: string; name?: string; barcode?: string }> = {};
-        for (let index = 0; index < validRows.length; index += 1) {
-          const row = validRows[index];
-          setSubmitProgressLabel(`Creating variants (${index + 1}/${validRows.length})...`);
-          try {
-            const effectiveUnit = resolveVariantUnit(row.unitOfMeasure, itemUnit);
-            const unitOfMeasureOverride =
-              effectiveUnit !== itemUnit ? effectiveUnit : undefined;
-            const meta: Record<string, unknown> = { ...(row.metadata ?? {}) };
-            if (row.supplierSku?.trim()) {
-              meta.supplierSku = row.supplierSku.trim();
-            }
-            await inventoryService.createVariant({
-              itemId,
-              code: row.value.trim() ? `${baseSku}-${row.value.trim().toUpperCase()}` : '',
-              name: row.name.trim(),
-              barcode: row.barcode?.trim() || undefined,
-              isDefault: index === 0,
-              ...(unitOfMeasureOverride ? { unitOfMeasureOverride } : {}),
-              ...(row.images?.length ? { images: row.images } : {}),
-              ...(Object.keys(meta).length > 0 ? { metadata: meta } : {}),
-              ...(row.costPriceOverride != null ? { costPriceOverride: row.costPriceOverride } : {}),
-              ...(row.sellingPriceOverride != null ? { sellingPriceOverride: row.sellingPriceOverride } : {}),
-              ...(row.mrpOverride != null ? { mrpOverride: row.mrpOverride } : {}),
-              ...(row.taxOverride != null ? { taxOverride: row.taxOverride } : {}),
-              ...(row.reorderLevel != null ? { reorderLevel: row.reorderLevel } : {}),
-              ...(row.minStock != null ? { minStock: row.minStock } : {}),
-              ...(row.maxStock != null ? { maxStock: row.maxStock } : {}),
-              ...(row.allowBackorder != null ? { allowBackorder: row.allowBackorder } : {}),
-              ...(row.trackSerialOverride != null ? { trackSerialOverride: row.trackSerialOverride } : {}),
-              ...(row.trackBatchOverride != null ? { trackBatchOverride: row.trackBatchOverride } : {}),
-              ...(row.isActive != null ? { isActive: row.isActive } : {}),
-              ...(row.isDiscontinued != null ? { isDiscontinued: row.isDiscontinued } : {}),
-              ...(row.weightOverride != null ? { weightOverride: row.weightOverride } : {}),
-              ...(row.dimensionsOverride ? { dimensionsOverride: row.dimensionsOverride } : {}),
-              ...(row.packSize != null ? { packSize: row.packSize } : {}),
-              ...(row.unitsPerBox != null ? { unitsPerBox: row.unitsPerBox } : {}),
-              ...(row.shelfLifeDaysOverride != null ? { shelfLifeDaysOverride: row.shelfLifeDaysOverride } : {}),
-              ...(row.hsn?.trim() ? { hsn: row.hsn.trim() } : {}),
-            });
-          } catch (rowErr: unknown) {
-            const message = rowErr instanceof Error ? rowErr.message : 'Failed to create variant';
-            const lower = message.toLowerCase();
-            apiRowErrors[index] = {
-              value: lower.includes('code') ? message : undefined,
-              barcode: lower.includes('barcode') ? message : undefined,
-              name: !lower.includes('code') && !lower.includes('barcode') ? message : undefined,
-            };
-          }
-        }
-        if (Object.keys(apiRowErrors).length > 0) {
-          setVariantRowErrors(() => {
-            const client = validateAllVariantRows(formData.variantRows);
-            const merged: Record<number, { value?: string; name?: string; barcode?: string }> = {
-              ...client,
-            };
-            Object.keys(apiRowErrors).forEach((k) => {
-              const i = Number(k);
-              merged[i] = { ...merged[i], ...apiRowErrors[i] };
-            });
-            return merged;
-          });
+        if (!payload.variants?.length) {
+          setError('Add at least one variant with a name and SKU.');
           setCurrentStep(2);
-          setError('Product master was created, but some variants failed. Fix errors and retry.');
           return;
         }
+        const item = await inventoryService.createItem(payload);
+        const itemId = item.id;
         localStorage.removeItem(DRAFT_KEY);
         onSuccess(itemId, saveAndNew);
         if (saveAndNew) {
           setFormData(getInitialFormState());
           setCurrentStep(1);
           setFieldErrors({});
-          setLockedBaseSku(null);
           setVariantCodeApiByRow({});
-          setSkuApiStatus('idle');
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to create item';
@@ -806,12 +766,14 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         setLoading(false);
       }
     },
-    [formData, buildCreatePayload, validateStep, onSuccess, lockedBaseSku]
+    [formData, buildCreatePayload, validateStep, onSuccess]
   );
 
   const handleCancel = useCallback(() => {
-    const hasVariantDraft = formData.variantRows.some((r) => r.value.trim() || r.name.trim() || (r.barcode || '').trim());
-    if (formData.name || formData.sku.trim() || formData.images.length > 0 || hasVariantDraft) {
+    const hasVariantDraft = formData.variantRows.some(
+      (r) => r.value.trim() || r.name.trim() || (r.barcode || '').trim() || (r.hsn || '').trim()
+    );
+    if (formData.name || formData.images.length > 0 || hasVariantDraft) {
       if (window.confirm('Discard draft and close?')) {
         localStorage.removeItem(DRAFT_KEY);
         onCancel();
@@ -836,42 +798,16 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
 
   const handleNextStep = useCallback(async () => {
     if (!validateStep(currentStep)) return;
-    if (currentStep === 1) {
-      const trimmed = formData.sku.trim().toUpperCase();
-      if (trimmed) {
-        if (skuApiStatus === 'taken' || skuApiStatus === 'checking') return;
-        if (trimmed.length > 100 || !SKU_INPUT_PATTERN.test(trimmed)) return;
-        setLockedBaseSku(trimmed);
-      } else {
-        setStep1NextBusy(true);
-        try {
-          const { sku } = await inventoryService.suggestItemSku();
-          setLockedBaseSku(sku);
-        } catch (e: unknown) {
-          setError(e instanceof Error ? e.message : 'Could not generate a product SKU');
-          return;
-        } finally {
-          setStep1NextBusy(false);
-        }
-      }
-    }
     if (currentStep < WIZARD_STEPS.length) {
       setCurrentStep((s) => s + 1);
     } else {
       handleSave(false);
     }
-  }, [
-    currentStep,
-    formData.sku,
-    handleSave,
-    skuApiStatus,
-    validateStep,
-  ]);
+  }, [currentStep, handleSave, validateStep]);
 
   const handlePrevStep = useCallback(() => {
     if (currentStep > 1) {
       if (currentStep === 2) {
-        setLockedBaseSku(null);
         setVariantCodeApiByRow({});
       }
       setCurrentStep((s) => s - 1);
@@ -881,7 +817,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   const goToWizardStep = useCallback(
     (stepId: number) => {
       if (currentStep === 2 && stepId === 1) {
-        setLockedBaseSku(null);
         setVariantCodeApiByRow({});
       }
       setCurrentStep(stepId);
@@ -936,7 +871,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
 
   return (
     <div className="product-creation-wizard" role="application" aria-label="Product Creation Wizard">
-      {/* Sticky header */}
+      {/* Sticky header */} 
       <header className="wizard-header">
         {/* <h2>Create Product – Busiman</h2> */}
         <div className="wizard-progress-text" aria-live="polite">
@@ -966,23 +901,15 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
             type="button"
             variant="primary"
             onClick={handleNextStep}
-            disabled={
-              loading ||
-              step1NextBusy ||
-              (currentStep === 1 &&
-                !!formData.sku.trim() &&
-                skuApiStatus === 'checking')
-            }
+            disabled={loading}
             title={currentStep === WIZARD_STEPS.length ? 'Create product' : 'Next step (Ctrl+Enter)'}
             className="wizard-header-next-btn"
           >
             {loading
               ? submitProgressLabel || 'Submitting...'
-              : step1NextBusy
-                ? 'Reserving code…'
-                : currentStep === WIZARD_STEPS.length
-                  ? 'Create product'
-                  : 'Next: Variants'}
+              : currentStep === WIZARD_STEPS.length
+                ? 'Create product'
+                : 'Next: Variants'}
           </Button>
         </div>
       </header>
@@ -1010,111 +937,15 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     folder="inventory"
                     disabled={loading}
                   />
-                </div>
-                <div className="wizard-master-fields">
-                  <div className="wizard-master-name-sku-row">
-                    <div className="wizard-form-group wizard-master-sku-col">
-                      <label htmlFor="wizard-sku">Product SKU (optional)</label>
-                      <div className="wizard-sku-input-row">
-                        <Input
-                          id="wizard-sku"
-                          value={formData.sku}
-                          onChange={(e) => setField('sku', e.target.value.toUpperCase())}
-                          placeholder="e.g. PRD-A1B2C3D4E5 — leave blank to auto-generate"
-                          className={fieldErrors.sku ? 'input--error' : ''}
-                          aria-invalid={!!fieldErrors.sku}
-                          aria-describedby={fieldErrors.sku ? 'wizard-sku-err' : 'wizard-sku-hint'}
-                          autoComplete="off"
-                          disabled={loading}
-                        />
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className={`wizard-sku-generate-btn${suggestingSku ? ' wizard-sku-generate-btn--busy' : ''}`}
-                          onClick={handleGenerateSku}
-                          disabled={loading || suggestingSku}
-                          title={suggestingSku ? 'Generating…' : 'Generate a unique PRD-… code'}
-                          aria-label={suggestingSku ? 'Generating SKU' : 'Generate unique SKU'}
-                          aria-busy={suggestingSku}
-                        >
-                          <span
-                            className={
-                              suggestingSku
-                                ? 'wizard-sku-generate-icon wizard-sku-generate-icon--spinning'
-                                : 'wizard-sku-generate-icon'
-                            }
-                            aria-hidden
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="16"
-                              height="16"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                              <path d="M21 3v5h-5" />
-                              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                              <path d="M8 16H3v5" />
-                            </svg>
-                          </span>
-                        </Button>
-                      </div>
-                      <p id="wizard-sku-hint" className="wizard-summary-label" style={{ fontSize: 11, color: '#64748b' }}>
-                        {formData.sku.trim() && skuApiStatus === 'available' ? ` ✅ Available ` : null}
-                        {formData.sku.trim() && skuApiStatus === 'checking' ? ' · Checking…' : null}
-                      </p>
-                      {fieldErrors.sku && (
-                        <div id="wizard-sku-err" className="wizard-field-error" role="alert">
-                          {fieldErrors.sku}
-                        </div>
-                      )}
-                    </div>
-                    <div className="wizard-form-group wizard-master-name-col">
-                      <label htmlFor="wizard-name" className="required">Master</label>
-                      <Input
-                        ref={nameInputRef}
-                        id="wizard-name"
-                        value={formData.name}
-                        onChange={(e) => setField('name', e.target.value)}
-                        placeholder="e.g. Organic whole milk 1L"
-                        className={fieldErrors.name ? 'input--error' : ''}
-                        aria-invalid={!!fieldErrors.name}
-                        aria-describedby={fieldErrors.name ? 'wizard-name-err' : undefined}
-                      />
-                      {fieldErrors.name && <div id="wizard-name-err" className="wizard-field-error" role="alert">{fieldErrors.name}</div>}
-                    </div>
-                  </div>
-                  <div className="wizard-form-group">
-                    <label htmlFor="wizard-category">Category</label>
-                    <Select
-                      id="wizard-category"
-                      value={formData.category}
-                      onChange={(e) => setField('category', e.target.value)}
-                      aria-label="Category"
-                      disabled={loading}
-                    >
-                      {categorySelectOptions.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div className="wizard-form-group wizard-form-group--grow">
+                  <div className="wizard-form-group wizard-form-group--grow" style={{ marginTop: 16 }}>
                     <label htmlFor="wizard-description">Description</label>
                     <textarea
                       id="wizard-description"
-                      rows={8}
+                      rows={4}
                       value={formData.description}
                       onChange={(e) => setField('description', e.target.value)}
                       placeholder="Ingredients, storage, shelf life, or anything staff should know when picking or selling."
-                      maxLength={2000}
+                      maxLength={1000}
                       className="input wizard-master-description"
                       aria-describedby="wizard-desc-count"
                     />
@@ -1122,14 +953,71 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                       {formData.description.length} / 2000
                     </span>
                   </div>
+                </div>
+                <div className="wizard-master-fields">
+                  <div className="wizard-master-name-sku-row">
+                    <div className="wizard-form-group wizard-master-name-col">
+                      <label htmlFor="wizard-name" className="required">Product name</label>
+                      <Input
+                        ref={nameInputRef}
+                        id="wizard-name"
+                        value={formData.name}
+                        onChange={(e) => setField('name', e.target.value)}
+                        placeholder="e.g. Organic whole milk"
+                        className={fieldErrors.name ? 'input--error' : ''}
+                        aria-invalid={!!fieldErrors.name}
+                        aria-describedby={fieldErrors.name ? 'wizard-name-err' : undefined}
+                      />
+                      {fieldErrors.name && <div id="wizard-name-err" className="wizard-field-error" role="alert">{fieldErrors.name}</div>}
+                    </div>
+                  </div>
+                  <div className='wizard-form-group-row'>
+                    <div className="wizard-form-group" style={{ flex: 1 }}>
+                      <label htmlFor="wizard-category">Catalog category</label>
+                      <Select
+                        id="wizard-category"
+                        value={formData.category}
+                        onChange={onCategoryChange}
+                        aria-label="Category"
+                        disabled={loading}
+                      >
+                        {categorySelectOptions.map((c) => (
+                          <option key={c} value={c}>
+                            {categoryOptionLabel(c)}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div className="wizard-form-group" style={{ flex: 1 }}>
+                      <label htmlFor="wizard-product-type">Product type</label>
+                      <Select
+                        id="wizard-product-type"
+                        value={formData.productType}
+                        onChange={onProductTypeChange}
+                        aria-label="Product type"
+                        disabled={loading}
+                      >
+                        {PRODUCT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+
+                  </div>
                   <div className="wizard-form-group" style={{ gridColumn: '1 / -1' }}>
-                    <span className="wizard-summary-label" style={{ display: 'block', marginBottom: 6 }}>
+                    <p className="wizard-summary-label" style={{ margin: '6px 0 0', fontSize: 12, color: '#0f766e', fontWeight: 600 }}>
+                      {resolvedBehavior.helperText}
+                    </p>
+                    <span className="wizard-summary-label" style={{ display: 'block', margin: '12px 0 6px' }}>
                       Tracking & Handling
                     </span>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                         <Checkbox
                           checked={formData.requiresBatchTracking}
+                          disabled={!resolvedBehavior.trackingAllowed}
                           onChange={(e) => setRequiresBatchTracking(e.target.checked)}
                           aria-label="Track batch number"
                         />
@@ -1138,6 +1026,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                         <Checkbox
                           checked={formData.requiresSerialTracking}
+                          disabled={!resolvedBehavior.trackingAllowed}
                           onChange={(e) => setRequiresSerialTracking(e.target.checked)}
                           aria-label="Track serial number"
                         />
@@ -1146,10 +1035,19 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                         <Checkbox
                           checked={formData.hasExpiryDate}
+                          disabled={!resolvedBehavior.trackingAllowed}
                           onChange={(e) => setField('hasExpiryDate', e.target.checked)}
                           aria-label="Has expiry date"
                         />
                         Has expiry date
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12}}>
+                        <Checkbox
+                          checked={formData.isMisc}
+                          onChange={(e) => setIsMisc(e.target.checked)}
+                          aria-label="Mark as Misc"
+                        />
+                        Mark as Misc
                       </label>
                     </div>
                     <p className="wizard-summary-label" style={{ margin: '6px 0 0', fontSize: 11, color: '#64748b' }}>
@@ -1498,6 +1396,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                     <Checkbox
                       checked={formData.requiresBatchTracking}
+                      disabled={!resolvedBehavior.trackingAllowed}
                       onChange={(e) => setRequiresBatchTracking(e.target.checked)}
                       aria-label="Track batch number"
                     />
@@ -1506,6 +1405,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                     <Checkbox
                       checked={formData.requiresSerialTracking}
+                      disabled={!resolvedBehavior.trackingAllowed}
                       onChange={(e) => setRequiresSerialTracking(e.target.checked)}
                       aria-label="Track serial number"
                     />
@@ -1514,6 +1414,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                     <Checkbox
                       checked={formData.hasExpiryDate}
+                      disabled={!resolvedBehavior.trackingAllowed}
                       onChange={(e) => setField('hasExpiryDate', e.target.checked)}
                       aria-label="Has expiry date"
                     />
@@ -1615,7 +1516,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     onRowErrorsChange={setVariantRowErrors}
                     unitOfMeasure={formData.unitOfMeasure}
                     emptyTitle="No variants yet"
-                    emptyMessage="Add at least one variant to finish. The first row becomes the default variant."
+                    emptyMessage="Add at least one row with a variant name (required). Variant code is built from the name unless you set a custom suffix in Details. HSN is optional. The first saved row is the default variant."
                     emptyAction={
                       <Button
                         ref={addFirstVariantRef}
@@ -1640,24 +1541,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     <Button type="button" variant="secondary" size="sm" onClick={addVariantRow}>
                       Add variant
                     </Button>
-                    <p className="wizard-variants-suffix-hint" aria-live="polite">
-                      {effectiveBaseSku ? (
-                        <>
-                          Full code preview (base <strong>{effectiveBaseSku}</strong>):{' '}
-                          {formData.variantRows
-                            .slice(0, 4)
-                            .map((r) =>
-                              r.value.trim()
-                                ? `${effectiveBaseSku}-${r.value.trim().toUpperCase()}`
-                                : '…'
-                            )
-                            .join(', ')}
-                          {formData.variantRows.length > 4 ? '…' : ''}
-                        </>
-                      ) : (
-                        <>Loading base SKU for preview…</>
-                      )}
-                    </p>
                   </div>
                 )}
               </section>
@@ -1766,7 +1649,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
             <div className="wizard-summary-row">
               <span className="wizard-summary-label">Variants</span>
               <span className="wizard-summary-value">
-                {formData.variantRows.filter((r) => r.value.trim() || r.name.trim()).length}
+                {formData.variantRows.filter((r) => r.name.trim()).length}
               </span>
             </div>
             <div className="wizard-summary-row">

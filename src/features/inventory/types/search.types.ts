@@ -10,6 +10,10 @@ export interface SearchFilters {
   status?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** Align with Sales branch (admins). */
+  branchId?: string | null;
+  /** Omit items marked misc (POS type-ahead). */
+  excludeMisc?: boolean;
 }
 
 export interface SearchResult {

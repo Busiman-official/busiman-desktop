@@ -62,10 +62,7 @@ const HSN_PATTERN = /^\d{4}(\d{2}){0,2}$/;
 
 function validateVariantForm(formData: CreateVariantRequest): ValidationResult {
   const fieldErrors: Record<string, string> = {};
-  const code = formData.code?.trim() ?? '';
   const name = formData.name?.trim() ?? '';
-  if (!code) fieldErrors.code = 'Variant code is required';
-  else if (formData.code.length > 100) fieldErrors.code = 'Variant code must be 100 characters or less';
   if (!name) fieldErrors.name = 'Variant name is required';
   else if (formData.name.length > 500) fieldErrors.name = 'Variant name must be 500 characters or less';
   if (formData.barcode && formData.barcode.length > 100) fieldErrors.barcode = 'Barcode must be 100 characters or less';
@@ -108,7 +105,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   const emptyStateHintId = useId();
   const [formData, setFormData] = useState<CreateVariantRequest>({
     itemId,
-    code: '',
     name: '',
     isDefault: false,
     barcode: '',
@@ -196,7 +192,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     try {
       const payload = {
         ...formData,
-        code: formData.code.trim(),
         name: formData.name.trim(),
         barcode: formData.barcode?.trim() || undefined,
         hsn: formData.hsn?.trim() || undefined,
@@ -221,9 +216,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to create variant');
       setError(message);
-      if (message.toLowerCase().includes('already exists')) {
-        setFieldErrors((prev) => ({ ...prev, code: message }));
-      }
       logger.error('[VariantManagement] Failed to create variant', err);
     } finally {
       setLoading(false);
@@ -246,7 +238,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     setLoading(true);
     try {
       const updateData: UpdateVariantRequest = {
-        code: formData.code.trim(),
         name: formData.name.trim(),
         isDefault: formData.isDefault,
         barcode: formData.barcode?.trim() || undefined,
@@ -264,9 +255,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to update variant');
       setError(message);
-      if (message.toLowerCase().includes('already exists')) {
-        setFieldErrors((prev) => ({ ...prev, code: message }));
-      }
       logger.error('[VariantManagement] Failed to update variant', err);
     } finally {
       setLoading(false);
@@ -358,7 +346,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     setEditingVariantId(variant.id);
     setFormData({
       itemId,
-      code: variant.code,
       name: variant.name,
       isDefault: variant.isDefault,
       barcode: variant.barcode || '',
@@ -372,7 +359,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   const handleAddVariant = () => {
     setFormData({
       itemId,
-      code: '',
       name: '',
       isDefault: variants.length === 0,
       barcode: '',
@@ -395,7 +381,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   const resetForm = () => {
     setFormData({
       itemId,
-      code: '',
       name: '',
       isDefault: false,
       barcode: '',
@@ -434,11 +419,11 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   // Column definitions
   const columns: ColumnDef<InventoryVariant>[] = [
     {
-      id: 'code',
-      header: 'Code',
+      id: 'hsn',
+      header: 'HSN Code',
       width: 130,
       accessor: (variant) => (
-        <span className="variant-code-cell">{variant.code}</span>
+        <span className="variant-hsn-cell">{variant.hsn?.trim() || '—'}</span>
       ),
     },
     {
@@ -642,9 +627,8 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           data={filteredVariants}
           columns={columns}
           searchable={true}
-          searchPlaceholder="Search by code, name, or barcode…"
+          searchPlaceholder="Search by name, barcode, or HSN…"
           searchFields={(variant) => [
-            variant.code,
             variant.name,
             variant.barcode || '',
             variant.hsn || '',
@@ -694,25 +678,6 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           Creating the first variant will make it the default and assign any existing product-level stock to it.
         </div>
       )}
-
-      <div className="form-group">
-        <label>Variant Code *</label>
-        <Input
-          ref={firstFormFieldRef}
-          value={formData.code}
-          onChange={(e) => {
-            setFormData({ ...formData, code: e.target.value.toUpperCase() });
-            setFieldErrors((prev) => ({ ...prev, code: '' }));
-          }}
-          placeholder="VARIANT-001"
-          disabled={!!editingVariantId}
-          error={fieldErrors.code || undefined}
-          aria-invalid={!!fieldErrors.code}
-        />
-        <p className="variant-form-field-hint">
-          Unique per product; e.g. SKU-SIZE or SKU-COLOR. Uppercase recommended.
-        </p>
-      </div>
 
       <div className="form-group">
         <label>Variant Name *</label>

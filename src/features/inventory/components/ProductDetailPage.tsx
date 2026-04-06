@@ -10,13 +10,23 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { inventoryService, InventoryItem, InventoryVariant, StockByItem, StockMovementResponse, MovementType } from '@/services/inventory.service';
+import {
+  inventoryService,
+  InventoryItem,
+  InventoryVariant,
+  StockByItem,
+  StockMovementResponse,
+  MovementType,
+  IndustryFlags,
+  IndustryType,
+} from '@/services/inventory.service';
 import { Button, Card, Input, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { VariantManagement } from './VariantManagement';
+import { itemDisplaySku } from '../utils/itemDisplaySku';
 import './ProductDetailPage.css';
 
 type DetailTab = 'overview' | 'variants' | 'stock' | 'history' | 'settings';
@@ -193,6 +203,20 @@ export const ProductDetailPage: React.FC = () => {
     ? variants.find(v => v.id === variantIdFromUrl) 
     : null;
 
+  const displaySku = itemDisplaySku(item, variants);
+  const overviewIndustryFlags = ((): IndustryFlags => {
+    if (item.industryFlags) return item.industryFlags;
+    const ic = item.industryClassification;
+    return {
+      industryType: ic?.industryType ?? IndustryType.FMCG,
+      isHighValue: ic?.isHighValue ?? false,
+      isPerishable: false,
+      requiresBatchTracking: variants.some((v) => v.trackBatchOverride),
+      requiresSerialTracking: variants.some((v) => v.trackSerialOverride),
+      hasExpiryDate: false,
+    };
+  })();
+
   return (
     <div className="product-detail-page">
       {/* Breadcrumb */}
@@ -258,7 +282,7 @@ export const ProductDetailPage: React.FC = () => {
           <div className="product-hero-header">
             <div>
               <h1 className="product-hero-title">{item.name}</h1>
-              <div className="product-hero-sku">SKU: {item.sku}</div>
+              <div className="product-hero-sku">SKU: {displaySku}</div>
               {item.category && (
                 <div className="product-hero-category">{item.category}</div>
               )}
@@ -345,7 +369,7 @@ export const ProductDetailPage: React.FC = () => {
                 <h3>Basic Information</h3>
                 <div className="overview-item">
                   <span className="overview-label">SKU:</span>
-                  <span className="overview-value">{item.sku}</span>
+                  <span className="overview-value">{displaySku}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Category:</span>
@@ -396,23 +420,23 @@ export const ProductDetailPage: React.FC = () => {
                 <h3>Industry Flags</h3>
                 <div className="overview-item">
                   <span className="overview-label">Industry Type:</span>
-                  <span className="overview-value">{item.industryFlags.industryType}</span>
+                  <span className="overview-value">{overviewIndustryFlags.industryType}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Perishable:</span>
-                  <span className="overview-value">{item.industryFlags.isPerishable ? 'Yes' : 'No'}</span>
+                  <span className="overview-value">{overviewIndustryFlags.isPerishable ? 'Yes' : 'No'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Batch Tracking:</span>
-                  <span className="overview-value">{item.industryFlags.requiresBatchTracking ? 'Yes' : 'No'}</span>
+                  <span className="overview-value">{overviewIndustryFlags.requiresBatchTracking ? 'Yes' : 'No'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Serial Tracking:</span>
-                  <span className="overview-value">{item.industryFlags.requiresSerialTracking ? 'Yes' : 'No'}</span>
+                  <span className="overview-value">{overviewIndustryFlags.requiresSerialTracking ? 'Yes' : 'No'}</span>
                 </div>
                 <div className="overview-item">
                   <span className="overview-label">Expiry Date:</span>
-                  <span className="overview-value">{item.industryFlags.hasExpiryDate ? 'Yes' : 'No'}</span>
+                  <span className="overview-value">{overviewIndustryFlags.hasExpiryDate ? 'Yes' : 'No'}</span>
                 </div>
               </Card>
 
@@ -438,8 +462,8 @@ export const ProductDetailPage: React.FC = () => {
             </div>
             <div className="variant-detail-grid">
               <div className="variant-detail-item">
-                <span className="variant-detail-label">Code:</span>
-                <span className="variant-detail-value">{selectedVariant.code || '-'}</span>
+                <span className="variant-detail-label">SKU:</span>
+                <span className="variant-detail-value">{selectedVariant.sku || selectedVariant.code || '-'}</span>
               </div>
               <div className="variant-detail-item">
                 <span className="variant-detail-label">Name:</span>
@@ -522,14 +546,14 @@ export const ProductDetailPage: React.FC = () => {
                       <tr>
                         <th>Location</th>
                         {item.hasVariants && <th>Variant</th>}
-                        {item.industryFlags.requiresBatchTracking && <th>Batch</th>}
-                        {item.industryFlags.requiresSerialTracking && <th>Serial</th>}
+                        {overviewIndustryFlags.requiresBatchTracking && <th>Batch</th>}
+                        {overviewIndustryFlags.requiresSerialTracking && <th>Serial</th>}
                         <th>On Hand</th>
                         <th>Reserved</th>
                         <th>Blocked</th>
                         <th>Damaged</th>
                         <th>Available</th>
-                        {item.industryFlags.hasExpiryDate && <th>Expiry Date</th>}
+                        {overviewIndustryFlags.hasExpiryDate && <th>Expiry Date</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -560,10 +584,10 @@ export const ProductDetailPage: React.FC = () => {
                                 )}
                               </td>
                             )}
-                            {item.industryFlags.requiresBatchTracking && (
+                            {overviewIndustryFlags.requiresBatchTracking && (
                               <td>{stock.batchNumber || '-'}</td>
                             )}
-                            {item.industryFlags.requiresSerialTracking && (
+                            {overviewIndustryFlags.requiresSerialTracking && (
                               <td>{stock.serialNumber || '-'}</td>
                             )}
                             <td className="stock-quantity">{onHand}</td>
@@ -571,7 +595,7 @@ export const ProductDetailPage: React.FC = () => {
                             <td className="stock-quantity">{stock.blockedQuantity}</td>
                             <td className="stock-quantity">{stock.damagedQuantity}</td>
                             <td className="stock-quantity available">{available}</td>
-                            {item.industryFlags.hasExpiryDate && (
+                            {overviewIndustryFlags.hasExpiryDate && (
                               <td>{stock.expiryDate ? new Date(stock.expiryDate).toLocaleDateString() : '-'}</td>
                             )}
                           </tr>

@@ -7,6 +7,13 @@ import { searchService } from '@/features/inventory/services/search.service';
 import type { ItemSearchResult } from '@/features/inventory/types/search.types';
 import { usePriceResolver } from '../../hooks/usePriceResolver';
 import { computePosTotals } from './posTotals';
+import {
+  linesAdjustedForOrderTotals,
+  linesForCheckoutPayload,
+  linesForQuotationDraftOrder,
+  normalizePosGstRatePercent,
+  getLineTotalWithGst,
+} from './posLineMath';
 import { extractErrorMessage } from '@/utils/error';
 import { Modal } from '@/shared/components/modals/Modal';
 import {
@@ -26,9 +33,11 @@ import {
   resolveVariantIdForPos,
   type PosResolvedLineMeta,
 } from './resolveScan';
-import { PosCartLineCard } from './PosCartLineCard';
+import { PosCartLineListCard } from './PosCartLineListCard';
+import { PosCartItemDetailPanel } from './PosCartItemDetailPanel';
 import { usePosCart, type PosCartLine } from './usePosCart';
 import { PosQuickAddGrid } from './PosQuickAddGrid';
+import { PosMiscSlider } from './PosMiscSlider';
 import { PosVariantPickerModal, type PosVariantPickerLine } from './PosVariantPickerModal';
 import { QuotationFromOrderDrawer } from '../panels/QuotationFromOrderDrawer';
 import { QuotationShareModal, type QuotationShareLinkState } from '../panels/QuotationShareModal';
@@ -140,11 +149,13 @@ export const PosShell: React.FC<Props> = ({
     lines,
     lastMergedVariantId,
     addOrMerge,
-    setQty,
     removeLine,
+    updateLine,
     clear,
     replaceLines,
   } = usePosCart();
+
+  const [selectedDetailVariantId, setSelectedDetailVariantId] = useState<string | null>(null);
 
   const [variantPicker, setVariantPicker] = useState<{
     item: InventoryItem;
@@ -217,7 +228,11 @@ export const PosShell: React.FC<Props> = ({
     }
     let cancelled = false;
     searchService
-      .search(debouncedSearch, { types: ['item'] }, 12)
+      .search(
+        debouncedSearch,
+        { types: ['item'], branchId, excludeMisc: true },
+        12
+      )
       .then((res) => {
         if (!cancelled) {
           let items = (res.items || []) as ItemSearchResult[];
@@ -235,7 +250,7 @@ export const PosShell: React.FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, categoryChip]);
+  }, [debouncedSearch, categoryChip, branchId]);
 
   useEffect(() => {
     setHighlightIndex((i) => {
@@ -264,6 +279,9 @@ export const PosShell: React.FC<Props> = ({
     (async () => {
       const next: Record<string, number> = {};
       for (const line of lines) {
+        if (line.isNonStock) {
+          continue;
+        }
         try {
           const b = await inventoryService.getStockBalance(line.itemId, locationId, undefined, line.variantId);
           if (!cancelled) next[line.variantId] = b.available;
@@ -315,16 +333,35 @@ export const PosShell: React.FC<Props> = ({
     }
   }, [payOpts, paymentCode]);
 
+  const branchTaxPercent = settings?.taxRatePercent ?? 0;
+
   const totals = useMemo(() => {
     if (!settings) {
       return { subtotal: 0, discountAmount: 0, taxAmount: 0, total: 0 };
     }
-    return computePosTotals(lines, settings, discountAmount);
-  }, [lines, settings, discountAmount]);
+    const adjusted = linesAdjustedForOrderTotals(lines, branchTaxPercent);
+    return computePosTotals(adjusted, settings, discountAmount);
+  }, [lines, settings, discountAmount, branchTaxPercent]);
+
+  useEffect(() => {
+    if (lines.length === 0) {
+      setSelectedDetailVariantId(null);
+      return;
+    }
+    if (selectedDetailVariantId && !lines.some((l) => l.variantId === selectedDetailVariantId)) {
+      setSelectedDetailVariantId(null);
+    }
+  }, [lines, selectedDetailVariantId]);
+
+  const selectedDetailLine = useMemo(
+    () => (selectedDetailVariantId ? lines.find((l) => l.variantId === selectedDetailVariantId) ?? null : null),
+    [lines, selectedDetailVariantId]
+  );
 
   const stockBlocked = useMemo(() => {
     if (settings?.allowNegativePos) return false;
     return lines.some((l) => {
+      if (l.isNonStock || l.allowNegativeStock) return false;
       const a = availableByVariant[l.variantId];
       return a !== undefined && l.quantity > a;
     });
@@ -334,6 +371,40 @@ export const PosShell: React.FC<Props> = ({
     setToast(msg);
     window.setTimeout(() => setToast(null), 3200);
   }, []);
+
+  const handleDetailUpdate = useCallback(
+    (patch: Partial<PosCartLine>) => {
+      if (!selectedDetailVariantId) return;
+      updateLine(selectedDetailVariantId, patch);
+    },
+    [selectedDetailVariantId, updateLine]
+  );
+
+  /** Removes the line for this variant; clears the detail modal if it was showing that line. */
+  const removeLineFromCart = useCallback(
+    (variantId: string) => {
+      removeLine(variantId);
+      if (selectedDetailVariantId === variantId) {
+        setSelectedDetailVariantId(null);
+      }
+    },
+    [removeLine, selectedDetailVariantId]
+  );
+
+  const handleDetailRemove = useCallback(() => {
+    if (!selectedDetailVariantId) return;
+    removeLineFromCart(selectedDetailVariantId);
+  }, [selectedDetailVariantId, removeLineFromCart]);
+
+  const adjustLineQuantity = useCallback(
+    (variantId: string, delta: number) => {
+      const line = lines.find((l) => l.variantId === variantId);
+      if (!line) return;
+      const next = Math.max(1, line.quantity + delta);
+      updateLine(variantId, { quantity: next });
+    },
+    [lines, updateLine]
+  );
 
   const addLineFromMeta = useCallback(
     async (
@@ -354,8 +425,15 @@ export const PosShell: React.FC<Props> = ({
           label: meta.label,
           quantity: qty,
           unitPrice: pr.price,
+          isNonStock: meta.isNonStock,
+          allowNegativeStock: meta.allowNegativeStock,
           serialWarning: meta.serialWarning,
           batchWarning: meta.batchWarning,
+          lineDiscountType: 'flat',
+          lineDiscountValue: 0,
+          gstRatePercent: normalizePosGstRatePercent(settings?.taxRatePercent),
+          notes: '',
+          hsn: '',
         });
         pushRecentVariant(branchId, salesPointId, { variantId: meta.variantId, label: meta.label });
         setRecent(getRecentVariants(branchId, salesPointId));
@@ -371,7 +449,7 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutError(e instanceof Error ? e.message : 'Could not resolve price');
       }
     },
-    [addOrMerge, branchId, customerId, resolvePrice, salesPointId, showToast]
+    [addOrMerge, branchId, customerId, resolvePrice, salesPointId, settings?.taxRatePercent, showToast]
   );
 
   const posLoadOrderIdParam = searchParams.get('posLoadOrderId')?.trim() ?? '';
@@ -610,11 +688,7 @@ export const PosShell: React.FC<Props> = ({
             mode: 'b2b',
             salesPointId,
             customerId: custId,
-            lines: lines.map((c) => ({
-              variantId: c.variantId,
-              quantity: c.quantity,
-              unitPrice: c.unitPrice,
-            })),
+            lines: linesForQuotationDraftOrder(lines, branchTaxPercent),
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
           },
           branchId
@@ -629,7 +703,7 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutModalBusy(false);
       }
     },
-    [branchId, customerAllowsSale, customerId, lines, salesPointId, totals.discountAmount]
+    [branchId, branchTaxPercent, customerAllowsSale, customerId, lines, salesPointId, totals.discountAmount]
   );
 
   useEffect(() => {
@@ -852,11 +926,7 @@ export const PosShell: React.FC<Props> = ({
           {
             salesPointId,
             customerId: customerIdForOrder,
-            lines: lines.map((c) => ({
-              variantId: c.variantId,
-              quantity: c.quantity,
-              unitPrice: c.unitPrice,
-            })),
+            lines: linesForCheckoutPayload(lines, branchTaxPercent),
             paymentMethodCode: paymentCode,
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
             holdPayment: Boolean(wantHold && customerIdForOrder),
@@ -897,6 +967,7 @@ export const PosShell: React.FC<Props> = ({
     },
     [
       branchId,
+      branchTaxPercent,
       clear,
       lines,
       paymentCode,
@@ -1188,6 +1259,13 @@ export const PosShell: React.FC<Props> = ({
             onActivateProduct={handleActivateProduct}
           />
 
+          <PosMiscSlider
+            branchId={branchId}
+            salesPointId={salesPointId}
+            disabled={checkoutModalBusy || checkoutCustomerModal}
+            onActivateProduct={handleActivateProduct}
+          />
+
           <PosVariantPickerModal
             isOpen={Boolean(variantPicker)}
             onClose={() => setVariantPicker(null)}
@@ -1201,7 +1279,7 @@ export const PosShell: React.FC<Props> = ({
             onConfirm={handleVariantPickerConfirm}
           />
 
-          {recent.length > 0 && salesPointId ? (
+          {false && recent.length > 0 && salesPointId ? (
             <div className="pos-recent">
               {/* <span className="pos-recent-label">Recent</span> */}
               <div className="pos-recent-scroll">
@@ -1246,10 +1324,6 @@ export const PosShell: React.FC<Props> = ({
               <div className="pos-summary__row">
                 <span>Subtotal</span>
                 <span>₹{totals.subtotal.toFixed(2)}</span>
-              </div>
-              <div className="pos-summary__row">
-                <span>Tax{settings?.taxInclusive ? ' (incl.)' : ''}</span>
-                <span>₹{totals.taxAmount.toFixed(2)}</span>
               </div>
               <div className="pos-summary__row">
                 <span>Discount</span>
@@ -1365,9 +1439,6 @@ export const PosShell: React.FC<Props> = ({
               </div>
             </div>
 
-            {settings?.allowNegativePos ? (
-              <p className="pos-muted">Negative stock allowed for this branch (Settings).</p>
-            ) : null}
             {customerId?.trim() && !customerAllowsSale ? (
               <div className="sales-panel-error pos-checkout-err">{INACTIVE_CUSTOMER_MSG}</div>
             ) : null}
@@ -1411,35 +1482,65 @@ export const PosShell: React.FC<Props> = ({
               <div className="pos-empty">
                 <div className="pos-empty__box">
                   <p className="pos-empty__title">Scan a product to start a sale</p>
-                  <p className="pos-empty__sub">Use scan or search, quick-add cards, or recent items. Lines merge by variant.</p>
+                  <p className="pos-empty__sub">
+                    Use scan or search and quick-add cards for regular products; use the MISC strip below for
+                    non-stock items. Lines merge by variant.
+                  </p>
                 </div>
               </div>
             ) : (
-              <div className="pos-cart-list">
-                {lines.map((line) => {
-                  const lineTotal = line.quantity * line.unitPrice;
-                  const avail = availableByVariant[line.variantId];
-                  const warn =
-                    !settings?.allowNegativePos && avail !== undefined && line.quantity > avail;
-                  return (
-                    <PosCartLineCard
-                      key={line.variantId}
-                      line={line}
-                      lineTotal={lineTotal}
-                      highlight={lastMergedVariantId === line.variantId}
-                      available={avail}
-                      showStockWarning={warn}
-                      onQtyChange={setQty}
-                      onRemove={removeLine}
-                    />
-                  );
-                })}
+              <div className="pos-cart-list-col">
+                <div className="pos-cart-list">
+                  {lines.map((line) => {
+                    const lineTotal = getLineTotalWithGst(line, branchTaxPercent);
+                    const avail = availableByVariant[line.variantId];
+                    const warn =
+                      !line.isNonStock &&
+                      !line.allowNegativeStock &&
+                      !settings?.allowNegativePos &&
+                      avail !== undefined &&
+                      line.quantity > avail;
+                    return (
+                      <PosCartLineListCard
+                        key={line.variantId}
+                        line={line}
+                        lineTotal={lineTotal}
+                        selected={selectedDetailVariantId === line.variantId}
+                        flash={lastMergedVariantId === line.variantId}
+                        available={avail}
+                        showStockWarning={warn}
+                        onSelect={() => setSelectedDetailVariantId(line.variantId)}
+                        onQuantityDelta={(delta) => adjustLineQuantity(line.variantId, delta)}
+                        onRemove={removeLineFromCart}
+                      />
+                    );
+                  })}
+                </div>
               </div>
             )}
           </section>
 
         </div>
       </div>
+
+      <Modal
+        isOpen={Boolean(selectedDetailVariantId && selectedDetailLine)}
+        onClose={() => setSelectedDetailVariantId(null)}
+        size="lg"
+        className="pos-cart-detail-modal"
+      >
+        {selectedDetailLine ? (
+          <PosCartItemDetailPanel
+            line={selectedDetailLine}
+            embeddedInModal
+            branchTaxPercent={branchTaxPercent}
+            onUpdate={handleDetailUpdate}
+            onRemove={handleDetailRemove}
+            onSave={() => setSelectedDetailVariantId(null)}
+            onClose={() => setSelectedDetailVariantId(null)}
+          />
+        ) : null}
+      </Modal>
 
       {cameraOpen ? (
         <div className="pos-modal-overlay" role="dialog" aria-modal="true" aria-label="Barcode">

@@ -12,6 +12,7 @@ import { Button, Input, Card, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
+import { itemDisplaySku } from '../utils/itemDisplaySku';
 import './BulkOperations.css';
 
 type BulkOperationType = 'variants' | 'serial-attributes';
@@ -219,7 +220,7 @@ export const BulkOperations: React.FC = () => {
               <option value="">Select Item</option>
               {items.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.sku} - {item.name}
+                  {itemDisplaySku(item)} - {item.name}
                 </option>
               ))}
             </Select>

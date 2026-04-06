@@ -20,6 +20,7 @@ const SerialStatus = {
   DAMAGED: 'DAMAGED',
   SOLD: 'SOLD',
 } as const;
+import { serialLineSku } from '../utils/itemDisplaySku';
 import './SerialLookup.css';
 
 interface SerialHistoryEntry {
@@ -190,7 +191,9 @@ export const SerialLookup: React.FC = () => {
               <div className="detail-item">
                 <label>Item</label>
                 <div className="detail-value">
-                  {serial.item ? `${serial.item.sku} - ${serial.item.name}` : serial.itemId}
+                  {serial.item
+                    ? `${serialLineSku(serial)} - ${serial.item.name}`
+                    : serial.itemId}
                 </div>
               </div>
               {serial.variantId && (

@@ -20,7 +20,10 @@ import {
   InventoryItem,
   CreateInventoryItemRequest,
   UpdateInventoryItemRequest,
+  IndustryFlags,
   IndustryType,
+  ItemType,
+  ProductType,
   MovementType,
   SerialResponse,
 } from "@/services/inventory.service";
@@ -43,6 +46,13 @@ import { SerialGrid } from "./SerialGrid";
 import { SerialDetailPanel } from "./SerialDetailPanel";
 import { ProductCreationWizard } from "./ProductCreationWizard/ProductCreationWizard";
 import {
+  CATEGORY_OPTIONS,
+  getCategoryHint,
+  getPresetForCategory,
+  getProductTypeHint,
+  normalizeCategoryKey,
+} from "@/features/inventory/constants/productCatalog";
+import {
   ItemSubTab,
   validateCollapsibleSections,
   validateSubViews,
@@ -53,7 +63,37 @@ import "./ProductCreationWizard/ProductCreationWizard.css";
 
 type ViewMode = "list" | "details" | "add";
 
-const DEFAULT_ITEM_CATEGORY = "electronics";
+const DEFAULT_ITEM_CATEGORY = "regular";
+
+function rowIndustryType(item: InventoryItem): string {
+  return (
+    item.industryClassification?.industryType ??
+    item.industryFlags?.industryType ??
+    ""
+  );
+}
+
+function rowSku(item: InventoryItem): string {
+  return item.displaySku ?? item.sku ?? "—";
+}
+
+function detailIndustryFlags(item: InventoryItem): IndustryFlags {
+  if (item.industryFlags) return item.industryFlags;
+  const ic = item.industryClassification;
+  return {
+    industryType: ic?.industryType ?? IndustryType.FMCG,
+    isHighValue: ic?.isHighValue ?? false,
+    isPerishable: false,
+    requiresBatchTracking: item.variantTracking?.batch ?? false,
+    requiresSerialTracking: item.variantTracking?.serial ?? false,
+    hasExpiryDate: false,
+  };
+}
+
+function isMiscNoTrackingType(t: ItemType | undefined): boolean {
+  const x = t ?? ItemType.STOCK;
+  return x === ItemType.MISC_NON_STOCK;
+}
 
 type VariantStockRow = {
   variantId: string;
@@ -107,11 +147,12 @@ export const ItemMaster: React.FC = () => {
   // Auto-set tracking sub-view when item changes
   useEffect(() => {
     if (selectedItem && itemSubTab === "tracking") {
-      if (selectedItem.industryFlags.requiresBatchTracking) {
+      const f = detailIndustryFlags(selectedItem);
+      if (f.requiresBatchTracking) {
         setTrackingSubView("batches");
-      } else if (selectedItem.industryFlags.requiresSerialTracking) {
+      } else if (f.requiresSerialTracking) {
         setTrackingSubView("serials");
-      } else if (selectedItem.industryFlags.hasExpiryDate) {
+      } else if (f.hasExpiryDate) {
         setTrackingSubView("expiry");
       }
     }
@@ -260,6 +301,8 @@ export const ItemMaster: React.FC = () => {
       isHighValue: false,
       industryType: IndustryType.WAREHOUSE,
     },
+    itemType: ItemType.STOCK,
+    productType: ProductType.STOCK_ITEM,
     images: [],
     dimensions: undefined,
     weight: undefined,
@@ -273,13 +316,21 @@ export const ItemMaster: React.FC = () => {
   const editParamProcessed = useRef(false);
 
   const categorySelectOptions = useMemo(() => {
-    const set = new Set<string>([DEFAULT_ITEM_CATEGORY, ...categories]);
+    const set = new Set<string>([
+      ...CATEGORY_OPTIONS.map((o) => o.value),
+      ...categories.filter(c => c.toLowerCase() !== 'misc'),
+    ]);
     const cur = formData.category?.trim();
     if (cur) set.add(cur);
     return Array.from(set).sort((a, b) =>
       a.localeCompare(b, undefined, { sensitivity: "base" }),
     );
   }, [categories, formData.category]);
+
+  const categoryOptionLabel = useCallback((value: string) => {
+    const o = CATEGORY_OPTIONS.find((x) => x.value === value);
+    return o?.label ?? value;
+  }, []);
 
   // Ref to prevent duplicate loads for same itemId/subTab combination
   const lastLoadedRef = useRef<{
@@ -516,7 +567,7 @@ export const ItemMaster: React.FC = () => {
       // Apply client-side filters
       if (filterIndustryType) {
         data = data.filter(
-          (item) => item.industryFlags.industryType === filterIndustryType,
+          (item) => rowIndustryType(item) === filterIndustryType,
         );
       }
       if (filterStockStatus) {
@@ -563,8 +614,8 @@ export const ItemMaster: React.FC = () => {
 
           switch (sortColumn) {
             case "sku":
-              aVal = a.sku.toLowerCase();
-              bVal = b.sku.toLowerCase();
+              aVal = rowSku(a).toLowerCase();
+              bVal = rowSku(b).toLowerCase();
               break;
             case "name":
               aVal = a.name.toLowerCase();
@@ -575,12 +626,12 @@ export const ItemMaster: React.FC = () => {
               bVal = (b.category || "").toLowerCase();
               break;
             case "unit":
-              aVal = a.unitOfMeasure.toLowerCase();
-              bVal = b.unitOfMeasure.toLowerCase();
+              aVal = (a.unitOfMeasure ?? "").toLowerCase();
+              bVal = (b.unitOfMeasure ?? "").toLowerCase();
               break;
             case "industry":
-              aVal = a.industryFlags.industryType.toLowerCase();
-              bVal = b.industryFlags.industryType.toLowerCase();
+              aVal = rowIndustryType(a).toLowerCase();
+              bVal = rowIndustryType(b).toLowerCase();
               break;
             case "status":
               aVal = a.isActive ? 1 : 0;
@@ -596,7 +647,27 @@ export const ItemMaster: React.FC = () => {
         });
       }
 
-      setItems(data);
+      const enriched: InventoryItem[] = await Promise.all(
+        data.map(async (item) => {
+          try {
+            const variants = await inventoryService.getVariantsByItem(item.id);
+            const def = variants.find((v) => v.isDefault) || variants[0];
+            const displaySku = def?.sku || def?.code || item.sku || "—";
+            const variantTracking = {
+              batch: variants.some((v) => v.trackBatchOverride),
+              serial: variants.some((v) => v.trackSerialOverride),
+            };
+            return { ...item, displaySku, variantTracking };
+          } catch {
+            return {
+              ...item,
+              displaySku: item.sku || "—",
+              variantTracking: { batch: false, serial: false },
+            };
+          }
+        }),
+      );
+      setItems(enriched);
       // Reset to first page when filters change
       setCurrentPage(1);
     } catch (err: any) {
@@ -683,14 +754,16 @@ export const ItemMaster: React.FC = () => {
     if (itemSubTab === "edit") {
       // Initialize formData when Edit tab is opened
       setFormData({
-        sku: selectedItem.sku,
+        sku: rowSku(selectedItem),
         name: selectedItem.name,
         description: selectedItem.description || "",
         category: selectedItem.category || "",
+        productType: selectedItem.productType ?? ProductType.STOCK_ITEM,
         barcode: selectedItem.barcode || "",
-        unitOfMeasure: selectedItem.unitOfMeasure,
-        unitConversions: selectedItem.unitConversions,
-        industryFlags: selectedItem.industryFlags,
+        unitOfMeasure: selectedItem.unitOfMeasure ?? "pcs",
+        unitConversions: selectedItem.unitConversions ?? [],
+        industryFlags: detailIndustryFlags(selectedItem),
+        itemType: selectedItem.itemType ?? ItemType.STOCK,
         images: selectedItem.images || [],
         dimensions: selectedItem.dimensions,
         weight: selectedItem.weight,
@@ -760,7 +833,24 @@ export const ItemMaster: React.FC = () => {
     setError(null);
     try {
       const data = await inventoryService.getItemById(selectedItemId);
-      setSelectedItem(data);
+      let merged: InventoryItem = { ...data };
+      try {
+        const vs = await inventoryService.getVariantsByItem(selectedItemId);
+        if (vs.length > 0) {
+          const def = vs.find((v) => v.isDefault) || vs[0];
+          merged = {
+            ...data,
+            displaySku: def?.sku || def?.code || data.sku,
+            variantTracking: {
+              batch: vs.some((v) => v.trackBatchOverride),
+              serial: vs.some((v) => v.trackSerialOverride),
+            },
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+      setSelectedItem(merged);
 
       // Load variants and variant stock if item has variants
       if (data.hasVariants) {
@@ -780,18 +870,14 @@ export const ItemMaster: React.FC = () => {
         });
       }
 
-      // Load batches if item requires batch tracking
-      if (data.industryFlags.requiresBatchTracking) {
+      const loadTrackingFlags = detailIndustryFlags(merged);
+      if (loadTrackingFlags.requiresBatchTracking) {
         await loadBatches(selectedItemId);
       }
-
-      // Load serials if item requires serial tracking
-      if (data.industryFlags.requiresSerialTracking) {
+      if (loadTrackingFlags.requiresSerialTracking) {
         await loadSerials(selectedItemId);
       }
-
-      // Load expiry alerts if item has expiry date
-      if (data.industryFlags.hasExpiryDate) {
+      if (loadTrackingFlags.hasExpiryDate) {
         await loadExpiryAlerts();
       }
     } catch (err: any) {
@@ -1223,12 +1309,13 @@ export const ItemMaster: React.FC = () => {
   };
 
   const handleExportCSV = () => {
+    if (items.length === 0) return;
     const csvData = items.map((item) => ({
-      SKU: item.sku,
+      SKU: rowSku(item),
       Name: item.name,
       Category: item.category || "",
-      "Unit of Measure": item.unitOfMeasure,
-      Industry: item.industryFlags.industryType,
+      "Unit of Measure": item.unitOfMeasure ?? "",
+      Industry: rowIndustryType(item),
       Status: item.isActive ? "Active" : "Inactive",
     }));
 
@@ -1346,7 +1433,18 @@ export const ItemMaster: React.FC = () => {
     }
 
     // Industry flags validation
-    const flags = formData.industryFlags;
+    const flags =
+      formData.industryFlags ??
+      (selectedItem
+        ? detailIndustryFlags(selectedItem)
+        : {
+            industryType: IndustryType.FMCG,
+            isPerishable: false,
+            requiresBatchTracking: false,
+            requiresSerialTracking: false,
+            hasExpiryDate: false,
+            isHighValue: false,
+          });
 
     // Rule 1: Serial Tracking + Batch Tracking are mutually exclusive
     if (flags.requiresSerialTracking && flags.requiresBatchTracking) {
@@ -1368,6 +1466,17 @@ export const ItemMaster: React.FC = () => {
       );
       newFieldErrors["industryFlags.perishableExpiry"] =
         "Perishable items with batch tracking must have expiry date enabled";
+    }
+
+    if (
+      isMiscNoTrackingType(formData.itemType) &&
+      (flags.requiresBatchTracking || flags.requiresSerialTracking || flags.hasExpiryDate)
+    ) {
+      errors.push(
+        "Misc items cannot enable batch, serial, or expiry tracking",
+      );
+      newFieldErrors["industryFlags.miscTracking"] =
+        "Disable tracking flags for misc items";
     }
 
     setFieldErrors(newFieldErrors);
@@ -1408,10 +1517,14 @@ export const ItemMaster: React.FC = () => {
         name: formData.name,
         description: formData.description,
         category: formData.category,
+        productType: formData.productType,
         barcode: formData.barcode,
         unitOfMeasure: formData.unitOfMeasure,
         unitConversions: formData.unitConversions,
-        industryFlags: formData.industryFlags,
+        industryFlags:
+          formData.industryFlags ??
+          (selectedItem ? detailIndustryFlags(selectedItem) : undefined),
+        itemType: formData.itemType ?? ItemType.STOCK,
         images: formData.images,
         dimensions: formData.dimensions,
         weight: formData.weight,
@@ -1514,11 +1627,18 @@ export const ItemMaster: React.FC = () => {
             style={{ width: "200px" }}
           >
             <option value="">All Categories</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
+            {CATEGORY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
+            {categories
+              .filter((c) => !CATEGORY_OPTIONS.some((o) => o.value === c))
+              .map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
           </Select>
           <Button
             variant="ghost"
@@ -1903,13 +2023,13 @@ export const ItemMaster: React.FC = () => {
                                 ) : (
                                   <span className="expand-icon-placeholder" aria-hidden />
                                 )}
-                                {item.sku}
+                                {rowSku(item)}
                               </div>
                             </td>
                             <td>{item.name}</td>
-                            <td>{item.category || "-"}</td>
+                            <td>{categoryOptionLabel(item.category || "") || "-"}</td>
                             <td>{item.unitOfMeasure}</td>
-                            <td>{item.industryFlags.industryType}</td>
+                            <td>{rowIndustryType(item)}</td>
                             <td>
                               <span
                                 className={
@@ -1934,7 +2054,7 @@ export const ItemMaster: React.FC = () => {
                                 >
                                   View
                                 </Button>
-                                {item.industryFlags.requiresBatchTracking && (
+                                {item.variantTracking?.batch && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -1950,7 +2070,7 @@ export const ItemMaster: React.FC = () => {
                                     Batches
                                   </Button>
                                 )}
-                                {item.industryFlags.requiresSerialTracking && (
+                                {item.variantTracking?.serial && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -2127,7 +2247,7 @@ export const ItemMaster: React.FC = () => {
               </span>
             </div>
             <div className="item-detail-header-meta">
-              <span className="item-detail-header-sku">{selectedItem.sku}</span>
+              <span className="item-detail-header-sku">{rowSku(selectedItem)}</span>
             </div>
           </div>
           <div className="item-detail-header-actions">
@@ -2285,7 +2405,7 @@ export const ItemMaster: React.FC = () => {
             <div className="collapsible-section-content">
               <div>
                 <label>SKU</label>
-                <div>{selectedItem.sku}</div>
+                <div>{rowSku(selectedItem)}</div>
               </div>
               <div>
                 <label>Barcode</label>
@@ -2354,12 +2474,22 @@ export const ItemMaster: React.FC = () => {
                       startInlineEdit("category", selectedItem.category || "")
                     }
                   >
-                    <span>{selectedItem.category || "-"}</span>
+                    <span>
+                      {categoryOptionLabel(selectedItem.category || "")}
+                    </span>
                     <span className="edit-icon" title="Click to edit">
                       ✏️
                     </span>
                   </div>
                 )}
+              </div>
+              <div>
+                <label>Product type</label>
+                <div>
+                  {selectedItem.productType === ProductType.ASSET
+                    ? "Fixed Asset"
+                    : "Consumable"}
+                </div>
               </div>
               <div className="inline-edit-field">
                 <label>Unit of Measure</label>
@@ -2482,44 +2612,37 @@ export const ItemMaster: React.FC = () => {
           </div>
           {!isIndustryFlagsCollapsed && (
             <div className="collapsible-section-content">
-              <div>
-                <label>Industry Type</label>
-                <div>{selectedItem.industryFlags.industryType}</div>
-              </div>
-              <div>
-                <label>Perishable</label>
-                <div>
-                  {selectedItem.industryFlags.isPerishable ? "Yes" : "No"}
-                </div>
-              </div>
-              <div>
-                <label>Batch Tracking</label>
-                <div>
-                  {selectedItem.industryFlags.requiresBatchTracking
-                    ? "Yes"
-                    : "No"}
-                </div>
-              </div>
-              <div>
-                <label>Serial Tracking</label>
-                <div>
-                  {selectedItem.industryFlags.requiresSerialTracking
-                    ? "Yes"
-                    : "No"}
-                </div>
-              </div>
-              <div>
-                <label>Has Expiry Date</label>
-                <div>
-                  {selectedItem.industryFlags.hasExpiryDate ? "Yes" : "No"}
-                </div>
-              </div>
-              <div>
-                <label>High Value Item</label>
-                <div>
-                  {selectedItem.industryFlags.isHighValue ? "Yes" : "No"}
-                </div>
-              </div>
+              {(() => {
+                const f = detailIndustryFlags(selectedItem);
+                return (
+                  <>
+                    <div>
+                      <label>Industry Type</label>
+                      <div>{f.industryType}</div>
+                    </div>
+                    <div>
+                      <label>Perishable</label>
+                      <div>{f.isPerishable ? "Yes" : "No"}</div>
+                    </div>
+                    <div>
+                      <label>Batch Tracking</label>
+                      <div>{f.requiresBatchTracking ? "Yes" : "No"}</div>
+                    </div>
+                    <div>
+                      <label>Serial Tracking</label>
+                      <div>{f.requiresSerialTracking ? "Yes" : "No"}</div>
+                    </div>
+                    <div>
+                      <label>Has Expiry Date</label>
+                      <div>{f.hasExpiryDate ? "Yes" : "No"}</div>
+                    </div>
+                    <div>
+                      <label>High Value Item</label>
+                      <div>{f.isHighValue ? "Yes" : "No"}</div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -2745,6 +2868,19 @@ export const ItemMaster: React.FC = () => {
 
   const renderStockView = () => {
     if (!selectedItem) return null;
+    if ((selectedItem.itemType ?? ItemType.STOCK) === ItemType.MISC_NON_STOCK) {
+      return (
+        <div className="stock-view">
+          <Card>
+            <h3 style={{ marginBottom: 8 }}>MISC / Non-Stock Item</h3>
+            <p style={{ margin: 0 }}>
+              This item is configured as non-stock. Stock ledger, batch, serial, and quantity
+              controls are disabled. Movements for this item are saved as audit-only records.
+            </p>
+          </Card>
+        </div>
+      );
+    }
 
     // Show loading state while stock data is being fetched
     if (loading && loadingStockRef.current && stockData.length === 0) {
@@ -3210,9 +3346,10 @@ export const ItemMaster: React.FC = () => {
   const renderTrackingView = () => {
     if (!selectedItem) return null;
 
-    const hasBatches = selectedItem.industryFlags.requiresBatchTracking;
-    const hasSerials = selectedItem.industryFlags.requiresSerialTracking;
-    const hasExpiry = selectedItem.industryFlags.hasExpiryDate;
+    const f = detailIndustryFlags(selectedItem);
+    const hasBatches = f.requiresBatchTracking;
+    const hasSerials = f.requiresSerialTracking;
+    const hasExpiry = f.hasExpiryDate;
 
     // UI Governance: Count active sub-views - Maximum 3 per tab
     const activeSubViews = [hasBatches, hasSerials, hasExpiry].filter(
@@ -3295,7 +3432,7 @@ export const ItemMaster: React.FC = () => {
                     }
                   />
                 </div>
-                {selectedItem.industryFlags.hasExpiryDate && (
+                {detailIndustryFlags(selectedItem).hasExpiryDate && (
                   <div className="form-group">
                     <label>Expiry Date</label>
                     <Input
@@ -3615,6 +3752,9 @@ export const ItemMaster: React.FC = () => {
   const renderEditView = () => {
     if (!selectedItem) return null;
 
+    const editIndustryBase = (): IndustryFlags =>
+      formData.industryFlags ?? detailIndustryFlags(selectedItem);
+
     const primaryUom = (formData.unitOfMeasure || "pcs").trim();
     const conv0 = formData.unitConversions?.[0];
     const secondaryUnit =
@@ -3626,7 +3766,7 @@ export const ItemMaster: React.FC = () => {
 
     const setRequiresBatchTracking = (checked: boolean) => {
       setFormData((prev) => {
-        const nf = { ...prev.industryFlags, requiresBatchTracking: checked };
+        const nf = { ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)), requiresBatchTracking: checked };
         if (checked) nf.requiresSerialTracking = false;
         if (checked && nf.isPerishable && !nf.hasExpiryDate) nf.hasExpiryDate = true;
         return { ...prev, industryFlags: nf };
@@ -3644,7 +3784,7 @@ export const ItemMaster: React.FC = () => {
       setFormData((prev) => ({
         ...prev,
         industryFlags: {
-          ...prev.industryFlags,
+          ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
           requiresSerialTracking: checked,
           ...(checked ? { requiresBatchTracking: false } : {}),
         },
@@ -3653,6 +3793,77 @@ export const ItemMaster: React.FC = () => {
         const n = { ...er };
         delete n["industryFlags.batchSerial"];
         return n;
+      });
+      setHasUnsavedChanges(true);
+    };
+
+    const setItemType = (t: ItemType) => {
+      setFormData((prev) => ({
+        ...prev,
+        itemType: t,
+        industryFlags: isMiscNoTrackingType(t)
+          ? {
+              ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
+              requiresBatchTracking: false,
+              requiresSerialTracking: false,
+              hasExpiryDate: false,
+            }
+          : prev.industryFlags ?? detailIndustryFlags(selectedItem),
+      }));
+      setFieldErrors((er) => {
+        const n = { ...er };
+        delete n["industryFlags.batchSerial"];
+        delete n["industryFlags.perishableExpiry"];
+        delete n["industryFlags.miscTracking"];
+        return n;
+      });
+      setHasUnsavedChanges(true);
+    };
+
+    const onEditCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const value = e.target.value;
+      const preset = getPresetForCategory(value);
+      setFormData((prev) => ({
+        ...prev,
+        category: preset.category ?? value.trim(),
+        industryFlags: {
+          ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
+          ...(preset.industryType !== undefined
+            ? { industryType: preset.industryType }
+            : {}),
+          ...(preset.requiresBatchTracking !== undefined
+            ? { requiresBatchTracking: preset.requiresBatchTracking }
+            : {}),
+          ...(preset.requiresSerialTracking !== undefined
+            ? { requiresSerialTracking: preset.requiresSerialTracking }
+            : {}),
+          ...(preset.hasExpiryDate !== undefined
+            ? { hasExpiryDate: preset.hasExpiryDate }
+            : {}),
+        },
+      }));
+      setHasUnsavedChanges(true);
+    };
+
+    const onEditProductTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const pt = e.target.value as ProductType;
+      setFormData((prev) => {
+        const next: CreateInventoryItemRequest = { ...prev, productType: pt };
+        if (pt === ProductType.ASSET) {
+          if (prev.itemType === ItemType.MISC_NON_STOCK) {
+            next.itemType = ItemType.STOCK;
+            if (normalizeCategoryKey(prev.category || "") === "services") {
+              next.category = "regular";
+            }
+          }
+          if (!isMiscNoTrackingType(next.itemType ?? ItemType.STOCK)) {
+            next.industryFlags = {
+              ...next.industryFlags,
+              isHighValue: true,
+            };
+          }
+        }
+        return next;
       });
       setHasUnsavedChanges(true);
     };
@@ -3697,14 +3908,14 @@ export const ItemMaster: React.FC = () => {
               </div>
               <div className="wizard-master-fields">
                 <div className="wizard-form-group">
-                  <label>SKU</label>
+                  <label>Default variant SKU</label>
                   <Input
-                    value={selectedItem.sku}
+                    value={rowSku(selectedItem)}
                     disabled
                     style={{ backgroundColor: "#f5f5f5" }}
                   />
                   <span className="wizard-summary-label" style={{ fontSize: 11 }}>
-                    SKU cannot be changed after creation
+                    Edit SKUs on the Variants tab
                   </span>
                 </div>
                 <div className="wizard-form-group">
@@ -3730,7 +3941,7 @@ export const ItemMaster: React.FC = () => {
                       setFormData({ ...formData, name: e.target.value });
                       setHasUnsavedChanges(true);
                     }}
-                    placeholder="e.g. Organic whole milk 1L"
+                    placeholder="e.g. Organic whole milk"
                   />
                 </div>
                 <div className="wizard-form-group wizard-form-group--grow">
@@ -3755,24 +3966,53 @@ export const ItemMaster: React.FC = () => {
                   <label htmlFor="item-edit-category">Category</label>
                   <Select
                     id="item-edit-category"
-                    value={formData.category ?? ""}
-                    onChange={(e) => {
-                      setFormData({ ...formData, category: e.target.value });
-                      setHasUnsavedChanges(true);
-                    }}
+                    value={formData.category ?? DEFAULT_ITEM_CATEGORY}
+                    onChange={onEditCategoryChange}
                   >
-                    <option value="">—</option>
                     {categorySelectOptions.map((c) => (
                       <option key={c} value={c}>
-                        {c}
+                        {categoryOptionLabel(c)}
                       </option>
                     ))}
                   </Select>
+                  <p className="wizard-summary-label" style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>
+                    {getCategoryHint(formData.category || "")}
+                  </p>
                 </div>
                 <div className="wizard-form-group">
+                  <label htmlFor="item-edit-product-type">Product type</label>
+                  <Select
+                    id="item-edit-product-type"
+                    value={formData.productType ?? ProductType.STOCK_ITEM}
+                    onChange={onEditProductTypeChange}
+                  >
+                    <option value={ProductType.STOCK_ITEM}>Stock Item</option>
+                    <option value={ProductType.NON_STOCK_ITEM}>Non-Stock Item</option>
+                    <option value={ProductType.ASSET}>Asset</option>
+                  </Select>
+                  <p className="wizard-summary-label" style={{ margin: "6px 0 0", fontSize: 11, color: "#64748b" }}>
+                    {getProductTypeHint(formData.productType ?? ProductType.STOCK_ITEM)}
+                  </p>
+                </div>
+                <div className="wizard-form-group">
+                  <label htmlFor="item-edit-item-type" className="wizard-summary-label" style={{ display: "block", marginBottom: 6 }}>
+                    Item type
+                  </label>
+                  <Select
+                    id="item-edit-item-type"
+                    value={formData.itemType ?? ItemType.STOCK}
+                    onChange={(e) => setItemType(e.target.value as ItemType)}
+                    aria-label="Item type"
+                  >
+                    <option value={ItemType.STOCK}>Standard (stock-managed)</option>
+                    <option value={ItemType.MISC_NON_STOCK}>Non-stock (services, fees; no stock)</option>
+                  </Select>
+                  <p className="wizard-summary-label" style={{ margin: "8px 0 0", fontSize: 11, color: "#64748b" }}>
+                    Non-stock items do not affect on-hand quantity.
+                  </p>
                   <span
                     className="wizard-summary-label"
-                    style={{ display: "block", marginBottom: 6 }}
+                    style={{ display: "block", margin: "12px 0 6px" }}
                   >
                     {"Tracking & handling"}
                   </span>
@@ -3793,7 +4033,8 @@ export const ItemMaster: React.FC = () => {
                       }}
                     >
                       <Checkbox
-                        checked={formData.industryFlags.requiresBatchTracking}
+                        checked={editIndustryBase().requiresBatchTracking}
+                        disabled={isMiscNoTrackingType(formData.itemType)}
                         onChange={(e) =>
                           setRequiresBatchTracking(e.target.checked)
                         }
@@ -3811,7 +4052,8 @@ export const ItemMaster: React.FC = () => {
                       }}
                     >
                       <Checkbox
-                        checked={formData.industryFlags.requiresSerialTracking}
+                        checked={editIndustryBase().requiresSerialTracking}
+                        disabled={isMiscNoTrackingType(formData.itemType)}
                         onChange={(e) =>
                           setRequiresSerialTracking(e.target.checked)
                         }
@@ -3829,15 +4071,16 @@ export const ItemMaster: React.FC = () => {
                       }}
                     >
                       <Checkbox
-                        checked={formData.industryFlags.hasExpiryDate}
+                        checked={editIndustryBase().hasExpiryDate}
+                        disabled={isMiscNoTrackingType(formData.itemType)}
                         onChange={(e) => {
-                          setFormData({
-                            ...formData,
+                          setFormData((prev) => ({
+                            ...prev,
                             industryFlags: {
-                              ...formData.industryFlags,
+                              ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
                               hasExpiryDate: e.target.checked,
                             },
-                          });
+                          }));
                           setHasUnsavedChanges(true);
                         }}
                         aria-label="Has expiry date"
@@ -3853,10 +4096,12 @@ export const ItemMaster: React.FC = () => {
                     one turns the other off.
                   </p>
                   {(fieldErrors["industryFlags.batchSerial"] ||
-                    fieldErrors["industryFlags.perishableExpiry"]) && (
+                    fieldErrors["industryFlags.perishableExpiry"] ||
+                    fieldErrors["industryFlags.miscTracking"]) && (
                     <p className="field-error" role="alert" style={{ marginTop: 8 }}>
                       {fieldErrors["industryFlags.batchSerial"] ||
-                        fieldErrors["industryFlags.perishableExpiry"]}
+                        fieldErrors["industryFlags.perishableExpiry"] ||
+                        fieldErrors["industryFlags.miscTracking"]}
                     </p>
                   )}
                 </div>
@@ -3877,12 +4122,12 @@ export const ItemMaster: React.FC = () => {
                     }}
                   >
                     <Checkbox
-                      checked={formData.industryFlags.isPerishable}
+                      checked={editIndustryBase().isPerishable}
                       onChange={(e) => {
                         const checked = e.target.checked;
                         setFormData((prev) => {
                           const nf = {
-                            ...prev.industryFlags,
+                            ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
                             isPerishable: checked,
                           };
                           if (
@@ -3910,15 +4155,15 @@ export const ItemMaster: React.FC = () => {
                     }}
                   >
                     <Checkbox
-                      checked={formData.industryFlags.isHighValue}
+                      checked={editIndustryBase().isHighValue}
                       onChange={(e) => {
-                        setFormData({
-                          ...formData,
+                        setFormData((prev) => ({
+                          ...prev,
                           industryFlags: {
-                            ...formData.industryFlags,
+                            ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
                             isHighValue: e.target.checked,
                           },
-                        });
+                        }));
                         setHasUnsavedChanges(true);
                       }}
                       aria-label="High value item"
@@ -4219,15 +4464,15 @@ export const ItemMaster: React.FC = () => {
             <div className="form-group">
               <label>Industry type *</label>
               <Select
-                value={formData.industryFlags.industryType}
+                value={editIndustryBase().industryType}
                 onChange={(e) => {
-                  setFormData({
-                    ...formData,
+                  setFormData((prev) => ({
+                    ...prev,
                     industryFlags: {
-                      ...formData.industryFlags,
+                      ...(prev.industryFlags ?? detailIndustryFlags(selectedItem)),
                       industryType: e.target.value as IndustryType,
                     },
-                  });
+                  }));
                   setHasUnsavedChanges(true);
                 }}
               >
@@ -4289,14 +4534,16 @@ export const ItemMaster: React.FC = () => {
                 setPendingNavigation(() => () => {
                   if (selectedItem) {
                     setFormData({
-                      sku: selectedItem.sku,
+                      sku: rowSku(selectedItem),
                       name: selectedItem.name,
                       description: selectedItem.description || "",
                       category: selectedItem.category || "",
+                      productType: selectedItem.productType ?? ProductType.STOCK_ITEM,
                       barcode: selectedItem.barcode || "",
-                      unitOfMeasure: selectedItem.unitOfMeasure,
-                      unitConversions: selectedItem.unitConversions,
-                      industryFlags: selectedItem.industryFlags,
+                      unitOfMeasure: selectedItem.unitOfMeasure ?? "pcs",
+                      unitConversions: selectedItem.unitConversions ?? [],
+                      industryFlags: detailIndustryFlags(selectedItem),
+                      itemType: selectedItem.itemType ?? ItemType.STOCK,
                       images: selectedItem.images || [],
                       dimensions: selectedItem.dimensions,
                       weight: selectedItem.weight,
@@ -4506,6 +4753,13 @@ export const ItemMaster: React.FC = () => {
       return <LoadingState message="Loading item details..." />;
     }
 
+    const trackingFlags = detailIndustryFlags(selectedItem);
+    const showTrackingTab =
+      selectedItem.itemType !== ItemType.MISC_NON_STOCK &&
+      (trackingFlags.requiresBatchTracking ||
+        trackingFlags.requiresSerialTracking ||
+        trackingFlags.hasExpiryDate);
+
     return (
       <div className="item-master-details">
         <div className="item-detail-header-container">
@@ -4542,9 +4796,7 @@ export const ItemMaster: React.FC = () => {
             >
               Stock
             </button>
-            {(selectedItem.industryFlags.requiresBatchTracking ||
-              selectedItem.industryFlags.requiresSerialTracking ||
-              selectedItem.industryFlags.hasExpiryDate) && (
+            {showTrackingTab && (
               <button
                 className={`item-sub-tab ${itemSubTab === "tracking" ? "active" : ""}`}
                 onClick={() => setItemSubTab("tracking")}

@@ -9,7 +9,6 @@ import type { WizardVariantImage } from '../variantGridModel';
 import { VARIANT_UNIT_OPTIONS } from '../variantGridUnits';
 
 export type VariantLevelSectionProps = {
-  variantCodeSuffix: string;
   variantName: string;
   barcode: string;
   unitOfMeasure: string;
@@ -41,7 +40,6 @@ export type VariantLevelSectionProps = {
     dimensions?: { length?: number; width?: number; height?: number };
     shelfLifeDays?: number;
   };
-  onCodeSuffixChange: (value: string) => void;
   onVariantNameChange: (value: string) => void;
   onBarcodeChange: (value: string) => void;
   onUnitOfMeasureChange: (value: string) => void;
@@ -63,7 +61,6 @@ export type VariantLevelSectionProps = {
 };
 
 function VariantLevelSectionInner({
-  variantCodeSuffix,
   variantName,
   barcode,
   unitOfMeasure,
@@ -125,18 +122,6 @@ function VariantLevelSectionInner({
           Variant fields
         </h3>
         <div className="product-variant-details-form-grid">
-          <div className="product-variant-details-field">
-            <label htmlFor="pvd-code-suffix" className="product-variant-details-label">
-              Code suffix
-            </label>
-            <Input
-              id="pvd-code-suffix"
-              value={variantCodeSuffix}
-              onChange={(e) => onCodeSuffixChange(e.target.value)}
-              placeholder="e.g. S"
-              aria-label="Variant code suffix"
-            />
-          </div>
           <div className="product-variant-details-field">
             <label htmlFor="pvd-variant-name" className="product-variant-details-label">
               Name

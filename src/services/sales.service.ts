@@ -419,7 +419,16 @@ export const salesService = {
       mode: 'pos' | 'b2b';
       salesPointId: string;
       customerId?: string;
-      lines: Array<{ variantId: string; quantity: number; unitPrice?: number }>;
+      lines: Array<{
+        variantId: string;
+        quantity: number;
+        unitPrice?: number;
+        posListUnitPrice?: number;
+        posLineDiscountAmount?: number;
+        posGstRatePercent?: number;
+        posLineNotes?: string;
+        posHsn?: string;
+      }>;
       paymentMethodCode?: string;
       discountAmount?: number;
     },

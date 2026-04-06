@@ -304,9 +304,9 @@
 
 .wizard-master-description {
   flex: 1;
-  min-height: 180px;
   resize: vertical;
   line-height: 1.45;
+  resize: none;
 }
 
 @media (max-width: 1100px) {
@@ -322,6 +322,11 @@
   }
 }
 
+.wizard-form-group-row {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+}
 .wizard-form-group {
   display: flex;
   flex-direction: column;

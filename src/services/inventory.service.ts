@@ -22,6 +22,18 @@ export enum LocationType {
   BIN = 'BIN',
 }
 
+export enum ItemType {
+  STOCK = 'STOCK',
+  MISC_INVENTORY = 'MISC_INVENTORY',
+  MISC_NON_STOCK = 'MISC_NON_STOCK',
+}
+
+export enum ProductType {
+  STOCK_ITEM = 'STOCK_ITEM',
+  NON_STOCK_ITEM = 'NON_STOCK_ITEM',
+  ASSET = 'ASSET',
+}
+
 export enum MovementType {
   RECEIPT = 'RECEIPT',
   ISSUE = 'ISSUE',
@@ -46,6 +58,11 @@ export enum MovementStatus {
   REVERSED = 'REVERSED',
 }
 
+export enum MovementExecutionMode {
+  STOCK_LEDGER = 'STOCK_LEDGER',
+  AUDIT_ONLY = 'AUDIT_ONLY',
+}
+
 export interface UnitConversion {
   fromUnit: string;
   toUnit: string;
@@ -61,16 +78,28 @@ export interface IndustryFlags {
   industryType: IndustryType;
 }
 
+/** Product-level classification returned by API (master). */
+export interface IndustryClassification {
+  industryType: IndustryType;
+  isHighValue: boolean;
+}
+
 export interface InventoryItem {
   id: string;
-  sku: string;
+  /** @deprecated Use variant `sku` / `code`; optional after product/variant split. */
+  sku?: string;
   name: string;
   description?: string;
   category?: string;
+  productType?: ProductType;
+  isMisc?: boolean;
   barcode?: string;
-  unitOfMeasure: string;
-  unitConversions: UnitConversion[];
-  industryFlags: IndustryFlags;
+  unitOfMeasure?: string;
+  unitConversions?: UnitConversion[];
+  industryClassification?: IndustryClassification;
+  /** Legacy full flags; prefer variant overrides for tracking. */
+  industryFlags?: IndustryFlags;
+  itemType: ItemType;
   branchId: string;
   hasVariants: boolean; // Flag indicating if item has variants
   isActive: boolean;
@@ -109,11 +138,17 @@ export interface InventoryItem {
   };
   createdAt: string;
   updatedAt: string;
+  /** Client-only: default variant SKU for list views. */
+  displaySku?: string;
+  /** Client-only: any variant has batch/serial overrides. */
+  variantTracking?: { batch: boolean; serial: boolean };
 }
 
 export interface InventoryVariant {
   id: string;
   itemId: string;
+  /** Canonical SKU (same as `code`). */
+  sku: string;
   code: string;
   name: string;
   isDefault: boolean;
@@ -161,6 +196,7 @@ export type CreateVariantResponse = InventoryVariant & {
 
 export interface CreateVariantRequest {
   itemId: string;
+  /** Variant SKU (required for new variants). */
   code: string;
   name: string;
   isDefault?: boolean;
@@ -198,7 +234,6 @@ export interface CreateVariantRequest {
 }
 
 export interface UpdateVariantRequest {
-  code?: string;
   name?: string;
   isDefault?: boolean;
   barcode?: string;
@@ -253,19 +288,67 @@ export interface SerialAttributeTemplate {
   updatedAt: string;
 }
 
-export interface CreateInventoryItemRequest {
-  /** Omit to let the server assign a unique SKU (e.g. PRD-…). */
-  sku?: string;
-  name: string;
-  description?: string;
+export interface CatalogVariantRow {
+  variantId: string;
+  sku: string;
+  variantName: string;
+  productId: string;
+  productName: string;
   category?: string;
+  industryType?: IndustryType;
+  isActive: boolean;
+  variantIsActive: boolean;
+  isDefault: boolean;
+  sellingPrice?: number;
+  costPrice?: number;
+  stockOnHand?: number;
+}
+
+export interface CreateInventoryVariantLine {
+  sku: string;
+  name: string;
+  isDefault?: boolean;
   barcode?: string;
-  unitOfMeasure: string;
-  unitConversions?: UnitConversion[];
-  industryFlags: IndustryFlags;
+  hsn?: string;
+  unitOfMeasure?: string;
   costPrice?: number;
   sellingPrice?: number;
-  margin?: number;
+  mrp?: number;
+  tax?: number;
+  reorderLevel?: number;
+  minStock?: number;
+  maxStock?: number;
+  allowBackorder?: boolean;
+  trackSerialOverride?: boolean;
+  trackBatchOverride?: boolean;
+  weightOverride?: number;
+  dimensionsOverride?: {
+    length?: number;
+    width?: number;
+    height?: number;
+  };
+  packSize?: number;
+  unitsPerBox?: number;
+  shelfLifeDaysOverride?: number;
+  images?: Array<{
+    url: string;
+    publicId: string;
+    isPrimary: boolean;
+  }>;
+}
+
+export interface CreateInventoryItemRequest {
+  name: string;
+  /** At least one variant (branch-unique SKU each). */
+  variants: CreateInventoryVariantLine[];
+  description?: string;
+  category?: string;
+  productType?: ProductType;
+  isMisc?: boolean;
+  unitOfMeasure?: string;
+  unitConversions?: UnitConversion[];
+  industryFlags: IndustryFlags;
+  itemType?: ItemType;
   // Image fields
   images?: Array<{
     url: string;
@@ -291,14 +374,13 @@ export interface UpdateInventoryItemRequest {
   name?: string;
   description?: string;
   category?: string;
-  barcode?: string;
+  productType?: ProductType;
+  isMisc?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
   industryFlags?: Partial<IndustryFlags>;
+  itemType?: ItemType;
   isActive?: boolean;
-  costPrice?: number;
-  sellingPrice?: number;
-  margin?: number;
   // Image fields
   images?: Array<{
     url: string;
@@ -442,11 +524,17 @@ export interface UpdateReasonCodeRequest {
 class InventoryService {
   // Items
   async getAllItems(filters?: {
+    branchId?: string | null;
     isActive?: boolean;
     category?: string;
     search?: string;
+    excludeNonStock?: boolean;
+    itemType?: ItemType;
   }): Promise<InventoryItem[]> {
     const params = new URLSearchParams();
+    if (filters?.branchId) {
+      params.append('branchId', filters.branchId);
+    }
     if (filters?.isActive !== undefined) {
       params.append('isActive', filters.isActive.toString());
     }
@@ -456,7 +544,20 @@ class InventoryService {
     if (filters?.search) {
       params.append('search', filters.search);
     }
+    if (filters?.excludeNonStock !== undefined) {
+      params.append('excludeNonStock', filters.excludeNonStock.toString());
+    }
+    if (filters?.itemType) {
+      params.append('itemType', filters.itemType);
+    }
     const response = await api.get(`/inventory/items?${params.toString()}`);
+    return extractApiData<InventoryItem[]>(response);
+  }
+
+  async getMiscItems(options?: { branchId?: string | null }): Promise<InventoryItem[]> {
+    const response = await api.get('/inventory/items/misc', {
+      params: options?.branchId ? { branchId: options.branchId } : {},
+    });
     return extractApiData<InventoryItem[]>(response);
   }
 
@@ -510,6 +611,30 @@ class InventoryService {
   async createItem(data: CreateInventoryItemRequest): Promise<InventoryItem> {
     const response = await api.post('/inventory/items', data);
     return extractApiData<InventoryItem>(response);
+  }
+
+  async getCatalog(params?: {
+    search?: string;
+    category?: string;
+    isActive?: boolean;
+    branchId?: string;
+    excludeNonStock?: boolean;
+    itemType?: ItemType;
+    isMisc?: boolean;
+    includeInactiveVariants?: boolean;
+  }): Promise<CatalogVariantRow[]> {
+    const q = new URLSearchParams();
+    if (params?.search) q.append('search', params.search);
+    if (params?.category) q.append('category', params.category);
+    if (params?.isActive !== undefined) q.append('isActive', String(params.isActive));
+    if (params?.branchId) q.append('branchId', params.branchId);
+    if (params?.excludeNonStock) q.append('excludeNonStock', 'true');
+    if (params?.itemType) q.append('itemType', params.itemType);
+    if (params?.isMisc === true) q.append('isMisc', 'true');
+    if (params?.isMisc === false) q.append('isMisc', 'false');
+    if (params?.includeInactiveVariants) q.append('includeInactiveVariants', 'true');
+    const response = await api.get(`/inventory/catalog?${q.toString()}`);
+    return extractApiData<CatalogVariantRow[]>(response);
   }
 
   async updateItem(id: string, data: UpdateInventoryItemRequest): Promise<InventoryItem> {
@@ -1651,6 +1776,8 @@ export interface MovementLineResponse {
   lineReasonCode?: string;
   lineStatus: string;
   reversedLineId?: string;
+  executionMode?: MovementExecutionMode;
+  nonStockReason?: 'ITEM_NOT_STOCK_MANAGED';
   createdAt: string;
   updatedAt: string;
 }
@@ -1724,6 +1851,8 @@ export interface StockMovementResponse {
   reversedMovementId?: string;
   reversalReason?: string;
   attachments: Array<{ url: string; type: string; uploadedAt: string }>;
+  executionMode: MovementExecutionMode;
+  nonStockReason?: 'ITEM_NOT_STOCK_MANAGED';
   createdBy: {
     id: string;
     name: string;

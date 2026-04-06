@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { inventoryService, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
+import {
+  inventoryService,
+  type InventoryItem,
+  type InventoryVariant,
+} from '@/services/inventory.service';
 import { usePriceResolver } from '../../hooks/usePriceResolver';
 import './PosQuickAddGrid.css';
 
@@ -65,10 +69,13 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     setLoading(true);
     try {
       const items = await inventoryService.getAllItems({
+        branchId,
         isActive: true,
+        excludeNonStock: true,
         ...(categoryChip ? { category: categoryChip } : {}),
       });
-      const slice = items.slice(0, 40);
+      const stockProducts = items.filter((item) => item.isMisc !== true);
+      const slice = stockProducts.slice(0, 40);
       const built = await Promise.all(
         slice.map(async (item): Promise<GridRow | null> => {
           try {
@@ -129,7 +136,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [salesPointId, customerId, locationId, categoryChip, inStockOnly, resolvePrice, refreshToken]);
+  }, [branchId, salesPointId, customerId, locationId, categoryChip, inStockOnly, resolvePrice, refreshToken]);
 
   useEffect(() => {
     void load();

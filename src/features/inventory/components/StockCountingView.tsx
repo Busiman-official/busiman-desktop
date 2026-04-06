@@ -213,7 +213,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
       for (const r of rows) {
         const key = `${r.itemId}|${r.variantId ?? ''}`;
         if (!byKey.has(key) && r.item) {
-          byKey.set(key, { id: r.item.id, sku: r.item.sku, name: r.item.name });
+          byKey.set(key, {
+            id: r.item.id,
+            sku: r.variant?.code || r.item.sku || "—",
+            name: r.item.name,
+          });
         }
       }
       setScopeItems(Array.from(byKey.values()));

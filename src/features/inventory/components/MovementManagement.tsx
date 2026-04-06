@@ -23,6 +23,7 @@ import { MovementList, MovementSelection } from './MovementList';
 import { MovementDetailPanel } from './MovementDetailPanel';
 import { CreateMovementView } from './CreateMovementView';
 import { StockCountingView } from './StockCountingView';
+import { itemDisplaySku } from '../utils/itemDisplaySku';
 import './MovementManagement.css';
 
 type ViewMode = 'list' | 'create' | 'details' | 'approve';
@@ -288,7 +289,7 @@ export const MovementManagement: React.FC = () => {
       
       // Add serialNumbers and serialAttributes if serial-tracked item
       const item = getSelectedItem();
-      if (item?.industryFlags.requiresSerialTracking) {
+      if (item?.industryFlags?.requiresSerialTracking) {
         if (serialNumbers.length === 0) {
           setError('Serial numbers are required for serial-tracked items');
           return;
@@ -435,7 +436,7 @@ export const MovementManagement: React.FC = () => {
                 <option value="">All Items</option>
                 {items.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.sku} - {item.name}
+                    {itemDisplaySku(item)} - {item.name}
                   </option>
                 ))}
               </Select>
@@ -717,7 +718,7 @@ export const MovementManagement: React.FC = () => {
                 unitOfMeasure: item?.unitOfMeasure || 'pcs',
               });
               // Reset serials if item changes or new item doesn't require serial tracking
-              if (!item?.industryFlags.requiresSerialTracking || 
+              if (!item?.industryFlags?.requiresSerialTracking || 
                   (previousItem && previousItem.id !== item?.id)) {
                 setSerialNumbers([]);
                 setNewSerialInput('');
@@ -733,7 +734,7 @@ export const MovementManagement: React.FC = () => {
               }
               
               // Load attribute template if serial-tracked item
-              if (item?.industryFlags.requiresSerialTracking && e.target.value) {
+              if (item?.industryFlags?.requiresSerialTracking && e.target.value) {
                 await loadAttributeTemplate(e.target.value, selectedVariantId || undefined);
               } else {
                 setAttributeTemplate(null);
@@ -743,7 +744,7 @@ export const MovementManagement: React.FC = () => {
             <option value="">Select Item</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.sku} - {item.name}
+                {itemDisplaySku(item)} - {item.name}
               </option>
             ))}
           </Select>
@@ -838,7 +839,7 @@ export const MovementManagement: React.FC = () => {
                 setSelectedVariantId(variantId);
                 setFormData({ ...formData, variantId: variantId || undefined });
                 // Reload attribute template with new variant
-                if (selectedItem?.industryFlags.requiresSerialTracking) {
+                if (selectedItem?.industryFlags?.requiresSerialTracking) {
                   loadAttributeTemplate(formData.itemId, variantId || undefined);
                 }
               }}
@@ -853,7 +854,7 @@ export const MovementManagement: React.FC = () => {
           </div>
         )}
 
-        {selectedItem?.industryFlags.requiresBatchTracking && (
+        {selectedItem?.industryFlags?.requiresBatchTracking && (
           <div className="form-group">
             <label>Batch Number</label>
             <Input
@@ -866,7 +867,7 @@ export const MovementManagement: React.FC = () => {
           </div>
         )}
 
-        {selectedItem?.industryFlags.requiresSerialTracking && (
+        {selectedItem?.industryFlags?.requiresSerialTracking && (
           <div className="form-group">
             <label>
               Serial Numbers ({serialNumbers.length} entered)
@@ -1043,7 +1044,7 @@ export const MovementManagement: React.FC = () => {
           </div>
         )}
 
-        {selectedItem?.industryFlags.hasExpiryDate && (
+        {selectedItem?.industryFlags?.hasExpiryDate && (
           <div className="form-group">
             <label>Expiry Date</label>
             <Input
@@ -1060,7 +1061,7 @@ export const MovementManagement: React.FC = () => {
           <div className="form-group">
             <label>
               Quantity *
-              {selectedItem?.industryFlags.requiresSerialTracking && (
+              {selectedItem?.industryFlags?.requiresSerialTracking && (
                 <span className="form-hint"> (auto-synced with serial count)</span>
               )}
             </label>
@@ -1071,8 +1072,8 @@ export const MovementManagement: React.FC = () => {
                 const qty = parseFloat(e.target.value) || 0;
                 setFormData({ ...formData, quantity: qty });
               }}
-              disabled={selectedItem?.industryFlags.requiresSerialTracking === true}
-              readOnly={selectedItem?.industryFlags.requiresSerialTracking === true}
+              disabled={selectedItem?.industryFlags?.requiresSerialTracking === true}
+              readOnly={selectedItem?.industryFlags?.requiresSerialTracking === true}
               min="0.01"
               step="0.01"
             />

@@ -13,6 +13,7 @@ import {
   formatSerialDate,
 } from '../utils/serialUtils';
 import { LoadingState, EmptyState } from '@/shared/components/data-display';
+import { serialLineSku } from '../utils/itemDisplaySku';
 import './SerialGrid.css';
 
 export interface SerialGridProps {
@@ -226,7 +227,7 @@ export const SerialGrid: React.FC<SerialGridProps> = ({
                   <td>
                     {serial.item ? (
                       <div>
-                        <div>{serial.item.sku}</div>
+                        <div>{serial.item ? serialLineSku(serial) : "—"}</div>
                         <div className="serial-grid-subtext">{serial.item.name}</div>
                         {serial.variant && (
                           <div className="serial-grid-variant">Variant: {serial.variant.name}</div>

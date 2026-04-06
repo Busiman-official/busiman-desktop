@@ -71,7 +71,6 @@ export function ProductVariantDetailsDrawer({
   baseSkuPreview,
   onApply,
 }: ProductVariantDetailsDrawerProps) {
-  const [variantCodeSuffix, setVariantCodeSuffix] = useState(() => initialVariantRow?.value ?? '');
   const [variantName, setVariantName] = useState(() => initialVariantRow?.name ?? '');
   const [barcode, setBarcode] = useState(() => initialVariantRow?.barcode ?? '');
   const [unitOfMeasure, setUnitOfMeasure] = useState(() =>
@@ -102,13 +101,12 @@ export function ProductVariantDetailsDrawer({
   const [unitsPerBox, setUnitsPerBox] = useState<number | undefined>(initialVariantRow?.unitsPerBox);
   const [shelfLifeDaysOverride, setShelfLifeDaysOverride] = useState<number | undefined>(initialVariantRow?.shelfLifeDaysOverride);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const selectedVariantLabel = (variantName || initialVariantRow?.name || variantCodeSuffix || initialVariantRow?.value || '')
+  const selectedVariantLabel = (variantName || initialVariantRow?.name || '')
     .trim();
   const drawerTitle = selectedVariantLabel ? `Variant details - ${selectedVariantLabel}` : 'Variant details';
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!initialVariantRow) return false;
     const same = {
-      value: variantCodeSuffix,
       name: variantName,
       barcode: barcode,
       unitOfMeasure: resolveVariantUnit(unitOfMeasure, productDefaultUnit),
@@ -132,7 +130,6 @@ export function ProductVariantDetailsDrawer({
       shelfLifeDaysOverride,
     };
     const base = {
-      value: initialVariantRow.value ?? '',
       name: initialVariantRow.name ?? '',
       barcode: initialVariantRow.barcode ?? '',
       unitOfMeasure: resolveVariantUnit(initialVariantRow.unitOfMeasure, productDefaultUnit),
@@ -155,7 +152,6 @@ export function ProductVariantDetailsDrawer({
     return JSON.stringify(same) !== JSON.stringify(base);
   }, [
     initialVariantRow,
-    variantCodeSuffix,
     variantName,
     barcode,
     unitOfMeasure,
@@ -191,7 +187,6 @@ export function ProductVariantDetailsDrawer({
     }
     setValidationError(null);
     const variantPatch: ProductVariantDetailsDrawerApplyPayload['variantPatch'] = {
-      value: variantCodeSuffix,
       name: variantName,
       barcode: barcode.trim() || undefined,
       unitOfMeasure: resolveVariantUnit(unitOfMeasure, productDefaultUnit),
@@ -222,7 +217,6 @@ export function ProductVariantDetailsDrawer({
     onApply({ variantPatch });
     onClose();
   }, [
-    variantCodeSuffix,
     variantName,
     barcode,
     unitOfMeasure,
@@ -276,7 +270,6 @@ export function ProductVariantDetailsDrawer({
             <>
               {validationError ? <p className="product-variant-details-empty">{validationError}</p> : null}
               <VariantLevelSection
-                variantCodeSuffix={variantCodeSuffix}
                 variantName={variantName}
                 barcode={barcode}
                 unitOfMeasure={unitOfMeasure}
@@ -297,7 +290,6 @@ export function ProductVariantDetailsDrawer({
                 unitsPerBox={unitsPerBox}
                 shelfLifeDaysOverride={shelfLifeDaysOverride}
                 defaults={defaults}
-                onCodeSuffixChange={setVariantCodeSuffix}
                 onVariantNameChange={setVariantName}
                 onBarcodeChange={setBarcode}
                 onUnitOfMeasureChange={setUnitOfMeasure}

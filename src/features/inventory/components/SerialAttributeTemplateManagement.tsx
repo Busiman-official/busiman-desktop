@@ -16,6 +16,7 @@ import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-d
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
+import { itemDisplaySku } from '../utils/itemDisplaySku';
 import './SerialAttributeTemplateManagement.css';
 
 type ViewMode = 'list' | 'create' | 'edit';
@@ -417,7 +418,7 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
             <option value="">Select Item</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.sku} - {item.name}
+                {itemDisplaySku(item)} - {item.name}
               </option>
             ))}
           </Select>
@@ -438,7 +439,7 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
               <option value="">Select Item</option>
               {items.filter((item) => item.hasVariants).map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.sku} - {item.name}
+                  {itemDisplaySku(item)} - {item.name}
                 </option>
               ))}
             </Select>

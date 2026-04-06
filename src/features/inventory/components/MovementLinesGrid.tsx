@@ -10,6 +10,7 @@ import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import { getNumberGridMode } from '../utils/numberGridUtils';
 import type { BatchRow } from '../utils/numberGridUtils';
 import { getTrackingType, type TrackingType } from '../utils/trackingUtils';
+import { itemDisplaySku } from '../utils/itemDisplaySku';
 import { NumberGrid } from './NumberGrid';
 import './MovementLinesGrid.css';
 
@@ -258,7 +259,11 @@ function MovementLinesGridInner(
 
   const getTrackingTypeForItem = (item: InventoryItem | undefined): TrackingType => {
     if (!item) return 'NONE';
-    return getTrackingType(item.industryFlags);
+    const fromFlags = getTrackingType(item.industryFlags);
+    if (fromFlags !== 'NONE') return fromFlags;
+    if (item.variantTracking?.serial) return 'SERIAL';
+    if (item.variantTracking?.batch) return 'BATCH';
+    return 'NONE';
   };
 
   const getColumnHeaderForTracking = (lines: MovementLineRequest[], items: InventoryItem[]): string => {
@@ -302,9 +307,9 @@ function MovementLinesGridInner(
   };
 
   const getBatchSerialMode = (item: InventoryItem | undefined): 'batch' | 'serial' | null => {
-    if (!item?.industryFlags) return null;
-    if (item.industryFlags.requiresBatchTracking) return 'batch';
-    if (item.industryFlags.requiresSerialTracking) return 'serial';
+    const t = getTrackingTypeForItem(item);
+    if (t === 'BATCH') return 'batch';
+    if (t === 'SERIAL') return 'serial';
     return null;
   };
 
@@ -741,7 +746,7 @@ function MovementLinesGridInner(
                         <option value="">Select Item</option>
                         {items.map((item) => (
                           <option key={item.id} value={item.id}>
-                            {item.sku} - {item.name}
+                            {itemDisplaySku(item, variantsByItem?.[item.id])} - {item.name}
                           </option>
                         ))}
                       </Select>

@@ -14,6 +14,7 @@ import { logger } from '@/shared/utils/logger';
 import { SerialTimeline, type SerialHistoryEntry } from './SerialTimeline';
 import { getSerialStatusAppearance } from '../utils/serialUtils';
 import { getSerialBreadcrumb } from '../utils/serialNavigation';
+import { serialLineSku } from '../utils/itemDisplaySku';
 import './SerialDetailPanel.css';
 
 export interface SerialDetailPanelProps {
@@ -311,7 +312,7 @@ export const SerialDetailPanel: React.FC<SerialDetailPanelProps> = ({
                 <div>
                   {serial.item ? (
                     <button className="detail-link" onClick={handleViewItem}>
-                      {serial.item.sku} - {serial.item.name}
+                      {serialLineSku(serial)} - {serial.item.name}
                     </button>
                   ) : (
                     serial.itemId

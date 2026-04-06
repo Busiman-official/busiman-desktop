@@ -12,20 +12,22 @@ export type WizardVariantImage = {
 };
 
 export type VariantGridColKey =
-  | 'code'
+  | 'hsn'
   | 'name'
   | 'barcode'
   | 'unit'
+  | 'sellingPrice'
   | 'details'
   | 'default'
   | 'delete';
 
-/** Ordered columns (0..6) for focus navigation. */
+/** Ordered columns (0..7) for focus navigation. */
 export const VARIANT_GRID_COL_KEYS: readonly VariantGridColKey[] = [
-  'code',
+  'hsn',
   'name',
   'barcode',
   'unit',
+  'sellingPrice',
   'details',
   'default',
   'delete',
@@ -71,14 +73,14 @@ export interface WizardVariantRow {
   shelfLifeDaysOverride?: number;
 }
 
-export type VariantRowFieldErrorKey = 'value' | 'name' | 'barcode';
+export type VariantRowFieldErrorKey = 'hsn' | 'value' | 'name' | 'barcode';
 
 export function colKeyToIndex(key: VariantGridColKey): number {
   return VARIANT_GRID_COL_KEYS.indexOf(key);
 }
 
 export function isEditableTextCol(key: VariantGridColKey): boolean {
-  return key === 'code' || key === 'name' || key === 'barcode';
+  return key === 'hsn' || key === 'name' || key === 'barcode';
 }
 
 export function isReadonlyCol(key: VariantGridColKey): boolean {

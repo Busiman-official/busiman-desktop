@@ -7,8 +7,23 @@ export interface PosCartLine {
   label: string;
   quantity: number;
   unitPrice: number;
+  isNonStock?: boolean;
+  /** MISC + tracked inventory: allow selling below zero on hand (matches server POS / movement rules). */
+  allowNegativeStock?: boolean;
   serialWarning?: boolean;
   batchWarning?: boolean;
+  /** Per-line discount (this sale only). */
+  lineDiscountType?: 'flat' | 'percent';
+  lineDiscountValue?: number;
+  /** Exclusive GST % on net after line discount; if omitted, panel uses branch default. */
+  gstRatePercent?: number;
+  /**
+   * When true (default), unit price includes GST at the selected rate.
+   * When false, unit price is before tax and GST is added on top.
+   */
+  gstInclusive?: boolean;
+  notes?: string;
+  hsn?: string;
 }
 
 function mergeLine(prev: PosCartLine[], line: PosCartLine): PosCartLine[] {
@@ -19,8 +34,16 @@ function mergeLine(prev: PosCartLine[], line: PosCartLine): PosCartLine[] {
       ...next[i],
       quantity: next[i].quantity + line.quantity,
       unitPrice: line.unitPrice,
+      isNonStock: next[i].isNonStock || line.isNonStock,
+      allowNegativeStock: next[i].allowNegativeStock || line.allowNegativeStock,
       serialWarning: next[i].serialWarning || line.serialWarning,
       batchWarning: next[i].batchWarning || line.batchWarning,
+      lineDiscountType: next[i].lineDiscountType ?? line.lineDiscountType,
+      lineDiscountValue: next[i].lineDiscountValue ?? line.lineDiscountValue,
+      gstRatePercent: next[i].gstRatePercent ?? line.gstRatePercent,
+      gstInclusive: next[i].gstInclusive ?? line.gstInclusive ?? true,
+      notes: next[i].notes ?? line.notes,
+      hsn: next[i].hsn ?? line.hsn,
     };
     return next;
   }
@@ -49,6 +72,12 @@ export function usePosCart(initial?: PosCartLine[]) {
     setLines((prev) => prev.filter((l) => l.variantId !== variantId));
   }, []);
 
+  const updateLine = useCallback((variantId: string, patch: Partial<PosCartLine>) => {
+    setLines((prev) =>
+      prev.map((l) => (l.variantId === variantId ? { ...l, ...patch } : l))
+    );
+  }, []);
+
   const clear = useCallback(() => {
     setLines([]);
     setLastMergedVariantId(null);
@@ -64,6 +93,7 @@ export function usePosCart(initial?: PosCartLine[]) {
     addOrMerge,
     setQty,
     removeLine,
+    updateLine,
     clear,
     replaceLines,
   };

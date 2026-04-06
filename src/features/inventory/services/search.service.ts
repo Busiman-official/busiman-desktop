@@ -62,6 +62,13 @@ class SearchService {
       params.append('dateTo', filters.dateTo);
     }
 
+    if (filters?.branchId) {
+      params.append('branchId', filters.branchId);
+    }
+    if (filters?.excludeMisc) {
+      params.append('excludeMisc', 'true');
+    }
+
     try {
       const response = await api.get(`/inventory/search?${params.toString()}`, {
         signal: this.abortController.signal,
