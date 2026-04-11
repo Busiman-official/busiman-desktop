@@ -14,6 +14,12 @@ export interface ModalProps {
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
+  /** When false, clicking the backdrop does not close (default true). */
+  closeOnOverlayClick?: boolean;
+  /** When false, Escape does not close (default true). */
+  closeOnEscape?: boolean;
+  /** When false, header close button is hidden (default true). */
+  showCloseButton?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -24,6 +30,9 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   size = 'md',
   className = '',
+  closeOnOverlayClick = true,
+  closeOnEscape = true,
+  showCloseButton = true,
 }) => {
   useEffect(() => {
     if (isOpen) {
@@ -38,6 +47,7 @@ export const Modal: React.FC<ModalProps> = ({
   }, [isOpen]);
 
   useEffect(() => {
+    if (!closeOnEscape) return;
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
         e.preventDefault();
@@ -48,12 +58,16 @@ export const Modal: React.FC<ModalProps> = ({
 
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, closeOnEscape]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose} role="presentation">
+    <div
+      className="modal-overlay"
+      onClick={closeOnOverlayClick ? onClose : undefined}
+      role="presentation"
+    >
       <div
         className={`modal modal--${size} ${className}`}
         onClick={(e) => e.stopPropagation()}
@@ -66,13 +80,15 @@ export const Modal: React.FC<ModalProps> = ({
             <h2 className="modal-title" id={titleId || 'modal-title'}>
               {title}
             </h2>
-            <button
-              className="modal-close"
-              onClick={onClose}
-              aria-label="Close modal"
-            >
-              ×
-            </button>
+            {showCloseButton ? (
+              <button
+                className="modal-close"
+                onClick={onClose}
+                aria-label="Close modal"
+              >
+                ×
+              </button>
+            ) : null}
           </div>
         )}
         <div className="modal-content">{children}</div>

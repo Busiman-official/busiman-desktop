@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { authStore } from '@/store/authStore';
 import { companyStore } from '@/store/companyStore';
 import { authService } from '@/services/auth.service';
@@ -17,6 +17,10 @@ import './LoginForm.css';
 
 export const LoginForm: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const companyWipeCompleted = Boolean(
+    (location.state as { companyWipeCompleted?: boolean } | null)?.companyWipeCompleted
+  );
   const login = authStore((state) => state.login);
   const { company } = companyStore();
 
@@ -90,6 +94,11 @@ export const LoginForm: React.FC = () => {
         <div className="login-header">
           <h1>{company?.displayName || 'Busiman Desktop'}</h1>
           <p>Sign in to your account</p>
+          {companyWipeCompleted ? (
+            <p className="login-wipe-notice" role="status">
+              Company data was reset. Use the new administrator email and password you saved.
+            </p>
+          ) : null}
         </div>
 
         <Form onSubmit={handleSubmit} className="login-form">

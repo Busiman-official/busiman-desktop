@@ -34,6 +34,16 @@
   color: var(--color-text-secondary);
 }
 
+.login-wipe-notice {
+  margin-top: var(--spacing-md) !important;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-warning-bg, rgba(234, 179, 8, 0.15));
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small, 13px);
+  text-align: left;
+}
+
 .login-form {
   display: flex;
   flex-direction: column;

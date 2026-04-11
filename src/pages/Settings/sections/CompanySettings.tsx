@@ -4,13 +4,16 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { companyStore } from '@/store/companyStore';
+import { authStore } from '@/store/authStore';
 import { CompanyProfile, companyService, UpdateCompanyRequest } from '@/services/company.service';
 import { branchService } from '@/services/branch.service';
 import { Branch, CreateBranchRequest, UpdateBranchRequest } from '@/types';
 import { employeeService } from '@/services/employee.service';
 import { User, UserRole } from '@/types';
 import { logger } from '@/shared/utils/logger';
+import { Modal } from '@/shared/components/modals/Modal';
 
 const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'hr', 'finance', 'sales'];
 import './CompanySettings.css';
@@ -18,6 +21,7 @@ import './CompanySettings.css';
 type CompanySettingsTab = 'details' | 'branches';
 
 export const CompanySettings: React.FC = () => {
+  const navigate = useNavigate();
   const { company, isLoading, error, setCompany, loadCompany } = companyStore();
   const [activeTab, setActiveTab] = useState<CompanySettingsTab>('details');
 
@@ -45,6 +49,17 @@ export const CompanySettings: React.FC = () => {
   });
   const [managers, setManagers] = useState<User[]>([]);
   const [customDepartment, setCustomDepartment] = useState('');
+
+  const [wipeWarnOpen, setWipeWarnOpen] = useState(false);
+  const [wipeConfirmOpen, setWipeConfirmOpen] = useState(false);
+  const [wipeCreds, setWipeCreds] = useState<{ adminEmail: string; adminPassword: string } | null>(null);
+  const [wipeUnderstand, setWipeUnderstand] = useState(false);
+  const [wipeDisplayNameInput, setWipeDisplayNameInput] = useState('');
+  const [wipePassword, setWipePassword] = useState('');
+  const [wipeBusy, setWipeBusy] = useState(false);
+  const [wipeError, setWipeError] = useState<string | null>(null);
+
+  const expectedCompanyDisplayName = (company?.displayName || 'Busiman').trim();
 
   useEffect(() => {
     if (!company && !isLoading) {
@@ -280,6 +295,43 @@ export const CompanySettings: React.FC = () => {
     }
   };
 
+  const openWipeFlow = () => {
+    setWipeError(null);
+    setWipeUnderstand(false);
+    setWipeDisplayNameInput('');
+    setWipePassword('');
+    setWipeWarnOpen(true);
+  };
+
+  const executeCompanyWipe = async () => {
+    setWipeError(null);
+    if (wipeDisplayNameInput.trim() !== expectedCompanyDisplayName) {
+      setWipeError(`Type the exact display name: "${expectedCompanyDisplayName}"`);
+      return;
+    }
+    setWipeBusy(true);
+    try {
+      const data = await companyService.wipeCompanyData({
+        confirmationDisplayName: wipeDisplayNameInput.trim(),
+        currentPassword: wipePassword.trim() || undefined,
+      });
+      setWipeConfirmOpen(false);
+      setWipeCreds({ adminEmail: data.adminEmail, adminPassword: data.adminPassword });
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: { message?: string } }; message?: string };
+      setWipeError(ax?.response?.data?.message || ax?.message || 'Operation failed');
+    } finally {
+      setWipeBusy(false);
+    }
+  };
+
+  const finishWipeLogout = async () => {
+    setWipeCreds(null);
+    companyStore.getState().setCompany({ displayName: 'Busiman', logoUrl: null });
+    await authStore.getState().logout();
+    navigate('/login', { replace: true, state: { companyWipeCompleted: true } });
+  };
+
   if (isLoading && !company) {
     return <div className="settings-section-loading">Loading company details...</div>;
   }
@@ -507,6 +559,22 @@ export const CompanySettings: React.FC = () => {
         </div>
       </div>
 
+      <div className="settings-card company-settings-danger">
+        <div className="settings-card-header">
+          <h3>Danger zone</h3>
+        </div>
+        <div className="settings-card-content">
+          <p className="company-settings-danger__text">
+            Permanently delete all data for this deployment: database, sessions, sales, inventory, HR, and linked
+            cloud files where applicable. This cannot be undone. Off-site backups, if any, are not removed—see your
+            backup policy.
+          </p>
+          <button type="button" className="btn-danger" onClick={openWipeFlow} disabled={saving || wipeBusy}>
+            Delete all company data…
+          </button>
+        </div>
+      </div>
+
       <div className="form-actions">
         <button
           className="btn-primary"
@@ -709,9 +777,9 @@ export const CompanySettings: React.FC = () => {
                             Add
                           </button>
                         </div>
-                        {branchForm.departments?.filter((d) => !STANDARD_DEPARTMENTS.includes(d)).length > 0 && (
+                        {(branchForm.departments?.filter((d) => !STANDARD_DEPARTMENTS.includes(d)).length ?? 0) > 0 && (
                           <div className="custom-departments-list">
-                            {branchForm.departments
+                            {(branchForm.departments ?? [])
                               .filter((d) => !STANDARD_DEPARTMENTS.includes(d))
                               .map((dept) => (
                                 <span key={dept} className="department-tag">
@@ -752,6 +820,165 @@ export const CompanySettings: React.FC = () => {
           )}
         </div>
       )}
+
+      <Modal
+        isOpen={wipeWarnOpen}
+        onClose={() => {
+          setWipeWarnOpen(false);
+          setWipeUnderstand(false);
+        }}
+        title="Delete all company data?"
+        size="md"
+      >
+        <p>
+          You will lose every record in this system. A new administrator account will be created; you must copy the
+          password immediately—it is shown only once.
+        </p>
+        <label className="company-settings-wipe-check">
+          <input
+            type="checkbox"
+            checked={wipeUnderstand}
+            onChange={(e) => setWipeUnderstand(e.target.checked)}
+          />
+          I understand this is irreversible and that backups outside this app may still exist.
+        </label>
+        <div className="form-actions" style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!wipeUnderstand}
+            onClick={() => {
+              setWipeWarnOpen(false);
+              setWipeConfirmOpen(true);
+              setWipeError(null);
+            }}
+          >
+            Continue
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setWipeWarnOpen(false);
+              setWipeUnderstand(false);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={wipeConfirmOpen}
+        onClose={() => {
+          if (!wipeBusy) {
+            setWipeConfirmOpen(false);
+            setWipeDisplayNameInput('');
+            setWipePassword('');
+            setWipeError(null);
+          }
+        }}
+        title="Confirm permanent deletion"
+        size="md"
+      >
+        <p>
+          Type the company <strong>display name</strong> exactly as shown in Basic Information:{' '}
+          <strong>{expectedCompanyDisplayName}</strong>
+        </p>
+        <div className="form-group">
+          <label>Display name</label>
+          <input
+            type="text"
+            className="form-input"
+            value={wipeDisplayNameInput}
+            onChange={(e) => setWipeDisplayNameInput(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+        <div className="form-group">
+          <label>Your current password (recommended)</label>
+          <input
+            type="password"
+            className="form-input"
+            value={wipePassword}
+            onChange={(e) => setWipePassword(e.target.value)}
+            autoComplete="current-password"
+            placeholder="Optional but strongly recommended"
+          />
+        </div>
+        {wipeError ? <div className="settings-error">{wipeError}</div> : null}
+        <p className="form-help">You will be logged out when the operation completes. Your session will no longer be valid.</p>
+        <div className="form-actions" style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn-danger"
+            disabled={wipeBusy}
+            onClick={() => void executeCompanyWipe()}
+          >
+            {wipeBusy ? 'Deleting…' : 'Delete everything'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={wipeBusy}
+            onClick={() => {
+              setWipeConfirmOpen(false);
+              setWipeDisplayNameInput('');
+              setWipePassword('');
+              setWipeError(null);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(wipeCreds)}
+        onClose={() => void finishWipeLogout()}
+        title="New administrator credentials"
+        size="md"
+        closeOnOverlayClick={false}
+        closeOnEscape={false}
+        showCloseButton={false}
+      >
+        {wipeCreds ? (
+          <>
+            <p>Copy these now. They will not be shown again. Then continue to log in.</p>
+            <div className="form-group">
+              <label>Email (login ID)</label>
+              <div className="company-settings-wipe-cred-row">
+                <input type="text" className="form-input" readOnly value={wipeCreds.adminEmail} />
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => void navigator.clipboard.writeText(wipeCreds.adminEmail)}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Password</label>
+              <div className="company-settings-wipe-cred-row">
+                <input type="text" className="form-input" readOnly value={wipeCreds.adminPassword} />
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => void navigator.clipboard.writeText(wipeCreds.adminPassword)}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div className="form-actions" style={{ marginTop: 16 }}>
+              <button type="button" className="btn-primary" onClick={() => void finishWipeLogout()}>
+                Continue to login
+              </button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
     </div>
   );
 };

@@ -75,6 +75,17 @@ class CompanyService {
     const response = await api.patch('/company', data);
     return extractApiData<CompanyProfile>(response);
   }
+
+  /**
+   * Irreversible: wipes entire server database and returns new admin credentials once.
+   */
+  async wipeCompanyData(body: {
+    confirmationDisplayName: string;
+    currentPassword?: string;
+  }): Promise<{ adminEmail: string; adminPassword: string; requestId: string }> {
+    const response = await api.post('/company/wipe', body);
+    return extractApiData<{ adminEmail: string; adminPassword: string; requestId: string }>(response);
+  }
 }
 
 export const companyService = new CompanyService();

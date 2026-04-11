@@ -4,6 +4,60 @@
   gap: 16px;
 }
 
+.company-settings-danger {
+  border: 1px solid var(--color-danger, #c62828);
+  background: var(--color-danger-bg, rgba(198, 40, 40, 0.06));
+}
+
+.company-settings-danger__text {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.company-settings-wipe-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.company-settings-wipe-check input {
+  margin-top: 3px;
+}
+
+.company-settings-wipe-cred-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.company-settings-wipe-cred-row .form-input {
+  flex: 1;
+}
+
+.company-settings .btn-danger {
+  background: var(--color-danger, #c62828);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.company-settings .btn-danger:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.company-settings .btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .logo-settings {
   display: flex;
   gap: 16px;
