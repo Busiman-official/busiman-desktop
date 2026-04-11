@@ -8,7 +8,7 @@ import { Badge, Button, Input, Select, Skeleton, Textarea } from '@/shared/compo
 import { EmptyState } from '@/shared/components/data-display';
 import { Modal } from '@/shared/components/modals/Modal';
 import { useSalesBranchId } from '@/features/sales/hooks/useSalesBranchId';
-import { docId, entityId } from '@/features/sales/utils/ids';
+import { docId, entityId, idStr } from '@/features/sales/utils/ids';
 import {
   salesService,
   type CustomerDetailPayload,
@@ -1542,11 +1542,20 @@ export const CustomerDetailsPage: React.FC = () => {
                                       setError(null);
                                       try {
                                         const { order } = await salesService.convertQuotation(qu._id, branchId);
+                                        if (!order) {
+                                          setError(
+                                            'No order was returned after conversion. If this was already converted, open it from History.'
+                                          );
+                                          return;
+                                        }
                                         const oid = entityId(order);
+                                        const sp =
+                                          idStr((order as { salesPointId?: unknown }).salesPointId) ||
+                                          (typeof qu.salesPointId === 'string' ? qu.salesPointId : '');
                                         goSales({
                                           tab: 'orders',
                                           customerId: customerId!,
-                                          salesPointId: qu.salesPointId,
+                                          ...(sp ? { salesPointId: sp } : {}),
                                           posLoadOrderId: oid,
                                         });
                                       } catch (e: unknown) {

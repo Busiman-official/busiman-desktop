@@ -113,9 +113,6 @@
   flex-shrink: 0;
 }
 
-.order-detail__col--right .order-detail__scroll {
-  max-height: calc(100vh - 220px);
-}
 
 .order-detail__card {
   background: #fff;

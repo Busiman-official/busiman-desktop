@@ -1,5 +1,18 @@
 import type { SalesQuotationLine } from '@/services/sales.service';
 
+/**
+ * POS/order API lines store `lineTotal` as exclusive taxable; customer-facing line amount with GST.
+ */
+export function orderLineGrossWithGst(ln: {
+  lineTotal?: number;
+  posGstRatePercent?: number;
+}): number {
+  const taxable = Number(ln.lineTotal ?? 0);
+  const tr = ln.posGstRatePercent;
+  const r = tr != null && Number.isFinite(tr) && tr >= 0 ? Math.max(0, tr) / 100 : 0;
+  return Math.round(taxable * (1 + r) * 100) / 100;
+}
+
 /** Line total with GST for UI/PDF when `lineTotal` is stored as exclusive taxable (new quotations). */
 export function quotationLineGrossInr(
   ln: Pick<SalesQuotationLine, 'lineTotal' | 'taxRatePercent' | 'priceIncludesGst'>

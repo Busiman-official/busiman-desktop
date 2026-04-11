@@ -79,6 +79,51 @@ export const QuotationPdfViewerScreen: React.FC<QuotationPdfViewerScreenProps> =
     };
   }, []);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onBack();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [onBack]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    let detachInner: (() => void) | undefined;
+    const attachInner = () => {
+      detachInner?.();
+      detachInner = undefined;
+      try {
+        const w = iframe.contentWindow;
+        if (!w) return;
+        const onInnerKeyDown = (e: KeyboardEvent) => {
+          if (e.key !== 'Escape') return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          onBack();
+        };
+        w.addEventListener('keydown', onInnerKeyDown, true);
+        detachInner = () => w.removeEventListener('keydown', onInnerKeyDown, true);
+      } catch {
+        /* cross-origin PDF viewer — parent window handler still applies when focus leaves iframe */
+      }
+    };
+    iframe.addEventListener('load', attachInner);
+    try {
+      if (iframe.contentDocument?.readyState === 'complete') attachInner();
+    } catch {
+      /* cross-origin */
+    }
+    return () => {
+      iframe.removeEventListener('load', attachInner);
+      detachInner?.();
+    };
+  }, [onBack, pdfBlobUrl]);
+
   const onPrint = useCallback(() => {
     const win = iframeRef.current?.contentWindow;
     if (win) {

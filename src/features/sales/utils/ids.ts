@@ -15,3 +15,11 @@ export function entityId(row: unknown): string {
   if (typeof v === 'string') return v;
   return String(v);
 }
+
+/** API fields that may be an id string or a populated `{ _id }` ref. */
+export function idStr(v: unknown): string {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object' && v !== null && '_id' in (v as object)) return String((v as { _id?: unknown })._id);
+  return String(v);
+}

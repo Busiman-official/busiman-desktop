@@ -14,7 +14,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import type { SelectOption } from '@/shared/components/ui';
 import { salesService } from '@/services/sales.service';
 import { mapOrderLinesForCreateApi } from '../../utils/mapLinesForCreateOrder';
-import { docId, entityId } from '../../utils/ids';
+import { docId, entityId, idStr } from '../../utils/ids';
 import './SalesHistoryPanel.css';
 
 type StatusFilter = 'all' | 'completed' | 'draft' | 'cancelled';
@@ -102,6 +102,11 @@ function isQuotationOrderRow(row: Record<string, unknown>): boolean {
   const mode = String(row.mode || '').toLowerCase();
   const status = String(row.status || '').toLowerCase();
   return mode === 'b2b' && status === 'draft';
+}
+
+/** Completed sale with amount still on customer account — use Return, not Refund. */
+function isPendingPaymentRow(row: Record<string, unknown>): boolean {
+  return String(row.status || '') === 'completed' && Boolean(row.paymentPending);
 }
 
 function statusPill(row: Record<string, unknown>): { label: string; cls: string } {
@@ -356,6 +361,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
         goDownloadInvoice: noop,
         quotationRow: false,
         completedRow: false,
+        pendingPaymentRow: false,
         hasCustomer: false,
       };
     }
@@ -536,27 +542,39 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           } catch {
             /* new order already created */
           }
+          const cre = order as { customerId?: unknown; salesPointId?: unknown } | null | undefined;
           const oid = entityId(order);
+          const custOut = idStr(cre?.customerId) || cust;
+          const spOut = idStr(cre?.salesPointId) || sp;
           const p = new URLSearchParams(searchParams);
           p.set('tab', 'orders');
-          p.set('customerId', cust);
-          if (sp) p.set('salesPointId', sp);
+          if (custOut) p.set('customerId', custOut);
+          if (spOut) p.set('salesPointId', spOut);
           if (oid) p.set('posLoadOrderId', oid);
           navigate({ pathname: '/sales', search: `?${p.toString()}` });
           load();
           return;
         }
         const { order } = await salesService.convertQuotation(q._id, branchId);
+        if (!order) {
+          window.alert(
+            'No order was returned after conversion. If this quotation was already converted, open the order from History.'
+          );
+          return;
+        }
+        const ord = order as { customerId?: unknown; salesPointId?: unknown };
         const oid = entityId(order);
         const p = new URLSearchParams(searchParams);
         p.set('tab', 'orders');
-        const cid = customerIdFromRow(row);
+        const cid = idStr(ord.customerId) || customerIdFromRow(row);
         if (cid) p.set('customerId', cid);
-        const sp = String(
-          row.salesPointId && typeof row.salesPointId === 'object' && (row.salesPointId as { _id?: unknown })._id
-            ? (row.salesPointId as { _id?: unknown })._id
-            : row.salesPointId ?? ''
-        );
+        const sp =
+          idStr(ord.salesPointId) ||
+          String(
+            row.salesPointId && typeof row.salesPointId === 'object' && (row.salesPointId as { _id?: unknown })._id
+              ? (row.salesPointId as { _id?: unknown })._id
+              : row.salesPointId ?? ''
+          );
         if (sp) p.set('salesPointId', sp);
         if (oid) p.set('posLoadOrderId', oid);
         navigate({ pathname: '/sales', search: `?${p.toString()}` });
@@ -579,6 +597,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       goDownloadInvoice,
       quotationRow: isQuotationOrderRow(row),
       completedRow: String(row.status || '') === 'completed',
+      pendingPaymentRow: isPendingPaymentRow(row),
       hasCustomer: Boolean(customerIdFromRow(row)),
     };
   };
@@ -1011,9 +1030,15 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                       <button type="button" role="menuitem" onClick={a.goView}>
                         View
                       </button>
-                      <button type="button" role="menuitem" onClick={a.goRefund}>
-                        Refund
-                      </button>
+                      {a.pendingPaymentRow ? (
+                        <button type="button" role="menuitem" onClick={a.goRefund}>
+                          Return
+                        </button>
+                      ) : (
+                        <button type="button" role="menuitem" onClick={a.goRefund}>
+                          Refund
+                        </button>
+                      )}
                       <button type="button" role="menuitem" onClick={a.goDownloadInvoice}>
                         Download invoice
                       </button>

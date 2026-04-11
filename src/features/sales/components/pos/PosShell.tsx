@@ -456,16 +456,21 @@ export const PosShell: React.FC<Props> = ({
     [addOrMerge, branchId, customerId, resolvePrice, salesPointId, settings?.taxRatePercent, showToast]
   );
 
+  /** Keeps cart hydration from re-running when settings/customer resolve updates `addLineFromMeta` identity. */
+  const addLineFromMetaRef = useRef(addLineFromMeta);
+  addLineFromMetaRef.current = addLineFromMeta;
+
   const posLoadOrderIdParam = searchParams.get('posLoadOrderId')?.trim() ?? '';
 
   useEffect(() => {
     if (!posLoadOrderIdParam || !branchId || !salesPointId) return;
+    const loadOrderId = posLoadOrderIdParam;
     let cancelled = false;
     (async () => {
       setPosHydrateOrderBusy(true);
       setCheckoutError(null);
       try {
-        const o = (await salesService.getOrder(posLoadOrderIdParam, branchId)) as {
+        const o = (await salesService.getOrder(loadOrderId, branchId)) as {
           lines?: Array<{
             variantId?: unknown;
             quantity?: number;
@@ -479,6 +484,7 @@ export const PosShell: React.FC<Props> = ({
         if (cancelled) return;
         clear();
         for (const ln of o.lines || []) {
+          if (cancelled) return;
           const vid =
             typeof ln.variantId === 'string'
               ? ln.variantId
@@ -487,10 +493,11 @@ export const PosShell: React.FC<Props> = ({
                 : String(ln.variantId ?? '');
           if (!vid) continue;
           const meta = await resolveVariantIdForPos(vid);
+          if (cancelled) return;
           if (!meta) continue;
           const qty = Math.max(0, Number(ln.quantity ?? 0));
           if (qty <= 0) continue;
-          await addLineFromMeta(meta, qty, {
+          await addLineFromMetaRef.current(meta, qty, {
             quiet: true,
             unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
             notes: typeof ln.posLineNotes === 'string' ? ln.posLineNotes : undefined,
@@ -513,7 +520,9 @@ export const PosShell: React.FC<Props> = ({
           setSearchParams(
             (prev) => {
               const p = new URLSearchParams(prev);
-              p.delete('posLoadOrderId');
+              if (p.get('posLoadOrderId')?.trim() === loadOrderId) {
+                p.delete('posLoadOrderId');
+              }
               return p;
             },
             { replace: true }
@@ -524,7 +533,7 @@ export const PosShell: React.FC<Props> = ({
     return () => {
       cancelled = true;
     };
-  }, [posLoadOrderIdParam, branchId, salesPointId, addLineFromMeta, clear, setSearchParams, showToast]);
+  }, [posLoadOrderIdParam, branchId, salesPointId, clear, setSearchParams, showToast]);
 
   const handleActivateProduct = useCallback(
     async (item: InventoryItem, variants: InventoryVariant[]) => {

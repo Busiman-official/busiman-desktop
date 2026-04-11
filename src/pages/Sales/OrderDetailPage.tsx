@@ -3,17 +3,24 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useMatch, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Textarea } from '@/shared/components/ui';
+import { QuotationPdfViewerScreen } from '@/features/sales/components/panels/QuotationPdfViewerScreen';
+import type { QuotationShareLinkState } from '@/features/sales/components/panels/QuotationShareModal';
+import { extractErrorMessage } from '@/utils/error';
 import { Branch } from '@/types';
 import { useSalesBranchId } from '@/features/sales/hooks/useSalesBranchId';
-import { docId } from '@/features/sales/utils/ids';
+import { docId, entityId } from '@/features/sales/utils/ids';
 import {
   salesService,
   type CustomerDetailPayload,
   type SalesQuotation,
 } from '@/services/sales.service';
-import { mapOrderLinesForCreateApi } from '@/features/sales/utils/mapLinesForCreateOrder';
+import {
+  mapOrderLinesForCreateApi,
+  orderLineGrossWithGst,
+} from '@/features/sales/utils/mapLinesForCreateOrder';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import './OrderDetailPage.css';
 
@@ -29,6 +36,7 @@ type OrderLine = {
   posGstRatePercent?: number;
   posLineNotes?: string;
   posHsn?: string;
+  posGstInclusive?: boolean;
 };
 
 type OrderDoc = {
@@ -36,6 +44,7 @@ type OrderDoc = {
   orderNumber?: string;
   status?: string;
   mode?: string;
+  /** When true with completed, sale is on account (matches history “On account”). */
   paymentPending?: boolean;
   /** Remaining on-account amount; when missing, treat as full order total. */
   paymentPendingAmount?: number;
@@ -81,10 +90,23 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
   const [searchParams] = useSearchParams();
   const branchId = useSalesBranchId();
   const [orderCustomerId, setOrderCustomerId] = useState<string | null>(null);
+  const [orderSnap, setOrderSnap] = useState<OrderDoc | null>(null);
+  const [convertBusy, setConvertBusy] = useState(false);
+  const [quotationViewer, setQuotationViewer] = useState<{
+    quotation: SalesQuotation;
+    customerName: string;
+    customerPhone?: string;
+    shareLink: QuotationShareLinkState;
+    pdfBlobUrl: string;
+    pdfBlob: Blob;
+  } | null>(null);
+  const [printQuotationBusy, setPrintQuotationBusy] = useState(false);
+  const quotationPdfUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!branchId || !orderId) {
       setOrderCustomerId(null);
+      setOrderSnap(null);
       return;
     }
     let cancelled = false;
@@ -92,44 +114,237 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
       .getOrder(orderId, branchId)
       .then((o) => {
         if (cancelled) return;
-        const cust = (o as OrderDoc).customerId;
+        const od = o as OrderDoc;
+        setOrderSnap(od);
+        const cust = od.customerId;
         setOrderCustomerId(cust ? idStr(cust) : null);
       })
       .catch(() => {
-        if (!cancelled) setOrderCustomerId(null);
+        if (!cancelled) {
+          setOrderCustomerId(null);
+          setOrderSnap(null);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [orderId, branchId]);
 
-  const duplicate = async () => {
-    if (!branchId) return;
-    try {
-      const o = (await salesService.getOrder(orderId, branchId)) as OrderDoc & {
-        lines?: OrderLine[];
-      };
-      const lines = mapOrderLinesForCreateApi(o.lines || []);
-      const sp = idStr(o.salesPointId);
-      const cust = o.customerId ? idStr(o.customerId) : undefined;
-      await salesService.createOrder(
-        { mode: o.mode === 'b2b' ? 'b2b' : 'pos', salesPointId: sp, customerId: cust, lines },
-        branchId
-      );
-      navigate({ pathname: '/sales', search: `?${new URLSearchParams({ ...Object.fromEntries(searchParams), tab: 'history' }).toString()}` });
-    } catch {
-      /* ignore */
+  useEffect(() => {
+    return () => {
+      if (quotationPdfUrlRef.current) {
+        URL.revokeObjectURL(quotationPdfUrlRef.current);
+        quotationPdfUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  const closeQuotationPdfViewer = useCallback(() => {
+    setQuotationViewer(null);
+    if (quotationPdfUrlRef.current) {
+      URL.revokeObjectURL(quotationPdfUrlRef.current);
+      quotationPdfUrlRef.current = null;
     }
-  };
+  }, []);
+
+  const openPrintQuotationViewer = useCallback(async () => {
+    if (!branchId || !orderId) return;
+    setPrintQuotationBusy(true);
+    try {
+      const list = await salesService.listOrderQuotations(orderId, branchId);
+      const sorted = [...(list || [])].sort(
+        (a, b) =>
+          new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime()
+      );
+      const qOpen = sorted.find(
+        (x) =>
+          x.status !== 'converted' &&
+          x.status !== 'cancelled' &&
+          x.status !== 'rejected' &&
+          x.status !== 'expired'
+      );
+
+      let blob: Blob;
+      let quotation: SalesQuotation;
+      let shareLink: QuotationShareLinkState = { loading: false, error: null, data: null };
+
+      if (qOpen?._id) {
+        quotation = qOpen;
+        blob = await salesService.downloadQuotationPdfBlob(qOpen._id, branchId);
+        try {
+          const data = await salesService.getQuotationShareLink(qOpen._id, branchId);
+          shareLink = { loading: false, error: null, data };
+        } catch {
+          shareLink = { loading: false, error: null, data: null };
+        }
+      } else {
+        if (!orderSnap) {
+          window.alert('Order could not be loaded. Try again in a moment.');
+          return;
+        }
+        blob = await salesService.previewQuotationPdfBlob({ orderId }, branchId);
+        const o = orderSnap;
+        quotation = {
+          _id: 'preview',
+          quoteNumber: String(o.orderNumber ?? 'Draft'),
+          sourceOrderId: orderId,
+          customerId: orderCustomerId ?? undefined,
+          salesPointId: idStr(o.salesPointId) || '',
+          currency: 'INR',
+          status: 'draft',
+          lines: [],
+          subtotal: Number(o.subtotal ?? 0),
+          discountAmount: Number(o.discountAmount ?? 0),
+          taxAmount: Number(o.taxAmount ?? 0),
+          deliveryAmount: 0,
+          total: Number(o.total ?? 0),
+        };
+      }
+
+      const cid =
+        (qOpen?.customerId && String(qOpen.customerId)) ||
+        orderCustomerId ||
+        (orderSnap?.customerId ? idStr(orderSnap.customerId) : '');
+      let customerName = 'Customer';
+      let customerPhone: string | undefined;
+      if (cid && branchId) {
+        try {
+          const c = await salesService.getCustomer(cid, branchId);
+          customerName = c.name?.trim() || customerName;
+          customerPhone = c.phone?.trim() || undefined;
+        } catch {
+          /* keep defaults */
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      if (quotationPdfUrlRef.current) {
+        URL.revokeObjectURL(quotationPdfUrlRef.current);
+      }
+      quotationPdfUrlRef.current = url;
+
+      setQuotationViewer({
+        quotation,
+        customerName,
+        customerPhone,
+        shareLink,
+        pdfBlobUrl: url,
+        pdfBlob: blob,
+      });
+    } catch (e: unknown) {
+      window.alert(extractErrorMessage(e, 'Could not open quotation PDF'));
+    } finally {
+      setPrintQuotationBusy(false);
+    }
+  }, [branchId, orderId, orderCustomerId, orderSnap]);
+
+  const isQuotationDraft = orderSnap?.mode === 'b2b' && orderSnap?.status === 'draft';
+  const isPendingPayment =
+    orderSnap?.status === 'completed' && Boolean((orderSnap as OrderDoc).paymentPending);
 
   const printReceipt = () => window.print();
 
 
-  const refund = () => {
+  const goToReturnsForOrder = () => {
     const p = new URLSearchParams(searchParams);
     p.set('tab', 'returns');
     p.set('returnOrderId', orderId);
     navigate({ pathname: '/sales', search: `?${p.toString()}` });
+  };
+
+  const convertQuotationToOrder = async () => {
+    if (!branchId || !orderId) return;
+    setConvertBusy(true);
+    try {
+      const list = await salesService.listOrderQuotations(orderId, branchId);
+      const sorted = [...(list || [])].sort(
+        (a, b) =>
+          new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime()
+      );
+      const q = sorted.find(
+        (x) =>
+          x.status !== 'converted' &&
+          x.status !== 'cancelled' &&
+          x.status !== 'rejected' &&
+          x.status !== 'expired'
+      );
+      if (!q?._id) {
+        const o = (await salesService.getOrder(orderId, branchId)) as OrderDoc & {
+          lines?: OrderLine[];
+          discountAmount?: number;
+        };
+        if (String(o.mode) !== 'b2b' || String(o.status) !== 'draft') {
+          window.alert('No open quotation linked to this order. Create a quotation from the order first.');
+          return;
+        }
+        const lines = mapOrderLinesForCreateApi(o.lines || []);
+        if (!lines.length) {
+          window.alert('This draft has no line items to convert.');
+          return;
+        }
+        const sp = idStr(o.salesPointId);
+        const cust =
+          (o.customerId
+            ? String(
+              typeof o.customerId === 'object' && (o.customerId as { _id?: unknown })._id
+                ? (o.customerId as { _id?: unknown })._id
+                : o.customerId
+            )
+            : '') || orderCustomerId;
+        if (!cust) {
+          window.alert('Assign a customer on this draft before converting.');
+          return;
+        }
+        const disc = Number(o.discountAmount ?? 0);
+        const { order } = await salesService.createOrder(
+          {
+            mode: 'b2b',
+            salesPointId: sp,
+            customerId: cust,
+            lines,
+            ...(disc > 0 ? { discountAmount: disc } : {}),
+          },
+          branchId
+        );
+        try {
+          await salesService.deleteDraftOrder(orderId, branchId);
+        } catch {
+          /* new order already created */
+        }
+        const cre = order as { customerId?: unknown; salesPointId?: unknown } | null | undefined;
+        const oid = entityId(order);
+        const custOut = idStr(cre?.customerId) || cust;
+        const spOut = idStr(cre?.salesPointId) || sp;
+        const p = new URLSearchParams(searchParams);
+        p.set('tab', 'orders');
+        if (custOut) p.set('customerId', custOut);
+        if (spOut) p.set('salesPointId', spOut);
+        if (oid) p.set('posLoadOrderId', oid);
+        navigate({ pathname: '/sales', search: `?${p.toString()}` });
+        return;
+      }
+      const { order } = await salesService.convertQuotation(q._id, branchId);
+      if (!order) {
+        window.alert(
+          'No order was returned after conversion. If this quotation was already converted, open the order from History.'
+        );
+        return;
+      }
+      const ord = order as { customerId?: unknown; salesPointId?: unknown };
+      const oid = entityId(order);
+      const p = new URLSearchParams(searchParams);
+      p.set('tab', 'orders');
+      const cid = idStr(ord.customerId) || orderCustomerId;
+      if (cid) p.set('customerId', cid);
+      const sp = idStr(ord.salesPointId) || (orderSnap ? idStr(orderSnap.salesPointId) : '');
+      if (sp) p.set('salesPointId', sp);
+      if (oid) p.set('posLoadOrderId', oid);
+      navigate({ pathname: '/sales', search: `?${p.toString()}` });
+    } catch (e: unknown) {
+      window.alert(e instanceof Error ? e.message : 'Convert failed');
+    } finally {
+      setConvertBusy(false);
+    }
   };
 
   const newOrder = () => {
@@ -142,15 +357,60 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
 
   return (
     <>
-      <Button type="button" variant="secondary" onClick={printReceipt}>
-        Print receipt
-      </Button>
-      <Button type="button" variant="secondary" className="od-header-btn-refund" onClick={refund}>
-        Refund
-      </Button>
-      <Button type="button" variant="primary" onClick={newOrder}>
-        New order
-      </Button>
+      {isQuotationDraft && (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={printQuotationBusy}
+          onClick={() => void openPrintQuotationViewer()}
+        >
+          {printQuotationBusy ? 'Opening…' : 'Print Quotation'}
+        </Button>
+      )}
+      {!isQuotationDraft && (
+        <Button type="button" variant="secondary" onClick={printReceipt}>
+          Print Receipt
+        </Button>
+      )}
+
+      {isQuotationDraft ? (
+        <Button
+          type="button"
+          variant="primary"
+          disabled={convertBusy}
+          onClick={() => void convertQuotationToOrder()}
+        >
+          {convertBusy ? 'Converting…' : 'Convert to order'}
+        </Button>
+      ) : isPendingPayment ? (
+        <Button type="button" variant="secondary" className="od-header-btn-refund" onClick={goToReturnsForOrder}>
+          Return
+        </Button>
+      ) : (
+        <Button type="button" variant="secondary" className="od-header-btn-refund" onClick={goToReturnsForOrder}>
+          Refund
+        </Button>
+      )}
+      {isQuotationDraft ? null : (
+        <Button type="button" variant="primary" onClick={newOrder}>
+          New order
+        </Button>
+      )}
+
+      {quotationViewer
+        ? createPortal(
+            <QuotationPdfViewerScreen
+              quotation={quotationViewer.quotation}
+              customerName={quotationViewer.customerName}
+              customerPhone={quotationViewer.customerPhone}
+              shareLink={quotationViewer.shareLink}
+              pdfBlobUrl={quotationViewer.pdfBlobUrl}
+              pdfBlob={quotationViewer.pdfBlob}
+              onBack={closeQuotationPdfViewer}
+            />,
+            document.body
+          )
+        : null}
     </>
   );
 }
@@ -299,10 +559,10 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const amountOwingOnAccount =
     paymentPendingFlag && order?.status === 'completed'
       ? (() => {
-          const pa = (order as OrderDoc).paymentPendingAmount;
-          if (pa != null && Number.isFinite(Number(pa))) return Number(pa);
-          return Number(order?.total ?? 0);
-        })()
+        const pa = (order as OrderDoc).paymentPendingAmount;
+        if (pa != null && Number.isFinite(Number(pa))) return Number(pa);
+        return Number(order?.total ?? 0);
+      })()
       : 0;
   const paymentPaid = order?.status === 'completed' && !paymentPendingFlag;
   const paymentLabel =
@@ -405,6 +665,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
         date: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '',
         mode: String(r.mode || ''),
         status: String(r.status || ''),
+        totalInclGst: Number(r.total ?? 0),
       }));
   }, [customerDetail?.orders, orderId]);
 
@@ -462,11 +723,14 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
           {formatInr(total)}). Record payment in Customers → Payments.
         </div>
       ) : null}
-      <div className="order-detail__summary">
+      {/* <div className="order-detail__summary">
         <div className="order-detail__summary-cell">
-          <div className="order-detail__summary-label">Order total</div>
+          <div className="order-detail__summary-label">Order total (incl. GST)</div>
           <div className="order-detail__summary-value order-detail__summary-value--blue">{formatInr(total)}</div>
-          <div className="order-detail__summary-sub">Delivery {formatInr(deliveryAmount)}</div>
+          <div className="order-detail__summary-sub">
+            {tax > 0 ? `GST included: ${formatInr(tax)}` : 'No GST on this order'}
+            {deliveryAmount > 0 ? ` · Delivery ${formatInr(deliveryAmount)}` : ''}
+          </div>
         </div>
         <div className="order-detail__summary-cell">
           <div className="order-detail__summary-label">Payment status</div>
@@ -508,7 +772,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
             <div className="order-detail__summary-sub">Linked for checkout, hold, and resume</div>
           </div>
         ) : null}
-      </div>
+      </div> */}
 
       <div className="order-detail__main">
         <div className="order-detail__col order-detail__col--left">
@@ -533,12 +797,13 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                     <th>Qty</th>
                     <th>Unit</th>
                     <th>Discount</th>
-                    <th style={{ textAlign: 'right' }}>Total</th>
+                    <th style={{ textAlign: 'right' }}>Total (incl. GST)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lineItems.map((ln, idx) => {
                     const lt = Number(ln.lineTotal ?? 0);
+                    const lineGross = orderLineGrossWithGst(ln);
                     const qty = Number(ln.quantity ?? 0);
                     const unit = Number(ln.unitPrice ?? 0);
                     const listU =
@@ -565,7 +830,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                         <td style={{ color: lineDisc > 0 ? '#16a34a' : '#94a3b8' }}>
                           {lineDisc > 0 ? `−${formatInr(lineDisc)}` : '—'}
                         </td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatInr(lt)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatInr(lineGross)}</td>
                       </tr>
                     );
                   })}
@@ -573,7 +838,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
               </table>
               <div className="order-detail__totals">
                 <div className="order-detail__totals-row">
-                  <span>Subtotal</span>
+                  <span>Taxable amount (excl. GST)</span>
                   <span>{formatInr(subtotal)}</span>
                 </div>
                 <div className="order-detail__totals-row">
@@ -585,11 +850,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                   <span>−{formatInr(discount)}</span>
                 </div>
                 <div className="order-detail__totals-row">
-                  <span>Tax</span>
+                  <span>GST</span>
                   <span>{formatInr(tax)}</span>
                 </div>
                 <div className="order-detail__totals-row order-detail__totals-row--total">
-                  <span>Total</span>
+                  <span>Total (incl. GST)</span>
                   <span>{formatInr(total)}</span>
                 </div>
               </div>
@@ -787,12 +1052,18 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                   <span style={{ fontWeight: 600 }}>{paymentPaid ? 'POS / recorded' : '—'}</span>
                 </div>
                 <div className="order-detail__doc-row">
-                  <span>Amount</span>
+                  <span>Amount (incl. GST)</span>
                   <span style={{ fontWeight: 600, color: paymentPaid ? '#16a34a' : '#0f172a' }}>{formatInr(total)}</span>
                 </div>
                 <div className="order-detail__doc-row">
                   <span>Outstanding</span>
-                  <span style={{ fontWeight: 600 }}>{paymentPaid ? formatInr(0) : formatInr(total)}</span>
+                  <span style={{ fontWeight: 600 }}>
+                    {paymentPaid
+                      ? formatInr(0)
+                      : paymentPendingFlag
+                        ? formatInr(amountOwingOnAccount)
+                        : formatInr(total)}
+                  </span>
                 </div>
                 <div className="order-detail__doc-row" style={{ borderBottom: 'none' }}>
                   <span>Last update</span>
@@ -858,13 +1129,12 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                       <div>
                         <div style={{ color: '#2563eb', fontWeight: 600 }}>{ro.num}</div>
                         <div className="order-detail__muted">
-                          {ro.date} · {ro.mode.toUpperCase()}
+                          {ro.date} · {ro.mode.toUpperCase()} · {formatInr(ro.totalInclGst)} incl. GST
                         </div>
                       </div>
                       <span
-                        className={`order-detail__pill ${
-                          ro.status === 'completed' ? 'order-detail__pill--ok' : 'order-detail__pill--draft'
-                        }`}
+                        className={`order-detail__pill ${ro.status === 'completed' ? 'order-detail__pill--ok' : 'order-detail__pill--draft'
+                          }`}
                       >
                         {ro.status}
                       </span>
