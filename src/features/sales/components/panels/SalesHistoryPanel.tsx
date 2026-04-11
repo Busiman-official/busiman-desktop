@@ -13,6 +13,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Input, Select } from '@/shared/components/ui';
 import type { SelectOption } from '@/shared/components/ui';
 import { salesService } from '@/services/sales.service';
+import { mapOrderLinesForCreateApi } from '../../utils/mapLinesForCreateOrder';
 import { docId, entityId } from '../../utils/ids';
 import './SalesHistoryPanel.css';
 
@@ -381,17 +382,9 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           mode?: string;
           salesPointId?: unknown;
           customerId?: unknown;
-          lines?: Array<{ variantId?: unknown; quantity?: number; unitPrice?: number }>;
+          lines?: unknown[];
         };
-        const lines = (o.lines || []).map((ln) => ({
-          variantId: String(
-            ln.variantId && typeof ln.variantId === 'object' && (ln.variantId as { _id?: unknown })._id
-              ? (ln.variantId as { _id?: unknown })._id
-              : ln.variantId
-          ),
-          quantity: Number(ln.quantity ?? 0),
-          unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
-        }));
+        const lines = mapOrderLinesForCreateApi(o.lines || []);
         const sp = String(
           o.salesPointId && typeof o.salesPointId === 'object' && (o.salesPointId as { _id?: unknown })._id
             ? (o.salesPointId as { _id?: unknown })._id
@@ -498,22 +491,14 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
             status?: string;
             salesPointId?: unknown;
             customerId?: unknown;
-            lines?: Array<{ variantId?: unknown; quantity?: number; unitPrice?: number }>;
+            lines?: unknown[];
             discountAmount?: number;
           };
           if (String(o.mode) !== 'b2b' || String(o.status) !== 'draft') {
             window.alert('No open quotation linked to this row. Open the order and create a quotation PDF first.');
             return;
           }
-          const lines = (o.lines || []).map((ln) => ({
-            variantId: String(
-              ln.variantId && typeof ln.variantId === 'object' && (ln.variantId as { _id?: unknown })._id
-                ? (ln.variantId as { _id?: unknown })._id
-                : ln.variantId
-            ),
-            quantity: Number(ln.quantity ?? 0),
-            unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
-          }));
+          const lines = mapOrderLinesForCreateApi(o.lines || []);
           if (!lines.length) {
             window.alert('This draft has no line items to convert.');
             return;

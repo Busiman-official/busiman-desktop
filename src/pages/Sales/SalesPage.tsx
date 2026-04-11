@@ -169,6 +169,23 @@ export const SalesPage: React.FC = () => {
     [searchParams, setSearchParams]
   );
 
+  const goToOrdersForSalesPoint = useCallback(
+    (id: string) => {
+      if (!id) return;
+      const p = new URLSearchParams(searchParams);
+      p.set('tab', 'orders');
+      p.set('salesPointId', id);
+      p.delete('customerId');
+      p.delete('posOrderForCustomer');
+      if (isCustomerDetail || isOrderDetail) {
+        navigate(`/sales?${p.toString()}`);
+      } else {
+        setSearchParams(p, { replace: true });
+      }
+    },
+    [isCustomerDetail, isOrderDetail, navigate, searchParams, setSearchParams]
+  );
+
   const setBranchQueryId = useCallback(
     (id: string) => {
       const p = new URLSearchParams(searchParams);
@@ -311,7 +328,11 @@ export const SalesPage: React.FC = () => {
         />
       )}
       {activeTab === 'salesPoints' && (
-        <SalesSalesPointsPanel ref={salesPointsPanelRef} branchId={branchId} />
+        <SalesSalesPointsPanel
+          ref={salesPointsPanelRef}
+          branchId={branchId}
+          onGoToOrdersForSalesPoint={goToOrdersForSalesPoint}
+        />
       )}
       {activeTab === 'history' && <SalesHistoryPanel ref={historyPanelRef} branchId={branchId} customers={customers} />}
       {activeTab === 'returns' && (

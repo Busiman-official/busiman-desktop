@@ -1,6 +1,44 @@
 import type { SalesSettingsData } from '@/services/sales.service';
+import type { PosCartLine } from './usePosCart';
+import { getLineTaxableNetAfterDiscount } from './posLineMath';
 
-/** Matches server `posCheckout` tax math: discount applied to line subtotal before tax. */
+/**
+ * POS cart totals: per-line GST rate and inclusive/exclusive (via taxable extraction) match line row
+ * and server `computePosOrderTotalsFromLines`. Order discount is spread across line tax bases, then GST
+ * is applied per line (same as server).
+ */
+export function computePosCartTotals(
+  lines: PosCartLine[],
+  branchTaxPercent: number,
+  discountAmount: number
+): {
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  total: number;
+} {
+  const taxablePerLine = lines.map((l) => getLineTaxableNetAfterDiscount(l, branchTaxPercent));
+  const ratePerLine = lines.map((l) => l.gstRatePercent ?? branchTaxPercent);
+  const taxableSubtotal = taxablePerLine.reduce((s, v) => s + v, 0);
+  const d = Math.min(Math.max(0, discountAmount), taxableSubtotal);
+  const factor = taxableSubtotal > 0 ? (taxableSubtotal - d) / taxableSubtotal : 0;
+  let taxAmount = 0;
+  let total = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const adj = taxablePerLine[i]! * factor;
+    const r = Math.max(0, ratePerLine[i] ?? 0) / 100;
+    taxAmount += Math.round(adj * r * 100) / 100;
+    total += Math.round(adj * (1 + r) * 100) / 100;
+  }
+  return {
+    subtotal: Math.round(taxableSubtotal * 100) / 100,
+    discountAmount: Math.round(d * 100) / 100,
+    taxAmount: Math.round(taxAmount * 100) / 100,
+    total: Math.round(total * 100) / 100,
+  };
+}
+
+/** @deprecated Prefer computePosCartTotals — branch-level taxInclusive no longer matches mixed per-line GST. */
 export function computePosTotals(
   lines: Array<{ quantity: number; unitPrice: number }>,
   settings: Pick<SalesSettingsData, 'taxRatePercent' | 'taxInclusive'>,

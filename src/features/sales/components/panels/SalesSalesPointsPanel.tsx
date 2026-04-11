@@ -10,6 +10,8 @@ import './SalesSalesPointsPanel.css';
 
 interface Props {
   branchId: string | null;
+  /** Opens Sales → Orders with this sales point selected in the header. */
+  onGoToOrdersForSalesPoint?: (salesPointId: string) => void;
 }
 
 export type SalesSalesPointsPanelHandle = {
@@ -106,7 +108,7 @@ function printerDisplay(key: string | undefined): string {
 }
 
 export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Props>(function SalesSalesPointsPanel(
-  { branchId },
+  { branchId, onGoToOrdersForSalesPoint },
   ref
 ) {
   const [points, setPoints] = useState<Record<string, unknown>[]>([]);
@@ -545,6 +547,18 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
                 <Button variant="secondary" disabled={busy} onClick={() => openEdit(p)}>
                   Edit
                 </Button>
+                {onGoToOrdersForSalesPoint && id && isActive ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => onGoToOrdersForSalesPoint(id)}
+                    title="Open Orders tab for this sales point"
+                    aria-label={`Open orders for ${String(p.name || 'sales point')}`}
+                  >
+                    Orders
+                  </Button>
+                ) : null}
                 {isActive ? (
                   <>
                     <Button

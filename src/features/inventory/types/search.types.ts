@@ -12,7 +12,7 @@ export interface SearchFilters {
   dateTo?: string;
   /** Align with Sales branch (admins). */
   branchId?: string | null;
-  /** Omit items marked misc (POS type-ahead). */
+  /** When true, omit items marked misc (opt-in; sales POS does not set this). */
   excludeMisc?: boolean;
 }
 

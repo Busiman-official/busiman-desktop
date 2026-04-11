@@ -1,0 +1,18 @@
+.sales-line-meta {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.45;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.sales-line-meta__sep {
+  color: #cbd5e1;
+  user-select: none;
+}
+
+.sales-line-meta__note {
+  display: inline-block;
+  max-width: 100%;
+  color: #475569;
+}

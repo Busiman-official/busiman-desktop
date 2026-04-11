@@ -882,3 +882,84 @@
   padding: 8px 10px;
   font-size: 12px;
 }
+
+.cd-quot-expand {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #2563eb;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cd-quot-expand:hover {
+  text-decoration: underline;
+}
+
+.cd-quot-expand__chev {
+  color: #64748b;
+  text-decoration: none;
+}
+
+.cd-quot-lines-row td {
+  padding: 0 !important;
+  vertical-align: top;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.cd-quot-lines {
+  padding: 12px 14px;
+  background: #f8fafc;
+}
+
+.cd-table.cd-table--nested {
+  margin: 0;
+  font-size: 13px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.cd-orders-tab-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cd-orders-tab-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.cd-orders-tab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cd-orders-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cd-mode-chip {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.cd-order-pay-open {
+  color: #64748b;
+  font-size: 13px;
+}

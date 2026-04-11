@@ -130,6 +130,11 @@ export interface SalesQuotationLine {
   discountAmount?: number;
   lineTotal: number;
   hsn?: string;
+  /** Per-line GST % snapshot (quotation PDF / POS). */
+  taxRatePercent?: number;
+  /** Matches POS: true = tag price includes GST. Omitted on older quotations. */
+  priceIncludesGst?: boolean;
+  lineNotes?: string;
   unitOfMeasure?: string;
 }
 
@@ -428,6 +433,7 @@ export const salesService = {
         posGstRatePercent?: number;
         posLineNotes?: string;
         posHsn?: string;
+        posGstInclusive?: boolean;
       }>;
       paymentMethodCode?: string;
       discountAmount?: number;
@@ -443,7 +449,17 @@ export const salesService = {
     body: {
       salesPointId: string;
       customerId?: string;
-      lines: Array<{ variantId: string; quantity: number; unitPrice?: number }>;
+      lines: Array<{
+        variantId: string;
+        quantity: number;
+        unitPrice?: number;
+        posListUnitPrice?: number;
+        posLineDiscountAmount?: number;
+        posGstRatePercent?: number;
+        posLineNotes?: string;
+        posHsn?: string;
+        posGstInclusive?: boolean;
+      }>;
       paymentMethodCode?: string;
       createInvoice?: boolean;
       discountAmount?: number;

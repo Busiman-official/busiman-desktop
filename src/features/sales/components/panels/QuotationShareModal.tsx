@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import type { SalesQuotation, QuotationShareLinkData } from '@/services/sales.service';
+import type { SalesQuotation, QuotationShareLinkData, SalesQuotationLine } from '@/services/sales.service';
+import { quotationLineGrossInr } from '@/features/sales/utils/mapLinesForCreateOrder';
+import { SalesLineMeta } from '../shared/SalesLineMeta';
 import './QuotationShareFlow.css';
 
 function formatInr(n: number) {
@@ -57,7 +59,7 @@ export interface QuotationShareModalProps {
   onSelectPrint: () => void;
 }
 
-export const QuotationShareModal: React.FC<QuotationShareModalProps> = ({
+export function QuotationShareModal({
   isOpen,
   quotation,
   customerName,
@@ -67,7 +69,7 @@ export const QuotationShareModal: React.FC<QuotationShareModalProps> = ({
   printLoading,
   onClose,
   onSelectPrint,
-}) => {
+}: QuotationShareModalProps) {
   const [copyDone, setCopyDone] = useState(false);
 
   useEffect(() => {
@@ -162,6 +164,49 @@ export const QuotationShareModal: React.FC<QuotationShareModalProps> = ({
             </div>
           </div>
 
+          {q.lines?.length ? (
+            <div className="qsf-lines" aria-label="Quotation line items">
+              <p className="qsf-lines__title">Line items</p>
+              <ul className="qsf-lines__list">
+                {q.lines.map((ln, i) => {
+                  const l = ln as SalesQuotationLine;
+                  const qty = Number(l.quantity ?? 0);
+                  const taxableLine = Number(l.lineTotal ?? 0);
+                  const eff =
+                    qty > 0 ? Math.round((taxableLine / qty) * 10000) / 10000 : l.unitPrice;
+                  const lineGross = quotationLineGrossInr(l);
+                  return (
+                    <li key={i} className="qsf-lines__item">
+                      <div className="qsf-lines__row">
+                        <span className="qsf-lines__name">
+                          {l.variantName || 'Item'}
+                          <span className="qsf-lines__code">{l.variantCode ? ` · ${l.variantCode}` : ''}</span>
+                        </span>
+                        <span className="qsf-lines__amt">
+                          {formatInr(lineGross)} × {qty}
+                        </span>
+                      </div>
+                      <SalesLineMeta
+                        line={
+                          {
+                            ...l,
+                            posListUnitPrice: l.unitPrice,
+                            unitPrice: eff,
+                            posGstInclusive: l.priceIncludesGst === false ? false : undefined,
+                            posGstRatePercent: l.taxRatePercent,
+                            posLineDiscountAmount: l.discountAmount,
+                            posLineNotes: l.lineNotes,
+                            posHsn: l.hsn,
+                          } as Record<string, unknown>
+                        }
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
           <p className="qsf-share-label">Share quotation</p>
           <div className="qsf-share-grid">
             <button type="button" className="qsf-share-tile" onClick={() => openExternal(waHref)}>
@@ -213,4 +258,4 @@ export const QuotationShareModal: React.FC<QuotationShareModalProps> = ({
       </div>
     </div>
   );
-};
+}

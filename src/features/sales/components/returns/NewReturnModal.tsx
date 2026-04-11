@@ -10,6 +10,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import { inventoryService, type Location } from '@/services/inventory.service';
 import { salesService, type CustomerDetailPayload } from '@/services/sales.service';
 import { entityId } from '../../utils/ids';
+import { SalesLineMeta } from '../shared/SalesLineMeta';
 import './NewReturnModal.css';
 
 const L = {
@@ -83,6 +84,11 @@ type OrderLine = {
   batchNumber?: string;
   sku?: string;
   barcode?: string;
+  posHsn?: string;
+  posLineNotes?: string;
+  posGstRatePercent?: number;
+  posLineDiscountAmount?: number;
+  posListUnitPrice?: number;
 };
 
 type OrderDoc = {
@@ -778,6 +784,7 @@ export const NewReturnModal: React.FC<NewReturnModalProps> = ({
                         <div>
                           <strong>{ln.variantName ?? 'Item'}</strong>
                           <span className="new-return-modal__code">{ln.variantCode ?? ''}</span>
+                          <SalesLineMeta line={ln as Record<string, unknown>} />
                         </div>
                         <div className="new-return-modal__line-grid">
                           <span>Ordered {ordQ}</span>

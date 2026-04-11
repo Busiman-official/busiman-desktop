@@ -14,7 +14,13 @@ import {
   type CustomerDetailPayload,
   type SalesCustomer,
   type SalesQuotation,
+  type SalesQuotationLine,
 } from '@/services/sales.service';
+import {
+  mapQuotationLinesForCreateApi,
+  quotationLineGrossInr,
+} from '@/features/sales/utils/mapLinesForCreateOrder';
+import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import { extractErrorMessage } from '@/utils/error';
 import { authStore } from '@/store/authStore';
 import './CustomerDetailsPage.css';
@@ -94,6 +100,27 @@ function isQuotationWorkflowDraftOrder(o: { mode?: string; status?: string }): b
   return String(o.mode || '').toLowerCase() === 'b2b' && String(o.status || '').toLowerCase() === 'draft';
 }
 
+type CustomerOrderRow = {
+  _id?: string;
+  orderNumber?: string;
+  status?: string;
+  mode?: string;
+  total?: number;
+  createdAt?: string;
+  paymentPending?: boolean;
+  paymentPendingAmount?: number;
+  lines?: Array<Record<string, unknown>>;
+};
+
+function orderStatusBadgeProps(st: string, paymentPending: boolean): { label: string; variant: 'success' | 'warning' | 'neutral' } {
+  if (st === 'completed' && !paymentPending) return { label: 'Completed', variant: 'success' };
+  if (st === 'completed' && paymentPending) return { label: 'On account', variant: 'warning' };
+  if (st === 'confirmed' || st === 'fulfilling') return { label: st, variant: 'warning' };
+  if (st === 'draft') return { label: 'Draft', variant: 'neutral' };
+  if (st === 'cancelled') return { label: 'Cancelled', variant: 'neutral' };
+  return { label: st || '—', variant: 'neutral' };
+}
+
 type PaymentLedgerFilter = 'all' | 'due' | 'completed';
 
 type PaymentOrderGroup = {
@@ -140,6 +167,9 @@ export const CustomerDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [convertingQuotationId, setConvertingQuotationId] = useState<string | null>(null);
+  const [expandedQuotationId, setExpandedQuotationId] = useState<string | null>(null);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [ordersTabFilter, setOrdersTabFilter] = useState<'all' | 'open' | 'completed'>('completed');
 
   const [tagInput, setTagInput] = useState('');
   const [tagBusy, setTagBusy] = useState(false);
@@ -248,21 +278,39 @@ export const CustomerDetailsPage: React.FC = () => {
 
   const returnRateHigh = (data?.summary?.returnRatePct ?? 0) > 15;
 
-  const completedOrdersOnly = useMemo(
-    () => (data?.orders || []).filter((o) => String((o as { status?: string }).status) === 'completed'),
+  const customerOrdersVisible = useMemo(
+    () =>
+      (data?.orders || []).filter((o) => {
+        if (String((o as { status?: string }).status) === 'cancelled') return false;
+        if (isQuotationWorkflowDraftOrder(o as { mode?: string; status?: string })) return false;
+        return true;
+      }),
     [data?.orders]
   );
 
+  const ordersTabFiltered = useMemo(() => {
+    return customerOrdersVisible.filter((o) => {
+      const st = String((o as { status?: string }).status);
+      const pend = Boolean((o as { paymentPending?: boolean }).paymentPending);
+      if (ordersTabFilter === 'completed') return st === 'completed' && !pend;
+      if (ordersTabFilter === 'open') {
+        return ['draft', 'confirmed', 'fulfilling'].includes(st) || (st === 'completed' && pend);
+      }
+      return true;
+    });
+  }, [customerOrdersVisible, ordersTabFilter]);
+
   const pagedOrders = useMemo(() => {
     const start = (orderPage - 1) * orderPageSize;
-    return completedOrdersOnly.slice(start, start + orderPageSize);
-  }, [completedOrdersOnly, orderPage]);
+    return ordersTabFiltered.slice(start, start + orderPageSize);
+  }, [ordersTabFiltered, orderPage]);
 
   useEffect(() => {
     setOrderPage(1);
-  }, [customerId]);
+    setExpandedOrderId(null);
+  }, [customerId, ordersTabFilter]);
 
-  const orderPages = Math.max(1, Math.ceil(completedOrdersOnly.length / orderPageSize));
+  const orderPages = Math.max(1, Math.ceil(ordersTabFiltered.length / orderPageSize));
 
   const unpaidOrders = useMemo(() => {
     return (data?.orders || []).filter((o) => {
@@ -955,9 +1003,38 @@ export const CustomerDetailsPage: React.FC = () => {
 
           {activeTab === 'orders' && (
             <div className="cd-panel">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>Orders (completed)</h3>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="cd-orders-tab-head">
+                <div>
+                  <h3 style={{ margin: 0 }}>Orders</h3>
+                  <p className="cd-orders-tab-hint">
+                    {ordersTabFiltered.length} order{ordersTabFiltered.length === 1 ? '' : 's'}
+                    {ordersTabFilter !== 'all' ? ` · ${ordersTabFilter}` : ''}
+                    {customerOrdersVisible.length > 0
+                      ? ' · Line detail: HSN, GST, notes (expand)'
+                      : ''}
+                  </p>
+                </div>
+                <div className="cd-orders-tab-actions">
+                  <div className="cd-orders-filters" role="tablist" aria-label="Filter orders">
+                    {(
+                      [
+                        { id: 'all' as const, label: 'All' },
+                        { id: 'open' as const, label: 'Open' },
+                        { id: 'completed' as const, label: 'Completed' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={ordersTabFilter === opt.id}
+                        className={`cd-payment-filter ${ordersTabFilter === opt.id ? 'cd-payment-filter--active' : ''}`}
+                        onClick={() => setOrdersTabFilter(opt.id)}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                   <Button
                     type="button"
                     variant="primary"
@@ -975,48 +1052,49 @@ export const CustomerDetailsPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
-              {completedOrdersOnly.length === 0 ? (
+              {ordersTabFiltered.length === 0 ? (
                 <div className="cd-empty-illus">
                   <svg viewBox="0 0 120 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
                     <rect x="10" y="20" width="100" height="70" rx="8" stroke="currentColor" strokeWidth="2" />
                     <path d="M35 45h50M35 58h35" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
-                  {(data?.orders || []).length === 0 ? (
-                    <>
-                      <p>No orders for this customer yet.</p>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        disabled={!p.isActive}
-                        title={!p.isActive ? 'Reactivate this customer to start a new order.' : undefined}
-                        onClick={() => {
-                          const q = new URLSearchParams(salesBaseQuery);
-                          q.set('tab', 'orders');
-                          q.set('customerId', customerId!);
-                          q.set('posOrderForCustomer', '1');
-                          navigate(`/sales?${q.toString()}`);
-                        }}
-                      >
-                        Create first order
-                      </Button>
-                    </>
+                  {customerOrdersVisible.length === 0 ? (
+                    (data?.orders || []).length === 0 ? (
+                      <>
+                        <p>No orders for this customer yet.</p>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          disabled={!p.isActive}
+                          title={!p.isActive ? 'Reactivate this customer to start a new order.' : undefined}
+                          onClick={() => {
+                            const q = new URLSearchParams(salesBaseQuery);
+                            q.set('tab', 'orders');
+                            q.set('customerId', customerId!);
+                            q.set('posOrderForCustomer', '1');
+                            navigate(`/sales?${q.toString()}`);
+                          }}
+                        >
+                          Create first order
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <p>No orders in this list. Cancelled orders and quotation drafts are hidden here.</p>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => goSales({ tab: 'orders', customerId: customerId! })}
+                        >
+                          Open sales workspace
+                        </Button>
+                      </>
+                    )
                   ) : (
                     <>
-                      <p>No completed orders yet. Draft or open orders are available from the main Orders workspace.</p>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        disabled={!p.isActive}
-                        title={!p.isActive ? 'Reactivate this customer to start a new order.' : undefined}
-                        onClick={() => {
-                          const q = new URLSearchParams(salesBaseQuery);
-                          q.set('tab', 'orders');
-                          q.set('customerId', customerId!);
-                          q.set('posOrderForCustomer', '1');
-                          navigate(`/sales?${q.toString()}`);
-                        }}
-                      >
-                        Open orders
+                      <p>No orders match this filter. Try <strong>All</strong> or <strong>Open</strong>.</p>
+                      <Button type="button" variant="secondary" onClick={() => setOrdersTabFilter('all')}>
+                        Show all orders
                       </Button>
                     </>
                   )}
@@ -1029,6 +1107,8 @@ export const CustomerDetailsPage: React.FC = () => {
                         <tr>
                           <th>Order ID</th>
                           <th>Status</th>
+                          <th>Mode</th>
+                          <th>Lines</th>
                           <th>Amount</th>
                           <th>Date</th>
                           <th>Payment</th>
@@ -1037,52 +1117,150 @@ export const CustomerDetailsPage: React.FC = () => {
                       </thead>
                       <tbody>
                         {pagedOrders.map((row) => {
-                          const o = row as {
-                            _id?: string;
-                            orderNumber?: string;
-                            status?: string;
-                            total?: number;
-                            createdAt?: string;
-                          };
+                          const o = row as CustomerOrderRow;
                           const oid = docId(row as { _id?: string }) || '';
+                          const st = String(o.status || '');
+                          const pend = Boolean(o.paymentPending);
+                          const badge = orderStatusBadgeProps(st, pend);
+                          const lines = o.lines || [];
+                          const payChip = paymentMethodChip('pos');
+                          const payCell =
+                            st === 'completed' && !pend ? (
+                              <span>
+                                Paid <span className={payChip.cls}>{payChip.label}</span>
+                              </span>
+                            ) : st === 'completed' && pend ? (
+                              <span>
+                                Owes{' '}
+                                <strong>
+                                  {formatInr(
+                                    o.paymentPendingAmount != null && Number.isFinite(Number(o.paymentPendingAmount))
+                                      ? Number(o.paymentPendingAmount)
+                                      : Number(o.total || 0)
+                                  )}
+                                </strong>
+                              </span>
+                            ) : (
+                              <span className="cd-order-pay-open">Not settled</span>
+                            );
                           return (
-                            <tr key={oid || o.orderNumber}>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="cd-mono-link"
-                                  onClick={() => (oid ? navigateToOrder(oid) : goSales({ tab: 'orders', customerId: customerId! }))}
-                                >
-                                  {o.orderNumber}
-                                </button>
-                              </td>
-                              <td>
-                                <Badge variant="success">completed</Badge>
-                              </td>
-                              <td>{formatInr(Number(o.total || 0))}</td>
-                              <td>{o.createdAt ? new Date(o.createdAt).toLocaleDateString('en-IN') : '—'}</td>
-                              <td>
-                                <span>
-                                  Paid{' '}
-                                  <span className={paymentMethodChip('pos').cls}>{paymentMethodChip('pos').label}</span>
-                                </span>
-                              </td>
-                              <td>
-                                <div className="cd-row-actions">
-                                  <Button
+                            <React.Fragment key={oid || o.orderNumber}>
+                              <tr>
+                                <td>
+                                  <button
                                     type="button"
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => (oid ? navigateToOrder(oid) : goSales({ tab: 'orders', customerId: customerId! }))}
+                                    className="cd-mono-link"
+                                    onClick={() =>
+                                      oid ? navigateToOrder(oid) : goSales({ tab: 'orders', customerId: customerId! })
+                                    }
                                   >
-                                    View
-                                  </Button>
-                                  <Button type="button" size="sm" variant="secondary" onClick={() => goSales({ tab: 'history', customerId: customerId! })}>
-                                    Invoice
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
+                                    {o.orderNumber}
+                                  </button>
+                                </td>
+                                <td>
+                                  <Badge variant={badge.variant}>{badge.label}</Badge>
+                                </td>
+                                <td>
+                                  <span className="cd-mode-chip">{String(o.mode || '—').toUpperCase()}</span>
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="cd-quot-expand"
+                                    onClick={() =>
+                                      setExpandedOrderId(expandedOrderId === oid ? null : oid || null)
+                                    }
+                                    disabled={lines.length === 0}
+                                    title={lines.length === 0 ? 'No line items' : 'Show line items'}
+                                  >
+                                    {lines.length} line{lines.length === 1 ? '' : 's'}
+                                    {lines.length > 0 ? (
+                                      <span className="cd-quot-expand__chev" aria-hidden>
+                                        {expandedOrderId === oid ? ' ▲' : ' ▼'}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                </td>
+                                <td>{formatInr(Number(o.total || 0))}</td>
+                                <td>{o.createdAt ? new Date(o.createdAt).toLocaleDateString('en-IN') : '—'}</td>
+                                <td>{payCell}</td>
+                                <td>
+                                  <div className="cd-row-actions">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() =>
+                                        oid ? navigateToOrder(oid) : goSales({ tab: 'orders', customerId: customerId! })
+                                      }
+                                    >
+                                      View
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="secondary"
+                                      onClick={() => goSales({ tab: 'history', customerId: customerId! })}
+                                    >
+                                      Invoice
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {expandedOrderId === oid && lines.length > 0 ? (
+                                <tr className="cd-quot-lines-row">
+                                  <td colSpan={8}>
+                                    <div className="cd-quot-lines">
+                                      <table className="cd-table cd-table--nested">
+                                        <thead>
+                                          <tr>
+                                            <th>Product</th>
+                                            <th>Qty</th>
+                                            <th>Unit</th>
+                                            <th>Discount</th>
+                                            <th>Line total</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {lines.map((ln, li) => {
+                                            const l = ln as Record<string, unknown>;
+                                            const qty = Number(l.quantity ?? 0);
+                                            const unit = Number(l.unitPrice ?? 0);
+                                            const lt = Number(l.lineTotal ?? 0);
+                                            const listU =
+                                              l.posListUnitPrice != null && Number.isFinite(Number(l.posListUnitPrice))
+                                                ? Number(l.posListUnitPrice)
+                                                : unit;
+                                            const explicitDisc = Number(l.posLineDiscountAmount ?? 0);
+                                            const lineDisc =
+                                              explicitDisc > 0 ? explicitDisc : Math.max(0, listU * qty - lt);
+                                            return (
+                                              <tr key={`${oid}-ln-${li}`}>
+                                                <td>
+                                                  <div style={{ fontWeight: 600 }}>
+                                                    {String(l.variantName || 'Item')}
+                                                  </div>
+                                                  <div className="cd-mono" style={{ fontSize: 12, color: '#64748b' }}>
+                                                    {String(l.variantCode || '—')}
+                                                  </div>
+                                                  <SalesLineMeta line={l} />
+                                                </td>
+                                                <td>{qty}</td>
+                                                <td>{formatInr(unit)}</td>
+                                                <td style={{ color: lineDisc > 0 ? '#16a34a' : '#94a3b8' }}>
+                                                  {lineDisc > 0 ? `−${formatInr(lineDisc)}` : '—'}
+                                                </td>
+                                                <td>{formatInr(lt)}</td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </React.Fragment>
                           );
                         })}
                       </tbody>
@@ -1296,6 +1474,7 @@ export const CustomerDetailsPage: React.FC = () => {
                     <tr>
                       <th>Quotation ID</th>
                       <th>Amount</th>
+                      <th>Lines</th>
                       <th>Created</th>
                       <th>Expiry</th>
                       <th>Status</th>
@@ -1305,7 +1484,7 @@ export const CustomerDetailsPage: React.FC = () => {
                   <tbody>
                     {(data.quotations || []).length === 0 ? (
                       <tr>
-                        <td colSpan={6}>No quotations yet.</td>
+                        <td colSpan={7}>No quotations yet.</td>
                       </tr>
                     ) : (
                       (data.quotations || []).map((q) => {
@@ -1320,9 +1499,24 @@ export const CustomerDetailsPage: React.FC = () => {
                           qu.status !== 'cancelled' &&
                           qu.status !== 'expired';
                         return (
-                          <tr key={qu._id}>
+                          <React.Fragment key={qu._id}>
+                          <tr>
                             <td className="cd-mono">{qu.quoteNumber}</td>
                             <td>{formatInr(qu.total)}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="cd-quot-expand"
+                                onClick={() =>
+                                  setExpandedQuotationId(expandedQuotationId === qu._id ? null : qu._id)
+                                }
+                              >
+                                {qu.lines.length} line{qu.lines.length === 1 ? '' : 's'}
+                                <span className="cd-quot-expand__chev" aria-hidden>
+                                  {expandedQuotationId === qu._id ? ' ▲' : ' ▼'}
+                                </span>
+                              </button>
+                            </td>
                             <td>{qu.createdAt ? new Date(qu.createdAt).toLocaleDateString('en-IN') : '—'}</td>
                             <td className={expired ? 'cd-date-muted' : soon ? 'cd-date-amber' : ''}>
                               {exp ? exp.toLocaleDateString('en-IN') : '—'}
@@ -1393,11 +1587,7 @@ export const CustomerDetailsPage: React.FC = () => {
                                               mode: 'b2b',
                                               salesPointId: spId,
                                               customerId: customerId!,
-                                              lines: qu.lines.map((ln) => ({
-                                                variantId: String(ln.variantId),
-                                                quantity: ln.quantity,
-                                                unitPrice: ln.unitPrice,
-                                              })),
+                                              lines: mapQuotationLinesForCreateApi(qu.lines as SalesQuotationLine[]),
                                               discountAmount: qu.discountAmount > 0 ? qu.discountAmount : undefined,
                                             },
                                             branchId
@@ -1415,6 +1605,65 @@ export const CustomerDetailsPage: React.FC = () => {
                               </div>
                             </td>
                           </tr>
+                          {expandedQuotationId === qu._id ? (
+                            <tr className="cd-quot-lines-row">
+                              <td colSpan={7}>
+                                <div className="cd-quot-lines">
+                                  <table className="cd-table cd-table--nested">
+                                    <thead>
+                                      <tr>
+                                        <th>Product</th>
+                                        <th>Qty</th>
+                                        <th>List / unit</th>
+                                        <th>Line total</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(qu.lines || []).map((ln, li) => {
+                                        const l = ln as SalesQuotationLine;
+                                        const qn = Number(l.quantity ?? 0);
+                                        const taxableLine = Number(l.lineTotal ?? 0);
+                                        const eff =
+                                          qn > 0
+                                            ? Math.round((taxableLine / qn) * 10000) / 10000
+                                            : l.unitPrice;
+                                        const lineGross = quotationLineGrossInr(l);
+                                        return (
+                                          <tr key={`${qu._id}-ln-${li}`}>
+                                            <td>
+                                              <div style={{ fontWeight: 600 }}>{l.variantName || 'Item'}</div>
+                                              <div className="cd-mono" style={{ fontSize: 12, color: '#64748b' }}>
+                                                {l.variantCode || '—'}
+                                              </div>
+                                              <SalesLineMeta
+                                                line={
+                                                  {
+                                                    ...l,
+                                                    posListUnitPrice: l.unitPrice,
+                                                    unitPrice: eff,
+                                                    posGstInclusive:
+                                                      l.priceIncludesGst === false ? false : undefined,
+                                                    posGstRatePercent: l.taxRatePercent,
+                                                    posLineDiscountAmount: l.discountAmount,
+                                                    posLineNotes: l.lineNotes,
+                                                    posHsn: l.hsn,
+                                                  } as Record<string, unknown>
+                                                }
+                                              />
+                                            </td>
+                                            <td>{l.quantity}</td>
+                                            <td>{formatInr(l.unitPrice)}</td>
+                                            <td>{formatInr(lineGross)}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                          </React.Fragment>
                         );
                       })
                     )}

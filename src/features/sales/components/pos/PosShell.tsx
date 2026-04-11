@@ -6,9 +6,8 @@ import { salesService, type SalesSettingsData, type SalesQuotation } from '@/ser
 import { searchService } from '@/features/inventory/services/search.service';
 import type { ItemSearchResult } from '@/features/inventory/types/search.types';
 import { usePriceResolver } from '../../hooks/usePriceResolver';
-import { computePosTotals } from './posTotals';
+import { computePosCartTotals } from './posTotals';
 import {
-  linesAdjustedForOrderTotals,
   linesForCheckoutPayload,
   linesForQuotationDraftOrder,
   normalizePosGstRatePercent,
@@ -230,7 +229,7 @@ export const PosShell: React.FC<Props> = ({
     searchService
       .search(
         debouncedSearch,
-        { types: ['item'], branchId, excludeMisc: true },
+        { types: ['item'], branchId },
         12
       )
       .then((res) => {
@@ -339,8 +338,7 @@ export const PosShell: React.FC<Props> = ({
     if (!settings) {
       return { subtotal: 0, discountAmount: 0, taxAmount: 0, total: 0 };
     }
-    const adjusted = linesAdjustedForOrderTotals(lines, branchTaxPercent);
-    return computePosTotals(adjusted, settings, discountAmount);
+    return computePosCartTotals(lines, branchTaxPercent, discountAmount);
   }, [lines, settings, discountAmount, branchTaxPercent]);
 
   useEffect(() => {
@@ -410,7 +408,7 @@ export const PosShell: React.FC<Props> = ({
     async (
       meta: PosResolvedLineMeta,
       qty = 1,
-      options?: { quiet?: boolean; unitPrice?: number }
+      options?: { quiet?: boolean; unitPrice?: number; notes?: string; hsn?: string; gstRatePercent?: number }
     ) => {
       if (!salesPointId) return;
       try {
@@ -418,6 +416,12 @@ export const PosShell: React.FC<Props> = ({
           typeof options?.unitPrice === 'number'
             ? { price: options.unitPrice }
             : await resolvePrice(meta.variantId, { salesPointId, customerId: customerId || undefined });
+        const noteOpt = options?.notes?.trim();
+        const hsnOpt = options?.hsn?.trim();
+        const gstOpt =
+          options?.gstRatePercent != null && Number.isFinite(options.gstRatePercent)
+            ? normalizePosGstRatePercent(options.gstRatePercent)
+            : normalizePosGstRatePercent(settings?.taxRatePercent);
         addOrMerge({
           variantId: meta.variantId,
           itemId: meta.itemId,
@@ -431,9 +435,9 @@ export const PosShell: React.FC<Props> = ({
           batchWarning: meta.batchWarning,
           lineDiscountType: 'flat',
           lineDiscountValue: 0,
-          gstRatePercent: normalizePosGstRatePercent(settings?.taxRatePercent),
-          notes: '',
-          hsn: '',
+          gstRatePercent: gstOpt,
+          notes: noteOpt || '',
+          hsn: hsnOpt || '',
         });
         pushRecentVariant(branchId, salesPointId, { variantId: meta.variantId, label: meta.label });
         setRecent(getRecentVariants(branchId, salesPointId));
@@ -462,7 +466,14 @@ export const PosShell: React.FC<Props> = ({
       setCheckoutError(null);
       try {
         const o = (await salesService.getOrder(posLoadOrderIdParam, branchId)) as {
-          lines?: Array<{ variantId?: unknown; quantity?: number; unitPrice?: number }>;
+          lines?: Array<{
+            variantId?: unknown;
+            quantity?: number;
+            unitPrice?: number;
+            posLineNotes?: string;
+            posHsn?: string;
+            posGstRatePercent?: number;
+          }>;
           discountAmount?: number;
         };
         if (cancelled) return;
@@ -482,6 +493,12 @@ export const PosShell: React.FC<Props> = ({
           await addLineFromMeta(meta, qty, {
             quiet: true,
             unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
+            notes: typeof ln.posLineNotes === 'string' ? ln.posLineNotes : undefined,
+            hsn: typeof ln.posHsn === 'string' ? ln.posHsn : undefined,
+            gstRatePercent:
+              ln.posGstRatePercent != null && Number.isFinite(Number(ln.posGstRatePercent))
+                ? Number(ln.posGstRatePercent)
+                : undefined,
           });
         }
         if (cancelled) return;

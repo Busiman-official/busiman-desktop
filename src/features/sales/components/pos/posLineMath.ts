@@ -83,41 +83,29 @@ export function linesAdjustedForOrderTotals(
   });
 }
 
-/** Checkout / draft API payload: per-line exclusive unit price after line discount (server tax is order-level). */
-export function linesForCheckoutPayload(
-  lines: PosCartLine[],
-  defaultGstPercent: number
-): Array<{ variantId: string; quantity: number; unitPrice: number }> {
-  return lines.map((l) => {
-    const taxableTotal = getLineTaxableNetAfterDiscount(l, defaultGstPercent);
-    const eff = l.quantity > 0 ? taxableTotal / l.quantity : 0;
-    return {
-      variantId: l.variantId,
-      quantity: l.quantity,
-      unitPrice: Math.round(eff * 10000) / 10000,
-    };
-  });
-}
-
-/** B2B draft order for quotation: includes POS line detail panel fields for printed PDF. */
-export function linesForQuotationDraftOrder(
-  lines: PosCartLine[],
-  branchTaxPercent: number
-): Array<{
+/** Per-line payload for POS checkout and B2B quotation draft: exclusive unit + HSN / GST / notes (customer detail, PDF). */
+export type PosOrderLinesPayloadLine = {
   variantId: string;
   quantity: number;
   unitPrice: number;
   posListUnitPrice: number;
   posLineDiscountAmount: number;
   posGstRatePercent: number;
+  /** Matches POS line editor; stored on order for history / quotations. */
+  posGstInclusive?: boolean;
   posLineNotes?: string;
   posHsn?: string;
-}> {
+};
+
+/**
+ * Checkout + quotation draft: same shape. Server `posCheckout` and `createOrder` persist `pos*` fields on order lines.
+ */
+export function linesForCheckoutPayload(lines: PosCartLine[], defaultGstPercent: number): PosOrderLinesPayloadLine[] {
   return lines.map((l) => {
-    const taxableTotal = getLineTaxableNetAfterDiscount(l, branchTaxPercent);
+    const taxableTotal = getLineTaxableNetAfterDiscount(l, defaultGstPercent);
     const eff = l.quantity > 0 ? taxableTotal / l.quantity : 0;
     const disc = getLineDiscountAmount(l);
-    const gst = normalizePosGstRatePercent(l.gstRatePercent ?? branchTaxPercent);
+    const gst = normalizePosGstRatePercent(l.gstRatePercent ?? defaultGstPercent);
     const notes = l.notes?.trim();
     const hsn = l.hsn?.trim();
     return {
@@ -127,8 +115,17 @@ export function linesForQuotationDraftOrder(
       posListUnitPrice: Math.round(l.unitPrice * 10000) / 10000,
       posLineDiscountAmount: Math.round(disc * 100) / 100,
       posGstRatePercent: gst,
+      ...(l.gstInclusive === false ? { posGstInclusive: false } : {}),
       ...(notes ? { posLineNotes: notes } : {}),
       ...(hsn ? { posHsn: hsn } : {}),
     };
   });
+}
+
+/** B2B draft order for quotation — same payload as POS checkout (line metadata for PDFs and CRM). */
+export function linesForQuotationDraftOrder(
+  lines: PosCartLine[],
+  branchTaxPercent: number
+): PosOrderLinesPayloadLine[] {
+  return linesForCheckoutPayload(lines, branchTaxPercent);
 }

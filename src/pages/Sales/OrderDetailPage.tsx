@@ -13,6 +13,8 @@ import {
   type CustomerDetailPayload,
   type SalesQuotation,
 } from '@/services/sales.service';
+import { mapOrderLinesForCreateApi } from '@/features/sales/utils/mapLinesForCreateOrder';
+import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import './OrderDetailPage.css';
 
 type OrderLine = {
@@ -22,6 +24,11 @@ type OrderLine = {
   quantity?: number;
   unitPrice?: number;
   lineTotal?: number;
+  posListUnitPrice?: number;
+  posLineDiscountAmount?: number;
+  posGstRatePercent?: number;
+  posLineNotes?: string;
+  posHsn?: string;
 };
 
 type OrderDoc = {
@@ -102,11 +109,7 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
       const o = (await salesService.getOrder(orderId, branchId)) as OrderDoc & {
         lines?: OrderLine[];
       };
-      const lines = (o.lines || []).map((ln) => ({
-        variantId: idStr(ln.variantId),
-        quantity: Number(ln.quantity ?? 0),
-        unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
-      }));
+      const lines = mapOrderLinesForCreateApi(o.lines || []);
       const sp = idStr(o.salesPointId);
       const cust = o.customerId ? idStr(o.customerId) : undefined;
       await salesService.createOrder(
@@ -538,7 +541,13 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                     const lt = Number(ln.lineTotal ?? 0);
                     const qty = Number(ln.quantity ?? 0);
                     const unit = Number(ln.unitPrice ?? 0);
-                    const lineDisc = Math.max(0, unit * qty - lt);
+                    const listU =
+                      ln.posListUnitPrice != null && Number.isFinite(Number(ln.posListUnitPrice))
+                        ? Number(ln.posListUnitPrice)
+                        : unit;
+                    const explicitDisc = Number(ln.posLineDiscountAmount ?? 0);
+                    const lineDisc =
+                      explicitDisc > 0 ? explicitDisc : Math.max(0, listU * qty - lt);
                     return (
                       <tr key={`${idx}-${ln.variantCode}`}>
                         <td>
@@ -547,6 +556,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                         <td>
                           <div style={{ fontWeight: 600 }}>{ln.variantName || 'Item'}</div>
                           <div className="order-detail__sku">{ln.variantCode || '—'}</div>
+                          <SalesLineMeta line={ln as Record<string, unknown>} />
                         </td>
                         <td>
                           <span className="order-detail__qty-badge">{qty}</span>
