@@ -20,6 +20,12 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   variant?: 'danger' | 'warning' | 'info';
   employeeName?: string;
+  showVariantNotice?: boolean;
+  warningMessage?: string;
+  dangerMessage?: string;
+  closeOnOverlayClick?: boolean;
+  closeOnEscape?: boolean;
+  showCloseButton?: boolean;
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -34,6 +40,12 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   cancelLabel = 'Cancel',
   variant = 'warning',
   employeeName,
+  showVariantNotice = true,
+  warningMessage = 'These changes may affect attendance calculations, permissions, and workflows.',
+  dangerMessage = 'This action cannot be undone.',
+  closeOnOverlayClick = true,
+  closeOnEscape = true,
+  showCloseButton = true,
 }) => {
   const [reason, setReason] = useState('');
 
@@ -87,7 +99,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   const actualRequiresReason = requiresReason || !!(changes && ((changes as any).role || (changes as any).assignedShiftId || (changes as any).shiftAssignmentType));
 
   return (
-    <Modal isOpen={isOpen} onClose={handleCancel} title={title} size="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleCancel}
+      title={title}
+      size="md"
+      closeOnOverlayClick={closeOnOverlayClick}
+      closeOnEscape={closeOnEscape}
+      showCloseButton={showCloseButton}
+    >
       <div className="confirm-dialog">
         <div className="confirm-dialog-message">
           {employeeName ? (
@@ -118,15 +138,15 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </div>
         )}
 
-        {variant === 'warning' && (
+        {showVariantNotice && variant === 'warning' && (
           <div className="confirm-dialog-warning">
-            <strong>⚠️ Warning:</strong> These changes may affect attendance calculations, permissions, and workflows.
+            <strong>⚠️ Warning:</strong> {warningMessage}
           </div>
         )}
 
-        {variant === 'danger' && (
+        {showVariantNotice && variant === 'danger' && (
           <div className="confirm-dialog-danger">
-            <strong>⚠️ Danger:</strong> This action cannot be undone.
+            <strong>⚠️ Danger:</strong> {dangerMessage}
           </div>
         )}
 

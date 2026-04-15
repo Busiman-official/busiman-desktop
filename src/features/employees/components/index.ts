@@ -2,5 +2,5 @@
  * Employees Components Barrel Export
  */
 
-export { EmployeeManagement } from './EmployeeManagement';
+export { EmployeeManagement, type EmployeeManagementHandle } from './EmployeeManagement';
 

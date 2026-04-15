@@ -1,9 +1,36 @@
 .workforce-settings {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--spacing-lg, 1.25rem);
+}
+
+.workforce-inner-tabs {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm, 8px);
+}
+
+.workforce-inner-tabs .settings-inner-tabs-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workforce-inner-tabs .settings-inner-tabs-right {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 .workforce-tab-content {
   width: 100%;
+  margin-top: var(--spacing-sm);
+}
+
+/* Roster uses its own framed panel; avoid a heavy double card inside settings-content */
+.workforce-tab-content .employee-management-page {
+  max-width: none;
+  width: 100%;
+  margin: 0;
 }

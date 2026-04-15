@@ -93,12 +93,10 @@
   min-height: 500px;
 }
 
-/* Shared inner tabs for Workforce, Company, Devices sections */
 .settings-inner-tabs {
   display: flex;
   gap: 8px;
   border-bottom: 1px solid var(--color-border);
-  margin-bottom: 16px;
 }
 
 .settings-inner-tab {

@@ -1,152 +1,236 @@
 /**
- * Employee Management Styles - With sidebar navigation
+ * Employee management — full-width roster with top toolbar
  */
 
 .employee-management-page {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.employee-management-header {
-  margin-bottom: var(--spacing-lg);
-  padding-bottom: var(--spacing-md);
-  border-bottom: var(--border-width) solid var(--color-border-light);
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.employee-management-title {
-  font-size: var(--font-size-large);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  margin: 0 0 var(--spacing-xs) 0;
-}
-
-.employee-management-subtitle {
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
+  width: 100%;
+  max-width: none;
   margin: 0;
 }
 
-.employee-management-header-actions {
+.employee-management-content {
+  width: 100%;
+  min-height: 480px;
+  /* Roomier than global compact tokens so the roster breathes */
+  background: var(--color-bg-primary);
+  border-radius: calc(var(--border-radius) + 4px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1rem, 2.5vw, 1.5rem);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.employee-management-content--loading {
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+}
+
+/* ——— List toolbar (title + stats + Add employee) ——— */
+.employee-roster-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--spacing-lg) var(--spacing-xl);
+  padding-bottom: var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.employee-roster-toolbar__intro {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.employee-roster-toolbar__title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: clamp(1.35rem, 2.5vw, 1.65rem);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.employee-roster-toolbar__meta {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.employee-roster-toolbar__stat {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.employee-roster-toolbar__stat-sep {
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-normal);
+}
+
+.employee-roster-toolbar__actions {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
 }
 
-.employee-management-container {
-  display: flex;
-  gap: var(--spacing-lg);
-  align-items: flex-start;
-}
-
-.employee-management-sidebar {
-  flex-shrink: 0;
-  width: 240px;
-}
-
-.employee-management-nav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  background: var(--color-bg-primary);
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--border-radius);
-  padding: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
-}
-
-.employee-nav-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
-  border: none;
-  background: transparent;
-  border-radius: var(--border-radius);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  text-align: left;
-  font-size: var(--font-size-base);
-  color: var(--color-text-secondary);
-  font-weight: var(--font-weight-normal);
-}
-
-.employee-nav-item:hover {
-  background-color: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-}
-
-.employee-nav-item.active {
-  background-color: var(--color-primary);
-  color: white;
+.employee-roster-toolbar__add {
+  padding-left: var(--spacing-lg);
+  padding-right: var(--spacing-lg);
   font-weight: var(--font-weight-medium);
 }
 
-.employee-nav-icon {
-  font-size: 20px;
-  width: 24px;
-  text-align: center;
+/* ——— Add flow toolbar ——— */
+.employee-form-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
-.employee-nav-label {
-  flex: 1;
+.employee-form-toolbar__back {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-primary);
+  cursor: pointer;
+  font-family: inherit;
 }
 
-.employee-list-sidebar-content {
-  padding: var(--spacing-md);
+.employee-form-toolbar__back:hover {
+  text-decoration: underline;
 }
 
-.add-employee-button {
-  width: 100%;
+.employee-form-toolbar__title {
+  margin: 0;
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
 }
 
-.employee-management-content {
-  flex: 1;
-  background: var(--color-bg-primary);
-  border: var(--border-width) solid var(--color-border);
-  border-radius: var(--border-radius);
-  padding: var(--spacing-lg);
-  min-height: 500px;
-}
-
-.employee-management-loading {
-  text-align: center;
-  padding: var(--spacing-2xl);
+.employee-form-lead {
+  margin: 0 0 var(--spacing-lg);
+  font-size: var(--font-size-base);
+  line-height: 1.55;
   color: var(--color-text-secondary);
+  max-width: 52rem;
 }
 
 .employee-form-card {
-  margin-bottom: var(--spacing-lg);
+  margin-top: 0;
+  border-radius: calc(var(--border-radius) + 2px);
 }
 
-.employee-form-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-lg);
-  padding-bottom: var(--spacing-md);
-  border-bottom: var(--border-width) solid var(--color-border-light);
+.employee-list-card {
+  margin-top: 0;
+  overflow: hidden;
+  border-radius: calc(var(--border-radius) + 2px);
 }
 
-.employee-form-header h3 {
-  margin: 0;
-  font-size: var(--font-size-large);
+.employee-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.employee-table thead {
+  background-color: var(--color-bg-tertiary);
+}
+
+.employee-table th {
   font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  text-align: left;
+  padding: var(--spacing-lg) var(--spacing-xl);
+  border-bottom: var(--border-width) solid var(--color-border);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.employee-table td {
+  padding: var(--spacing-lg) var(--spacing-xl);
+  border-bottom: var(--border-width) solid var(--color-border-light);
   color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+}
+
+.employee-table tbody tr:hover {
+  background-color: var(--color-bg-secondary);
+}
+
+.employee-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.employee-table__empty-cell {
+  padding: var(--spacing-2xl) var(--spacing-xl) !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--color-text-tertiary);
+  padding: var(--spacing-2xl) !important;
+}
+
+.role-badge {
+  display: inline-block;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  text-transform: capitalize;
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-small);
+}
+
+.status-badge--online {
+  color: #16a34a;
+}
+
+.status-badge--offline {
+  color: #6b7280;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background-color: currentColor;
 }
 
 .employee-form {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: var(--spacing-lg);
 }
 
 .form-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--spacing-md);
+  gap: var(--spacing-lg);
 }
 
 .input-group {
@@ -190,94 +274,11 @@
   justify-content: flex-end;
   gap: var(--spacing-md);
   margin-top: var(--spacing-md);
-  padding-top: var(--spacing-md);
+  padding-top: var(--spacing-lg);
   border-top: var(--border-width) solid var(--color-border-light);
 }
 
-.employee-list-card {
-  margin-top: 0;
-}
-
-.employee-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.employee-table thead {
-  background-color: var(--color-bg-tertiary);
-}
-
-.employee-table th {
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-small);
-  color: var(--color-text-secondary);
-  text-align: left;
-  padding: var(--spacing-md) var(--spacing-lg);
-  border-bottom: var(--border-width) solid var(--color-border);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.employee-table td {
-  padding: var(--spacing-md) var(--spacing-lg);
-  border-bottom: var(--border-width) solid var(--color-border-light);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-base);
-}
-
-.employee-table tbody tr:hover {
-  background-color: var(--color-bg-secondary);
-}
-
-.employee-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.table-empty {
-  text-align: center;
-  color: var(--color-text-tertiary);
-  padding: var(--spacing-2xl) !important;
-}
-
-.role-badge {
-  display: inline-block;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--border-radius);
-  font-size: var(--font-size-small);
-  font-weight: var(--font-weight-medium);
-  text-transform: capitalize;
-  background-color: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-}
-
-.table-actions {
-  display: flex;
-  gap: var(--spacing-xs);
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--font-size-small);
-}
-
-.status-badge--online {
-  color: #16a34a;
-}
-
-.status-badge--offline {
-  color: #6b7280;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background-color: currentColor;
-}
-
-/* Employee Details Styles */
+/* Employee details */
 .employee-details-wrapper {
   width: 100%;
 }
@@ -337,45 +338,44 @@
 }
 
 .error-message {
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
   background: #f8d7da;
   border: 1px solid #f5c6cb;
-  border-radius: 4px;
+  border-radius: var(--border-radius);
   color: #721c24;
-  margin-bottom: var(--spacing-lg);
 }
 
 .success-message {
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
   background: #d4edda;
   border: 1px solid #c3e6cb;
-  border-radius: 4px;
+  border-radius: var(--border-radius);
   color: #155724;
-  margin-bottom: var(--spacing-lg);
 }
 
 .employee-details-sections {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
 }
 
 @media (max-width: 768px) {
-  .employee-management-container {
-    flex-direction: column;
+  .employee-management-content {
+    padding: var(--spacing-lg);
+    gap: var(--spacing-lg);
   }
 
-  .employee-management-sidebar {
+  .employee-roster-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .employee-roster-toolbar__actions {
     width: 100%;
   }
 
-  .employee-management-nav {
-    flex-direction: row;
-    overflow-x: auto;
-  }
-
-  .employee-nav-item {
-    flex-shrink: 0;
+  .employee-roster-toolbar__add {
+    width: 100%;
   }
 
   .form-row {
@@ -388,6 +388,6 @@
 
   .employee-table th,
   .employee-table td {
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-sm);
   }
 }

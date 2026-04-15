@@ -840,6 +840,11 @@ class InventoryService {
     return extractApiData<MovementDocumentResponse[]>(response);
   }
 
+  /** Permanently delete a server-side movement draft (DRAFT only, own drafts). */
+  async deleteMovementDraft(id: string): Promise<void> {
+    await api.delete(`/inventory/movements/draft/${id}`);
+  }
+
   // Reason Codes
   async getReasonCodes(): Promise<ReasonCodeResponse[]> {
     const response = await api.get('/inventory/reason-codes');

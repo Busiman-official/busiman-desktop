@@ -1,10 +1,9 @@
 /**
- * Employee Management Component - With sidebar navigation
- * For HR and Admin to manage employees (create, edit, delete)
+ * Employee management — full-width roster with top toolbar (HR / Admin).
  */
 
-import React, { useState, useEffect } from 'react';
-import { employeeService, CreateEmployeeRequest, UpdateEmployeeRequest, ActiveSessionInfo } from '@/services/employee.service';
+import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { employeeService, CreateEmployeeRequest, ActiveSessionInfo } from '@/services/employee.service';
 import { employeeDetailsService } from '@/services/employee.service';
 import { shiftService } from '@/services/shift.service';
 import { branchService } from '@/services/branch.service';
@@ -26,7 +25,11 @@ import './EmployeeManagement.css';
 
 type ViewMode = 'list' | 'details' | 'add';
 
-export const EmployeeManagement: React.FC = () => {
+export type EmployeeManagementHandle = {
+  openAddEmployee: () => void;
+};
+
+export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function EmployeeManagement(_props, ref) {
   const { user: currentUser } = authStore();
   const [employees, setEmployees] = useState<User[]>([]);
   const [activeSessions, setActiveSessions] = useState<ActiveSessionInfo[]>([]);
@@ -68,7 +71,7 @@ export const EmployeeManagement: React.FC = () => {
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [, setLoadingBranches] = useState(false);
 
   useEffect(() => {
     loadEmployees();
@@ -164,7 +167,7 @@ export const EmployeeManagement: React.FC = () => {
     }
   };
 
-  const handleAddEmployee = () => {
+  const handleAddEmployee = useCallback(() => {
     setViewMode('add');
     setSelectedEmployeeId(null);
     setEmployeeDetails(null);
@@ -182,7 +185,9 @@ export const EmployeeManagement: React.FC = () => {
     setSelectedShiftId('');
     setError(null);
     setSuccess(null);
-  };
+  }, []);
+
+  useImperativeHandle(ref, () => ({ openAddEmployee: handleAddEmployee }), [handleAddEmployee]);
 
   const handleEditEmployee = (employeeId: string) => {
     setSelectedEmployeeId(employeeId);
@@ -394,66 +399,37 @@ export const EmployeeManagement: React.FC = () => {
   const canEdit = currentUser?.role === UserRole.HR || currentUser?.role === UserRole.ADMIN;
   const canEditLimited = currentUser?.role === UserRole.MANAGER;
 
+  const onlineCount = employees.filter((e) => isEmployeeOnline(e.id)).length;
+
   if (loading && employees.length === 0) {
-    return <LoadingState message="Loading employees..." />;
+    return (
+      <div className="employee-management-page">
+        <div className="employee-management-content employee-management-content--loading">
+          <LoadingState message="Loading employees..." />
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="employee-management-page">
-      <div className="employee-management-header">
-        <div>
-          <h1 className="employee-management-title">Employee Management</h1>
-          <p className="employee-management-subtitle">
-            Create, edit, and manage employees. View who is currently online and logout users if needed.
-          </p>
-        </div>
-        <div className="employee-management-header-actions">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={async () => {
-              setLoading(true);
-              try {
-                await Promise.all([loadEmployees(), loadActiveSessions()]);
-              } finally {
-                setLoading(false);
-              }
-            }}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
-        </div>
-      </div>
+      <div className="employee-management-content">
 
-      <div className="employee-management-container">
-        <div className="employee-management-sidebar">
-          <nav className="employee-management-nav">
-            <button
-              className={`employee-nav-item ${viewMode === 'list' ? 'active' : ''}`}
-              onClick={handleBackToList}
-            >
-              <span className="employee-nav-icon">📋</span>
-              <span className="employee-nav-label">Employee List</span>
+        {viewMode === 'add' && (
+          <header className="employee-form-toolbar" aria-label="Add employee">
+            <button type="button" className="employee-form-toolbar__back" onClick={handleCancelForm}>
+              ← Back to roster
             </button>
-          </nav>
+            <h2 className="employee-form-toolbar__title">New team member</h2>
+          </header>
+        )}
 
-          {viewMode === 'list' && (
-            <div className="employee-list-sidebar-content">
-              <Button variant="primary" onClick={handleAddEmployee} className="add-employee-button">
-                Add Employee
-              </Button>
-            </div>
-          )}
-        </div>
+        {error && <div className="error-message">{error}</div>}
+        {success && <div className="success-message">{success}</div>}
 
-        <div className="employee-management-content">
-          {error && <div className="error-message">{error}</div>}
-          {success && <div className="success-message">{success}</div>}
-
-          {viewMode === 'list' && (
-            <Card className="employee-list-card" padding="none">
-              <table className="employee-table">
+        {viewMode === 'list' && (
+          <Card className="employee-list-card" padding="none">
+            <table className="employee-table">
                 <thead>
                   <tr>
                     <th>Name</th>
@@ -469,10 +445,10 @@ export const EmployeeManagement: React.FC = () => {
                 <tbody>
                   {employees.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ padding: '2rem', textAlign: 'center' }}>
+                      <td colSpan={8} className="employee-table__empty-cell">
                         <EmptyState
-                          title="No employees found"
-                          message='Click "Add Employee" to create one.'
+                          title="No one on the roster yet"
+                          message="Use Add employee (top right on the Employees tab) to invite your first team member."
                         />
                       </td>
                     </tr>
@@ -538,12 +514,9 @@ export const EmployeeManagement: React.FC = () => {
 
           {viewMode === 'add' && (
             <Card className="employee-form-card" padding="lg">
-              <div className="employee-form-header">
-                <h3>Add New Employee</h3>
-                <Button variant="ghost" size="sm" onClick={handleCancelForm}>
-                  ← Back to List
-                </Button>
-              </div>
+              <p className="employee-form-lead">
+                Account credentials, role, and optional shift—everything needed to get them productive.
+              </p>
 
               <form onSubmit={handleSubmit} className="employee-form">
                 <div className="form-row">
@@ -668,7 +641,7 @@ export const EmployeeManagement: React.FC = () => {
             <div className="employee-details-wrapper">
               <div className="employee-details-header">
                 <button className="back-button" onClick={handleBackToList}>
-                  ← Back to List
+                  ← Back to roster
                 </button>
                 <h2>Employee Details</h2>
                 {employeeDetails && <p className="page-subtitle">{employeeDetails.name}</p>}
@@ -749,7 +722,6 @@ export const EmployeeManagement: React.FC = () => {
               )}
             </div>
           )}
-        </div>
       </div>
 
       {/* Confirmation Modal */}
@@ -767,4 +739,6 @@ export const EmployeeManagement: React.FC = () => {
       )}
     </div>
   );
-};
+});
+
+EmployeeManagement.displayName = 'EmployeeManagement';

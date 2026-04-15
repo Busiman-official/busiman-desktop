@@ -2,7 +2,7 @@
  * Movement Management Component - Manage stock movements
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   inventoryService,
@@ -146,13 +146,44 @@ export const MovementManagement: React.FC = () => {
   const [selectedVariantId, setSelectedVariantId] = useState<string>('');
   const [serialAttributes, setSerialAttributes] = useState<Record<string, Record<string, any>>>({});
   const [attributeTemplate, setAttributeTemplate] = useState<any | null>(null);
+  const [showRestoreDraftDialog, setShowRestoreDraftDialog] = useState(false);
+  const [latestDraftId, setLatestDraftId] = useState<string | null>(null);
+  const createIntentRef = useRef(false);
+
+  const openFreshCreate = useCallback((patch?: Record<string, string>) => {
+    const p = new URLSearchParams(searchParams);
+    p.set('tab', 'movements');
+    p.set('create', '1');
+    if (patch) {
+      Object.entries(patch).forEach(([key, value]) => p.set(key, value));
+    }
+    createIntentRef.current = true;
+    setSearchParams(p);
+    setEditDraftId(null);
+    setMovementSubTab('transactions');
+    setViewMode('create');
+    setDetailsPanelOpen(false);
+  }, [searchParams, setSearchParams]);
+
+  const openCreateWithDraftPrompt = useCallback(async (patch?: Record<string, string>) => {
+    try {
+      const drafts = await inventoryService.getDrafts();
+      const latest = [...drafts]
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+      if (latest?.id) {
+        setLatestDraftId(latest.id);
+        setShowRestoreDraftDialog(true);
+        return;
+      }
+    } catch (err) {
+      logger.error('[MovementManagement] Failed to check movement drafts', err);
+    }
+    openFreshCreate(patch);
+  }, [openFreshCreate]);
 
   const handleCreateMovement = useCallback(() => {
-    const p = new URLSearchParams(searchParams);
-    p.set('create', '1');
-    setSearchParams(p);
-    setViewMode('create');
-  }, [searchParams, setSearchParams]);
+    void openCreateWithDraftPrompt();
+  }, [openCreateWithDraftPrompt]);
 
   useEffect(() => {
     loadMovements();
@@ -182,25 +213,17 @@ export const MovementManagement: React.FC = () => {
 
   useEffect(() => {
     const handleQuickReceipt = () => {
-      setMovementSubTab('transactions');
-      const p = new URLSearchParams(searchParams); 
-      p.set('tab', 'movements');
-      p.set('create', '1');
-      p.set('movementType', MovementType.RECEIPT);
-      p.set('reasonCode', 'RECEIPT');
-      setSearchParams(p);
-      setViewMode('create');
+      void openCreateWithDraftPrompt({
+        movementType: MovementType.RECEIPT,
+        reasonCode: 'RECEIPT',
+      });
     };
 
     const handleQuickTransfer = () => {
-      setMovementSubTab('transactions');
-      const p = new URLSearchParams(searchParams);
-      p.set('tab', 'movements');
-      p.set('create', '1');
-      p.set('movementType', MovementType.TRANSFER);
-      p.set('reasonCode', 'TRANSFER');
-      setSearchParams(p);
-      setViewMode('create');
+      void openCreateWithDraftPrompt({
+        movementType: MovementType.TRANSFER,
+        reasonCode: 'TRANSFER',
+      });
     };
 
     window.addEventListener('quick-receipt', handleQuickReceipt);
@@ -210,16 +233,27 @@ export const MovementManagement: React.FC = () => {
       window.removeEventListener('quick-receipt', handleQuickReceipt);
       window.removeEventListener('quick-transfer', handleQuickTransfer);
     };
-  }, [searchParams]);
+  }, [openCreateWithDraftPrompt]);
 
-  // Open Create when URL has
+  // Ignore stale ?create=1 links when opening tab; create view should be user-triggered.
   useEffect(() => {
-    if (searchParams.get('create') === '1') {
+    const create = searchParams.get('create');
+    if (create !== '1') return;
+    if (createIntentRef.current) {
+      createIntentRef.current = false;
       setMovementSubTab('transactions');
       setViewMode('create');
       setDetailsPanelOpen(false);
+      return;
     }
-  }, [searchParams.get('create')]);
+    setMovementSubTab('transactions');
+    setViewMode('list');
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.delete('create');
+      return p;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Ctrl+A: Create Movement (when in transactions list; skip when focus is in input/textarea/select)
   useEffect(() => {
@@ -1522,6 +1556,53 @@ export const MovementManagement: React.FC = () => {
         />
       )}
       {viewMode === 'details' && renderDetails()}
+
+      <ConfirmDialog
+        isOpen={showRestoreDraftDialog}
+        title="Restore movement draft?"
+        message="A saved movement draft is available. Do you want to continue editing it or start a new movement?"
+        confirmLabel="Restore draft"
+        cancelLabel="Start new movement"
+        variant="info"
+        showVariantNotice={false}
+        closeOnOverlayClick={false}
+        closeOnEscape={false}
+        showCloseButton={false}
+        onConfirm={() => {
+          if (!latestDraftId) {
+            setShowRestoreDraftDialog(false);
+            openFreshCreate();
+            return;
+          }
+          setEditDraftId(latestDraftId);
+          setShowRestoreDraftDialog(false);
+          setMovementSubTab('transactions');
+          setViewMode('create');
+          setDetailsPanelOpen(false);
+          setSearchParams((prev) => {
+            const p = new URLSearchParams(prev);
+            p.set('tab', 'movements');
+            p.delete('create');
+            return p;
+          }, { replace: true });
+        }}
+        onCancel={async () => {
+          const draftId = latestDraftId;
+          setShowRestoreDraftDialog(false);
+          setLatestDraftId(null);
+          if (draftId) {
+            try {
+              await inventoryService.deleteMovementDraft(draftId);
+            } catch (err) {
+              logger.error('[MovementManagement] Failed to delete movement draft', err);
+              setError(
+                extractErrorMessage(err, 'Could not delete the saved draft. You can try again or remove it from drafts.')
+              );
+            }
+          }
+          openFreshCreate();
+        }}
+      />
 
       <ConfirmDialog
         isOpen={showApproveDialog}

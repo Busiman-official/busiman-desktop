@@ -32,6 +32,7 @@ import {
   ProductVariantDetailsDrawer,
   type ProductVariantDetailsDrawerApplyPayload,
 } from './productVariantDetails';
+import { ConfirmDialog } from '@/shared/components/modals';
 import './ProductCreationWizard.css';
 
 const WIZARD_STEPS = [
@@ -144,9 +145,79 @@ export interface ProductCreationWizardProps {
 export type { WizardVariantRow };
 
 const DRAFT_KEY = 'busiman-product-draft';
-const DRAFT_SAVE_INTERVAL_MS = 10000;
+const DRAFT_VERSION = 1 as const;
+/** Persist soon after edits; 10s-only saves caused data loss when leaving quickly. */
+const DRAFT_SAVE_DEBOUNCE_MS = 450;
 const TOAST_DURATION_MS = 2000;
 const VARIANT_CODE_DEBOUNCE_MS = 350;
+
+type ProductDraftEnvelopeV1 = {
+  v: typeof DRAFT_VERSION;
+  step: number;
+  form: Partial<WizardFormState> & { sku?: string };
+};
+
+function mergeParsedFormIntoState(parsedRest: Partial<WizardFormState> & { sku?: string }): WizardFormState {
+  const { sku: _legacyDraftSku, ...rest } = parsedRest;
+  const base = getInitialFormState();
+  const draftUnit =
+    typeof rest.unitOfMeasure === 'string' && rest.unitOfMeasure.trim()
+      ? rest.unitOfMeasure.trim()
+      : base.unitOfMeasure;
+  const merged: WizardFormState = {
+    ...base,
+    ...rest,
+    productType: rest.productType ?? base.productType,
+    variantRows: rest.variantRows?.length
+      ? normalizeVariantRows(rest.variantRows, draftUnit)
+      : base.variantRows,
+  };
+  normalizeExclusiveTrackingFlags(merged);
+  normalizeDraftCategory(merged);
+  return merged;
+}
+
+function parseProductDraftFromStorage(): { step: number; form: WizardFormState } | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    const o = parsed as Record<string, unknown>;
+
+    let step = 1;
+    let formPartial: Partial<WizardFormState> & { sku?: string };
+
+    if (o.v === DRAFT_VERSION && o.form && typeof o.form === 'object') {
+      formPartial = o.form as Partial<WizardFormState> & { sku?: string };
+      const s = o.step;
+      if (typeof s === 'number' && s >= 1 && s <= WIZARD_STEPS.length) {
+        step = Math.floor(s);
+      }
+    } else {
+      formPartial = parsed as Partial<WizardFormState> & { sku?: string };
+      step = 1;
+    }
+
+    const form = mergeParsedFormIntoState(formPartial);
+    return { step, form };
+  } catch {
+    return null;
+  }
+}
+
+function serializeProductDraft(step: number, form: WizardFormState): string {
+  const envelope: ProductDraftEnvelopeV1 = {
+    v: DRAFT_VERSION,
+    step,
+    form,
+  };
+  return JSON.stringify(envelope);
+}
 
 /** Batch vs serial are mutually exclusive on the server; normalize bad drafts. */
 function normalizeExclusiveTrackingFlags(data: WizardFormState): void {
@@ -161,39 +232,54 @@ function normalizeDraftCategory(data: WizardFormState): void {
   }
 }
 
+/** True when the wizard has no meaningful content (same idea as discard-prompt checks). */
+function isWizardFormEmpty(f: WizardFormState): boolean {
+  const hasVariantDraft = f.variantRows.some(
+    (r) =>
+      r.value.trim() ||
+      r.name.trim() ||
+      (r.barcode || '').trim() ||
+      (r.hsn || '').trim() ||
+      (r.supplierSku || '').trim() ||
+      (r.images?.length ?? 0) > 0 ||
+      r.costPriceOverride != null ||
+      r.sellingPriceOverride != null ||
+      r.mrpOverride != null ||
+      r.taxOverride != null
+  );
+  const hasMasterDraft =
+    f.name.trim() ||
+    f.description.trim() ||
+    f.images.length > 0 ||
+    f.tags.length > 0 ||
+    Boolean(
+      f.costPrice ||
+        f.sellingPrice ||
+        f.mrp ||
+        f.gstPercent ||
+        f.minSellingPrice ||
+        f.secondaryUnit ||
+        f.conversionFactor ||
+        f.dimensionLength ||
+        f.dimensionWidth ||
+        f.dimensionHeight ||
+        f.weightValue ||
+        f.shelfLifeDays ||
+        f.batchFormatExample ||
+        f.serialFormatPattern
+    );
+  return !hasMasterDraft && !hasVariantDraft;
+}
+
 export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   onSuccess,
   onCancel,
 }) => {
   const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState<WizardFormState>(() => {
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<WizardFormState> & { sku?: string };
-        const { sku: _legacyDraftSku, ...parsedRest } = parsed;
-        const base = getInitialFormState();
-        const draftUnit =
-          typeof parsedRest.unitOfMeasure === 'string' && parsedRest.unitOfMeasure.trim()
-            ? parsedRest.unitOfMeasure.trim()
-            : base.unitOfMeasure;
-        const merged: WizardFormState = {
-          ...base,
-          ...parsedRest,
-          productType: parsedRest.productType ?? base.productType,
-          variantRows: parsedRest.variantRows?.length
-            ? normalizeVariantRows(parsedRest.variantRows, draftUnit)
-            : base.variantRows,
-        };
-        normalizeExclusiveTrackingFlags(merged);
-        normalizeDraftCategory(merged);
-        return merged;
-      }
-    } catch {
-      /* ignore */
-    }
-    return getInitialFormState();
-  });
+  const [formData, setFormData] = useState<WizardFormState>(getInitialFormState());
+  const [draftPromptOpen, setDraftPromptOpen] = useState(false);
+  const [draftDecisionResolved, setDraftDecisionResolved] = useState(false);
+  const pendingDraftRef = useRef<{ step: number; form: WizardFormState } | null>(null);
   const [loading, setLoading] = useState(false);
   const [categoryOptionsFromApi, setCategoryOptionsFromApi] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -252,6 +338,47 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   }, []);
 
   useEffect(() => {
+    const draft = parseProductDraftFromStorage();
+    if (draft) {
+      pendingDraftRef.current = draft;
+      setDraftPromptOpen(true);
+      setDraftDecisionResolved(false);
+      return;
+    }
+    setDraftDecisionResolved(true);
+  }, []);
+
+  const handleRestoreDraft = useCallback(() => {
+    const pending = pendingDraftRef.current;
+    if (!pending) {
+      setDraftPromptOpen(false);
+      setDraftDecisionResolved(true);
+      return;
+    }
+    suppressBlankDraftPersistRef.current = false;
+    setCurrentStep(pending.step);
+    setFormData(pending.form);
+    setDraftPromptOpen(false);
+    pendingDraftRef.current = null;
+    setDraftDecisionResolved(true);
+  }, []);
+
+  const handleStartFreshDraft = useCallback(() => {
+    skipPersistOnUnmountRef.current = true;
+    localStorage.removeItem(DRAFT_KEY);
+    suppressBlankDraftPersistRef.current = true;
+    setCurrentStep(1);
+    setFormData(getInitialFormState());
+    setFieldErrors({});
+    setVariantRowErrors({});
+    setVariantCodeApiByRow({});
+    setDraftPromptOpen(false);
+    pendingDraftRef.current = null;
+    setDraftDecisionResolved(true);
+    skipPersistOnUnmountRef.current = false;
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void inventoryService
       .getCategories()
@@ -282,6 +409,15 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Latest step for window/visibility focus handlers (avoid stale closures). */
   const currentStepRef = useRef(currentStep);
+  /** Latest form for synchronous draft flush (beforeunload / tab hide). */
+  const formDataRef = useRef(formData);
+  /** When true, unmount must not write localStorage (draft cleared or product created). */
+  const skipPersistOnUnmountRef = useRef(false);
+  /**
+   * After "Start fresh", do not re-create localStorage until the user enters something meaningful.
+   * Otherwise the debounced save immediately writes an empty envelope again.
+   */
+  const suppressBlankDraftPersistRef = useRef(false);
 
   const [variantCodeApiByRow, setVariantCodeApiByRow] = useState<
     Record<number, 'idle' | 'checking' | 'available' | 'taken'>
@@ -388,6 +524,10 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   useEffect(() => {
     currentStepRef.current = currentStep;
   }, [currentStep]);
+
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
 
   useEffect(() => {
     if (currentStep !== 1) return;
@@ -750,6 +890,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         }
         const item = await inventoryService.createItem(payload);
         const itemId = item.id;
+        skipPersistOnUnmountRef.current = true;
         localStorage.removeItem(DRAFT_KEY);
         onSuccess(itemId, saveAndNew);
         if (saveAndNew) {
@@ -757,6 +898,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
           setCurrentStep(1);
           setFieldErrors({});
           setVariantCodeApiByRow({});
+          skipPersistOnUnmountRef.current = false;
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to create item';
@@ -770,11 +912,44 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   );
 
   const handleCancel = useCallback(() => {
-    const hasVariantDraft = formData.variantRows.some(
-      (r) => r.value.trim() || r.name.trim() || (r.barcode || '').trim() || (r.hsn || '').trim()
+    const f = formData;
+    const hasVariantDraft = f.variantRows.some(
+      (r) =>
+        r.value.trim() ||
+        r.name.trim() ||
+        (r.barcode || '').trim() ||
+        (r.hsn || '').trim() ||
+        (r.supplierSku || '').trim() ||
+        (r.images?.length ?? 0) > 0 ||
+        r.costPriceOverride != null ||
+        r.sellingPriceOverride != null ||
+        r.mrpOverride != null ||
+        r.taxOverride != null
     );
-    if (formData.name || formData.images.length > 0 || hasVariantDraft) {
+    const hasMasterDraft =
+      f.name.trim() ||
+      f.description.trim() ||
+      f.images.length > 0 ||
+      f.tags.length > 0 ||
+      Boolean(
+        f.costPrice ||
+          f.sellingPrice ||
+          f.mrp ||
+          f.gstPercent ||
+          f.minSellingPrice ||
+          f.secondaryUnit ||
+          f.conversionFactor ||
+          f.dimensionLength ||
+          f.dimensionWidth ||
+          f.dimensionHeight ||
+          f.weightValue ||
+          f.shelfLifeDays ||
+          f.batchFormatExample ||
+          f.serialFormatPattern
+      );
+    if (hasMasterDraft || hasVariantDraft) {
       if (window.confirm('Discard draft and close?')) {
+        skipPersistOnUnmountRef.current = true;
         localStorage.removeItem(DRAFT_KEY);
         onCancel();
       }
@@ -783,18 +958,88 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     }
   }, [formData, onCancel]);
 
+  const flushDraftToStorage = useCallback(() => {
+    if (!draftDecisionResolved) return;
+    const fd = formDataRef.current;
+    if (suppressBlankDraftPersistRef.current && isWizardFormEmpty(fd)) {
+      return;
+    }
+    if (!isWizardFormEmpty(fd)) {
+      suppressBlankDraftPersistRef.current = false;
+    }
+    try {
+      localStorage.setItem(
+        DRAFT_KEY,
+        serializeProductDraft(currentStepRef.current, fd)
+      );
+    } catch {
+      /* quota / private mode */
+    }
+  }, [draftDecisionResolved]);
+
   useEffect(() => {
-    const t = setInterval(() => {
+    if (!draftDecisionResolved) return;
+    const id = window.setTimeout(flushDraftToStorage, DRAFT_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [formData, currentStep, flushDraftToStorage, draftDecisionResolved]);
+
+  useEffect(() => {
+    if (!draftDecisionResolved) return;
+    const sync = () => {
       try {
-        const payload = JSON.stringify(formData);
-        localStorage.setItem(DRAFT_KEY, payload);
-        showToast('Draft Saved');
+        const fd = formDataRef.current;
+        if (suppressBlankDraftPersistRef.current && isWizardFormEmpty(fd)) {
+          return;
+        }
+        if (!isWizardFormEmpty(fd)) {
+          suppressBlankDraftPersistRef.current = false;
+        }
+        localStorage.setItem(
+          DRAFT_KEY,
+          serializeProductDraft(currentStepRef.current, fd)
+        );
       } catch {
         /* ignore */
       }
-    }, DRAFT_SAVE_INTERVAL_MS);
-    return () => clearInterval(t);
-  }, [formData, showToast]);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') sync();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', sync);
+    window.addEventListener('beforeunload', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', sync);
+      window.removeEventListener('beforeunload', sync);
+    };
+  }, [draftDecisionResolved]);
+
+  /** SPA navigation: persist when leaving the wizard without a full page unload. */
+  useEffect(() => {
+    if (!draftDecisionResolved) return;
+    return () => {
+      if (skipPersistOnUnmountRef.current) {
+        skipPersistOnUnmountRef.current = false;
+        return;
+      }
+      try {
+        const fd = formDataRef.current;
+        if (suppressBlankDraftPersistRef.current && isWizardFormEmpty(fd)) {
+          return;
+        }
+        if (!isWizardFormEmpty(fd)) {
+          suppressBlankDraftPersistRef.current = false;
+        }
+        localStorage.setItem(
+          DRAFT_KEY,
+          serializeProductDraft(currentStepRef.current, fd)
+        );
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [draftDecisionResolved]);
 
   const handleNextStep = useCallback(async () => {
     if (!validateStep(currentStep)) return;
@@ -826,6 +1071,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (draftPromptOpen) return;
       if (e.defaultPrevented) return;
       if (e.key === 'Escape' && detailsDrawerOpen) {
         // While variant drawer is open, ESC should only close the drawer.
@@ -860,7 +1106,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleNextStep, handlePrevStep, handleCancel, detailsDrawerOpen, closeDetailsDrawer, goToWizardStep]);
+  }, [handleNextStep, handlePrevStep, handleCancel, detailsDrawerOpen, closeDetailsDrawer, goToWizardStep, draftPromptOpen]);
 
   const marginPercent =
     formData.costPrice && formData.sellingPrice && parseFloat(formData.costPrice) > 0
@@ -1675,6 +1921,21 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
           {toast}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={draftPromptOpen}
+        title="Restore saved draft?"
+        message="A previous product draft is available. Do you want to continue from that draft or start with a clean form?"
+        confirmLabel="Restore draft"
+        cancelLabel="Start fresh"
+        variant="info"
+        showVariantNotice={false}
+        closeOnOverlayClick={false}
+        closeOnEscape={false}
+        showCloseButton={false}
+        onConfirm={handleRestoreDraft}
+        onCancel={handleStartFreshDraft}
+      />
 
       <ProductVariantDetailsDrawer
         key={`pvd-${detailsDrawerRowIndex ?? 'x'}-${detailsDrawerOpen}`}

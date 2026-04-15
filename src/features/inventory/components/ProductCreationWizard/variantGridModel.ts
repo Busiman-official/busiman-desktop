@@ -115,9 +115,16 @@ function normalizeMetadata(raw: unknown): Record<string, unknown> | undefined {
   return { ...(raw as Record<string, unknown>) };
 }
 
+/** Accept numbers and numeric strings from JSON drafts / older saves. */
 function normalizeNumber(raw: unknown): number | undefined {
-  if (typeof raw !== 'number' || Number.isNaN(raw)) return undefined;
-  return raw;
+  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t === '') return undefined;
+    const n = Number(t);
+    if (!Number.isNaN(n)) return n;
+  }
+  return undefined;
 }
 
 function normalizeBoolean(raw: unknown): boolean | undefined {
