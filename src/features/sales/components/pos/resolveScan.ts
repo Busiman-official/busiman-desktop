@@ -23,7 +23,11 @@ function serialBatchWarnings(item: InventoryItem, v: InventoryVariant): { serial
   return { ...(serial ? { serial: true } : {}), ...(batch ? { batch: true } : {}) };
 }
 
-function lineFlagsFromItem(item: InventoryItem): { isNonStock: boolean; allowNegativeStock: boolean } {
+/** POS stock policy for an item (variant picker, scan, cart meta). */
+export function posLineStockFlagsFromItem(item: InventoryItem): {
+  isNonStock: boolean;
+  allowNegativeStock: boolean;
+} {
   const behavior = resolveInventoryBehavior({
     productType: item.productType,
     isMisc: item.isMisc,
@@ -55,11 +59,13 @@ export async function resolveBarcodeForPos(barcode: string): Promise<PosResolved
     }
     const fullItem = item.industryFlags ? item : await inventoryService.getItemById(item.id);
     const w = serialBatchWarnings(fullItem, variant);
-    const flags = lineFlagsFromItem(fullItem);
+    const flags = posLineStockFlagsFromItem(fullItem);
+    const sku =
+      (variant.sku || variant.code || '').trim() || fullItem.displaySku?.trim() || fullItem.sku?.trim() || '';
     return {
       variantId,
       itemId: item.id,
-      sku: variant.sku || variant.code,
+      sku,
       label: `${item.name} - ${variant.name}`,
       isNonStock: flags.isNonStock,
       allowNegativeStock: flags.allowNegativeStock,
@@ -79,11 +85,12 @@ export function buildLineMetaFromItemVariant(
   variant: InventoryVariant
 ): PosResolvedLineMeta {
   const w = serialBatchWarnings(item, variant);
-  const flags = lineFlagsFromItem(item);
+  const flags = posLineStockFlagsFromItem(item);
+  const sku = (variant.sku || variant.code || '').trim() || item.displaySku?.trim() || item.sku?.trim() || '';
   return {
     variantId: variant.id,
     itemId: item.id,
-    sku: variant.sku || variant.code,
+    sku,
     label: `${item.name} - ${variant.name}`,
     isNonStock: flags.isNonStock,
     allowNegativeStock: flags.allowNegativeStock,

@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/shared/components/modals/Modal';
 import { Button } from '@/shared/components/ui';
 import { inventoryService, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
-import { buildLineMetaFromItemVariant, type PosResolvedLineMeta } from './resolveScan';
+import {
+  buildLineMetaFromItemVariant,
+  posLineStockFlagsFromItem,
+  type PosResolvedLineMeta,
+} from './resolveScan';
 import './PosVariantPickerModal.css';
 
 export type PosVariantPickerLine = {
@@ -25,10 +29,15 @@ export interface PosVariantPickerModalProps {
     variantId: string,
     opts?: { customerId?: string; salesPointId?: string }
   ) => Promise<{ price: number; currency: string }>;
+  /** When true, POS allows exceeding on-hand (matches cart / checkout). */
+  allowNegativePos?: boolean;
   onConfirm: (lines: PosVariantPickerLine[]) => void;
 }
 
 type StockLevel = 'in' | 'low' | 'out';
+
+/** Upper bound for stepper when stock is not enforced (misc / backorder / global oversell). */
+const POS_PICKER_SOFT_QTY_CAP = 9999;
 
 function formatMoney(n: number, currency = 'INR'): string {
   return new Intl.NumberFormat(undefined, {
@@ -85,6 +94,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   customerId,
   highlightVariantId,
   resolvePrice,
+  allowNegativePos = false,
   onConfirm,
 }) => {
   const [loading, setLoading] = useState(true);
@@ -101,6 +111,20 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
       return a.name.localeCompare(b.name);
     });
   }, [variants]);
+
+  const stockFlags = useMemo(() => (item ? posLineStockFlagsFromItem(item) : null), [item]);
+
+  const variantIgnoresOnHand = useCallback(
+    (v: InventoryVariant) => {
+      if (!stockFlags) return false;
+      if (allowNegativePos) return true;
+      if (stockFlags.isNonStock) return true;
+      if (stockFlags.allowNegativeStock) return true;
+      if (v.allowBackorder === true) return true;
+      return false;
+    },
+    [allowNegativePos, stockFlags]
+  );
 
   useEffect(() => {
     if (!isOpen || !item || sortedVariants.length === 0) return;
@@ -166,7 +190,9 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   const subtitle = useMemo(() => {
     if (!item) return '';
     const cat = item.category?.trim() || '—';
-    return `SKU: ${item.sku} · ${cat} · ${item.unitOfMeasure || 'pcs'}`;
+    const masterSku =
+      [item.sku, item.displaySku].map((s) => (typeof s === 'string' ? s.trim() : '')).find(Boolean) || '—';
+    return `SKU: ${masterSku} · ${cat} · ${item.unitOfMeasure || 'pcs'}`;
   }, [item]);
 
   const imgUrl = item ? primaryImageUrl(item) : undefined;
@@ -181,10 +207,11 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
     return { units, total, variantCount: sessionLines.length };
   }, [sessionLines]);
 
-  const bumpDraft = useCallback((variantId: string, delta: number, maxStock: number) => {
+  const bumpDraft = useCallback((variantId: string, delta: number, maxStock: number, unlimited: boolean) => {
     setDraftQty((prev) => {
       const cur = prev[variantId] ?? 1;
       const next = Math.max(0, cur + delta);
+      if (unlimited) return { ...prev, [variantId]: Math.min(next, POS_PICKER_SOFT_QTY_CAP) };
       const capped = maxStock > 0 ? Math.min(next, maxStock) : next;
       return { ...prev, [variantId]: capped };
     });
@@ -192,10 +219,13 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
 
   const handleAddVariant = useCallback(
     (v: InventoryVariant) => {
+      if (v.isActive === false) return;
       const avail = stockByVariant[v.id] ?? 0;
       const qty = draftQty[v.id] ?? 0;
       const price = priceByVariant[v.id] ?? 0;
-      if (!item || qty <= 0 || avail <= 0) return;
+      const unlimited = variantIgnoresOnHand(v);
+      if (!item || qty <= 0) return;
+      if (!unlimited && avail <= 0) return;
 
       const meta = buildLineMetaFromItemVariant(item, v);
       setSessionLines((prev) => {
@@ -219,7 +249,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
 
       setDraftQty((prev) => ({ ...prev, [v.id]: 1 }));
     },
-    [item, draftQty, stockByVariant, priceByVariant]
+    [item, draftQty, stockByVariant, priceByVariant, variantIgnoresOnHand]
   );
 
   const handleConfirm = useCallback(() => {
@@ -284,35 +314,83 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
               const price = priceByVariant[v.id] ?? 0;
               const qty = draftQty[v.id] ?? 0;
               const highlight = highlightId === v.id;
-              const oos = avail <= 0;
+              const unlimited = variantIgnoresOnHand(v);
+              const oos = avail <= 0 && !unlimited;
+              const variantInactive = v.isActive === false;
+              const maxCap = unlimited ? POS_PICKER_SOFT_QTY_CAP : Math.max(avail, 0);
 
-              const badge =
-                status === 'in' ? (
-                  <span className="pos-variant-card__badge pos-variant-card__badge--in">In stock</span>
-                ) : status === 'low' ? (
-                  <span className="pos-variant-card__badge pos-variant-card__badge--low">Low stock</span>
-                ) : (
-                  <span className="pos-variant-card__badge pos-variant-card__badge--out">Out of stock</span>
+              const showSellableZero = avail <= 0 && unlimited && stockFlags && !variantInactive;
+
+              let badge: React.ReactNode;
+              let stockClass: string;
+              if (variantInactive) {
+                badge = (
+                  <span className="pos-variant-card__badge pos-variant-card__badge--out">Inactive</span>
                 );
+                stockClass =
+                  status === 'in'
+                    ? 'pos-variant-card__stock--in'
+                    : status === 'low'
+                      ? 'pos-variant-card__stock--low'
+                      : 'pos-variant-card__stock--out';
+              } else if (showSellableZero) {
+                if (stockFlags.isNonStock) {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--neutral">Non-stock</span>
+                  );
+                  stockClass = 'pos-variant-card__stock--neutral';
+                } else if (stockFlags.allowNegativeStock) {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--info">Misc — not qty-limited</span>
+                  );
+                  stockClass = 'pos-variant-card__stock--neutral';
+                } else if (v.allowBackorder === true) {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--info">Backorder OK</span>
+                  );
+                  stockClass = 'pos-variant-card__stock--neutral';
+                } else if (allowNegativePos) {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--info">Oversell (POS)</span>
+                  );
+                  stockClass = 'pos-variant-card__stock--neutral';
+                } else {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--out">Out of stock</span>
+                  );
+                  stockClass = 'pos-variant-card__stock--out';
+                }
+              } else {
+                badge =
+                  status === 'in' ? (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--in">In stock</span>
+                  ) : status === 'low' ? (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--low">Low stock</span>
+                  ) : (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--out">Out of stock</span>
+                  );
+                stockClass =
+                  status === 'in'
+                    ? 'pos-variant-card__stock--in'
+                    : status === 'low'
+                      ? 'pos-variant-card__stock--low'
+                      : 'pos-variant-card__stock--out';
+              }
 
-              const stockClass =
-                status === 'in'
-                  ? 'pos-variant-card__stock--in'
-                  : status === 'low'
-                    ? 'pos-variant-card__stock--low'
-                    : 'pos-variant-card__stock--out';
-
+              const stockOnHandDisplay =
+                !locationId || stockFlags?.isNonStock ? '—' : avail;
+              const variantCode = (v.code || v.sku || '').trim() || '—';
               const barcode = (v.barcode || '—').trim() || '—';
 
               return (
                 <article
                   key={v.id}
-                  className={`pos-variant-card${highlight ? ' pos-variant-card--highlight' : ''}${oos ? ' pos-variant-card--oos' : ''}`}
+                  className={`pos-variant-card${highlight ? ' pos-variant-card--highlight' : ''}${oos || variantInactive ? ' pos-variant-card--oos' : ''}`}
                 >
                   <div className="pos-variant-card__head">
                     <div>
-                      <div className="pos-variant-card__name">{`${item.name} - ${v.name}`}</div>
-                      <span className="pos-variant-card__sku">SKU: {v.code}</span>
+                      <div className="pos-variant-card__name">{`${item!.name} - ${v.name}`}</div>
+                      <span className="pos-variant-card__sku">SKU: {variantCode}</span>
                     </div>
                     {badge}
                   </div>
@@ -320,7 +398,9 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                     <div className="pos-variant-card__meta">
                       <div>
                         <span>Stock</span>
-                        <strong className={stockClass}>{locationId ? avail : '—'}</strong>
+                        <strong className={typeof stockOnHandDisplay === 'number' ? stockClass : 'pos-variant-card__stock--neutral'}>
+                          {stockOnHandDisplay}
+                        </strong>
                       </div>
                       <div>
                         <span>Price</span>
@@ -332,7 +412,13 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                       </div>
                     </div>
 
-                    {oos ? (
+                    {variantInactive ? (
+                      <div className="pos-variant-card__actions">
+                        <button type="button" className="pos-variant-card__oos-btn" disabled>
+                          Inactive
+                        </button>
+                      </div>
+                    ) : oos ? (
                       <div className="pos-variant-card__actions">
                         <button type="button" className="pos-variant-card__oos-btn" disabled>
                           Out of stock
@@ -346,7 +432,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                             className="pos-variant-card__step-btn"
                             aria-label="Decrease quantity"
                             disabled={qty <= 0}
-                            onClick={() => bumpDraft(v.id, -1, avail)}
+                            onClick={() => bumpDraft(v.id, -1, maxCap, unlimited)}
                           >
                             −
                           </button>
@@ -355,8 +441,8 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                             type="button"
                             className="pos-variant-card__step-btn"
                             aria-label="Increase quantity"
-                            disabled={qty >= avail}
-                            onClick={() => bumpDraft(v.id, 1, avail)}
+                            disabled={unlimited ? qty >= POS_PICKER_SOFT_QTY_CAP : qty >= maxCap}
+                            onClick={() => bumpDraft(v.id, 1, maxCap, unlimited)}
                           >
                             +
                           </button>

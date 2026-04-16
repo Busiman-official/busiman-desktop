@@ -225,6 +225,16 @@
   color: #b91c1c;
 }
 
+.pos-variant-card__badge--neutral {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.pos-variant-card__badge--info {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .pos-variant-card__row {
   display: flex;
   align-items: center;
@@ -260,6 +270,10 @@
 
 .pos-variant-card__meta strong.pos-variant-card__stock--out {
   color: #b91c1c;
+}
+
+.pos-variant-card__meta strong.pos-variant-card__stock--neutral {
+  color: #64748b;
 }
 
 .pos-variant-card__actions {
