@@ -169,8 +169,20 @@ class AutoCheckOutService {
       }
     }
 
-    // Add network information
-    if (networkInfo) {
+    let omitNetworkPayload = false;
+    try {
+      const session = await sessionService.getSessionFromRenderer();
+      const u = session?.user as { allowCheckoutWithoutWifi?: boolean } | undefined;
+      if (u?.allowCheckoutWithoutWifi === true) {
+        omitNetworkPayload = true;
+        console.log('[AutoCheckOutService] allowCheckoutWithoutWifi — omitting WiFi/Ethernet from auto check-out');
+      }
+    } catch {
+      // fall through — attach network when available
+    }
+
+    // Add network information (backend skips validation when allowCheckoutWithoutWifi)
+    if (!omitNetworkPayload && networkInfo) {
       if (networkInfo.type === 'wifi' && networkInfo.wifi) {
         checkOutRequest.wifi = {
           ssid: networkInfo.wifi.ssid,
