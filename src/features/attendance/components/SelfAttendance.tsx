@@ -4,7 +4,7 @@
  * Role-aware: Admin cannot mark attendance
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { attendanceService } from '@/services/attendance.service';
 import { wifiService } from '@/services/wifi.service';
 import { socketService } from '@/services/socket.service';
@@ -43,6 +43,21 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     loading: false,
   });
   const isCheckingWifi = React.useRef(false);
+
+  const allowCheckinWithoutWifi = user?.allowCheckinWithoutWifi === true;
+  const allowCheckoutWithoutWifi = user?.allowCheckoutWithoutWifi === true;
+
+  const desktopNetworkBlocksCheckIn = useMemo(() => {
+    if (!window.electronAPI) return false;
+    if (allowCheckinWithoutWifi) return false;
+    return networkValidation.isValid === false;
+  }, [allowCheckinWithoutWifi, networkValidation.isValid]);
+
+  const desktopNetworkBlocksCheckOut = useMemo(() => {
+    if (!window.electronAPI) return false;
+    if (allowCheckoutWithoutWifi) return false;
+    return networkValidation.isValid === false;
+  }, [allowCheckoutWithoutWifi, networkValidation.isValid]);
 
   useEffect(() => {
     loadStatus();
@@ -205,32 +220,30 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
 
   const handleCheckIn = async () => {
     if (!canMarkAttendance) return;
-    
-    // Re-validate network before check-in
-    await checkNetworkStatus();
-    
-    // Check if network validation is still loading
-    if (networkValidation.loading) {
-      setError('Please wait for network validation to complete');
-      return;
-    }
-    
-    // Check if network is valid after validation
-    if (networkValidation.isValid === false) {
-      setError(networkValidation.reason || 'Network connection is not approved for attendance');
-      return;
-    }
 
-    // For desktop app, ensure we have network info
-    if (window.electronAPI) {
-      if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
-        setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+    if (!allowCheckinWithoutWifi) {
+      await checkNetworkStatus();
+
+      if (networkValidation.loading) {
+        setError('Please wait for network validation to complete');
         return;
       }
-      
-      if (networkValidation.isValid !== true) {
-        setError('Network connection validation failed. Please check your connection.');
+
+      if (networkValidation.isValid === false) {
+        setError(networkValidation.reason || 'Network connection is not approved for attendance');
         return;
+      }
+
+      if (window.electronAPI) {
+        if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
+          setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+          return;
+        }
+
+        if (networkValidation.isValid !== true) {
+          setError('Network connection validation failed. Please check your connection.');
+          return;
+        }
       }
     }
 
@@ -242,7 +255,6 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
         source: AttendanceSource.DESKTOP,
       };
 
-      // Always include network info for desktop app if available
       if (window.electronAPI && networkValidation.networkInfo) {
         if (networkValidation.networkInfo.type === 'wifi' && networkValidation.networkInfo.wifi) {
           checkInRequest.wifi = {
@@ -253,14 +265,12 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
           checkInRequest.ethernet = {
             macAddress: networkValidation.networkInfo.ethernet.macAddress,
           };
-        } else {
-          // If network info exists but type is invalid, throw error
+        } else if (!allowCheckinWithoutWifi) {
           throw new Error('Invalid network information. Please reconnect and try again.');
         }
       }
 
-      // If desktop app but no network info, throw error
-      if (window.electronAPI && !checkInRequest.wifi && !checkInRequest.ethernet) {
+      if (!allowCheckinWithoutWifi && window.electronAPI && !checkInRequest.wifi && !checkInRequest.ethernet) {
         throw new Error('Network connection information is required for desktop attendance');
       }
 
@@ -285,8 +295,6 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
 
   const handleCheckOut = async () => {
     if (!canMarkAttendance) return;
-
-    const allowCheckoutWithoutWifi = user?.allowCheckoutWithoutWifi === true;
 
     // Re-validate network before check-out (skip when employee is allowed to checkout without WiFi)
     if (!allowCheckoutWithoutWifi) {
@@ -436,6 +444,16 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
       {successMessage && <div className="self-attendance-success">{successMessage}</div>}
 
       {/* Network Status Section - Only show in desktop app */}
+      {window.electronAPI && canMarkAttendance && (allowCheckinWithoutWifi || allowCheckoutWithoutWifi) && (
+        <div className="self-attendance-bypass-note" role="status">
+          {allowCheckinWithoutWifi && allowCheckoutWithoutWifi
+            ? 'Your account can check in and check out without approved office network verification (HR/Admin). Device rules still apply.'
+            : allowCheckinWithoutWifi
+              ? 'Your account can check in without approved office network verification. Check-out still requires an approved network unless enabled separately.'
+              : 'Your account can check out without approved office network verification. Check-in still requires an approved network unless enabled separately.'}
+        </div>
+      )}
+
       {window.electronAPI && canMarkAttendance && (
         <div className="self-attendance-wifi">
           <div className="wifi-info-header">
@@ -461,8 +479,20 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
             </button>
           </div>
           {networkValidation.isValid === false && (
-            <div className="wifi-error">
+            <div
+              className={
+                allowCheckinWithoutWifi || allowCheckoutWithoutWifi
+                  ? 'wifi-warn'
+                  : 'wifi-error'
+              }
+            >
               {networkValidation.reason || 'Network connection is not approved for attendance'}
+              {(allowCheckinWithoutWifi || allowCheckoutWithoutWifi) && (
+                <span className="wifi-warn-suffix">
+                  {' '}
+                  — You may still be able to mark attendance if HR enabled a bypass for check-in or check-out.
+                </span>
+              )}
             </div>
           )}
           {networkValidation.isValid === true && networkValidation.networkInfo && (
@@ -500,13 +530,13 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
             className="btn-check-in"
             onClick={handleCheckIn}
             disabled={
-              loading || 
-              !status.canCheckIn || 
-              networkValidation.loading ||
-              (window.electronAPI && networkValidation.isValid === false)
+              loading ||
+              !status.canCheckIn ||
+              (!allowCheckinWithoutWifi && networkValidation.loading) ||
+              desktopNetworkBlocksCheckIn
             }
             title={
-              window.electronAPI && networkValidation.isValid === false
+              desktopNetworkBlocksCheckIn
                 ? networkValidation.reason || 'Network connection not approved'
                 : undefined
             }
@@ -516,7 +546,17 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
           <button
             className="btn-check-out"
             onClick={handleCheckOut}
-            disabled={loading || !status.canCheckOut}
+            disabled={
+              loading ||
+              !status.canCheckOut ||
+              (!allowCheckoutWithoutWifi && networkValidation.loading) ||
+              desktopNetworkBlocksCheckOut
+            }
+            title={
+              desktopNetworkBlocksCheckOut
+                ? networkValidation.reason || 'Network connection not approved'
+                : undefined
+            }
           >
             {loading ? 'Processing...' : 'Check Out'}
           </button>

@@ -121,6 +121,25 @@ class AutoAttendanceService {
       };
     }
 
+    // 3b. HR may allow check-in without approved office network (desktop policy)
+    try {
+      const session = await sessionService.getSessionFromRenderer();
+      const u = session.user as { allowCheckinWithoutWifi?: boolean } | undefined;
+      if (u?.allowCheckinWithoutWifi === true) {
+        console.log('[AutoAttendanceService] allowCheckinWithoutWifi — skipping network pre-check');
+        return {
+          eligible: true,
+          shiftAssigned: true,
+          isWorkingDay: true,
+          withinTimeWindow: true,
+          autoCheckInEnabled: true,
+          networkValid: true,
+        };
+      }
+    } catch {
+      // ignore — fall through to network validation
+    }
+
     // 4. Verify network is valid
     if (networkInfo.type === 'none') {
       return {

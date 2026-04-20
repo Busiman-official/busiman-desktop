@@ -414,7 +414,6 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   return (
     <div className="employee-management-page">
       <div className="employee-management-content">
-
         {viewMode === 'add' && (
           <header className="employee-form-toolbar" aria-label="Add employee">
             <button type="button" className="employee-form-toolbar__back" onClick={handleCancelForm}>

@@ -1,0 +1,43 @@
+/**
+ * Design tokens for module workspace headers (Sales, Inventory).
+ * Used by SalesModuleHeader.css — keep in sync with Sales visual spec.
+ */
+.sales-module-header {
+  --mwh-surface: #fff;
+  --mwh-border: #e2e8f0;
+  --mwh-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  --mwh-row-padding-y: 12px;
+  --mwh-row-padding-x: 16px;
+  --mwh-row-gap: 12px 16px;
+  --mwh-left-gap: 12px 16px;
+  --mwh-title-size: 18px;
+  --mwh-title-weight: 700;
+  --mwh-title-color: #0f172a;
+  --mwh-title-tracking: -0.02em;
+  --mwh-tabs-border: 1px solid #e2e8f0;
+  --mwh-tabs-radius: 8px;
+  --mwh-tabs-bg: #f8fafc;
+  --mwh-tab-padding-y: 8px;
+  --mwh-tab-padding-x: 12px;
+  --mwh-tab-font-size: 12px;
+  --mwh-tab-font-weight: 500;
+  --mwh-tab-font-weight-active: 600;
+  --mwh-tab-color: #64748b;
+  --mwh-tab-color-active: #2563eb;
+  --mwh-tab-color-hover: #334155;
+  --mwh-tab-bg-hover: #f1f5f9;
+  --mwh-tab-bg-active: #fff;
+  --mwh-tab-divider: 1px solid #e2e8f0;
+  --mwh-right-gap: 10px 12px;
+  --mwh-actions-gap: 8px;
+  --mwh-branch-label-color: #64748b;
+  --mwh-branch-label-size: 13px;
+  --mwh-select-min-branch: 160px;
+  --mwh-select-max-branch: 260px;
+  --mwh-select-min-context: 180px;
+  --mwh-select-max-context: 280px;
+  --mwh-select-font-size: 13px;
+  --mwh-input-width: min(240px, 100%);
+  --mwh-input-font-size: 13px;
+  --mwh-mobile-divider: #f1f5f9;
+}

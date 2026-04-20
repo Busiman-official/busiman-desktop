@@ -413,8 +413,35 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
             )}
           </div>
 
+          <div className="shift-attendance-network-policy">
+            <p className="shift-attendance-network-policy__title">Desktop app — office network verification</p>
+            <p className="shift-attendance-network-policy__lead">
+              By default, check-in and check-out from the desktop app require an approved Wi‑Fi or Ethernet network.
+              Enable these only for roles that legitimately work off-site (field staff, remote trials, etc.).
+            </p>
+          </div>
+
           <div className="form-field toggle-field">
-            <label className="field-label">Allow checkout without WiFi verification</label>
+            <label className="field-label">Allow check-in without network verification</label>
+            {canEdit ? (
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={employee.allowCheckinWithoutWifi || false}
+                  onChange={(e) => handleToggle('allowCheckinWithoutWifi', e.target.checked)}
+                  disabled={!canEdit}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            ) : (
+              <div className="field-value read-only">
+                {employee.allowCheckinWithoutWifi ? 'Yes' : 'No'}
+              </div>
+            )}
+          </div>
+
+          <div className="form-field toggle-field">
+            <label className="field-label">Allow check-out without network verification</label>
             {canEdit ? (
               <label className="toggle-switch">
                 <input

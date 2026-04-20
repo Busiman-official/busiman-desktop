@@ -141,3 +141,13 @@
 .lines-grid-container tbody tr.focused-row {
   background-color: rgba(0, 102, 204, 0.06);
 }
+
+.movement-variant-master-only {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #334155;
+}

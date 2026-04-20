@@ -1,5 +1,5 @@
 /**
- * Inventory Page Styles
+ * Inventory Page — content area only; header uses SalesModuleHeader + shared tokens.
  */
 
 .inventory-page {
@@ -9,64 +9,8 @@
   overflow: hidden;
 }
 
-.inventory-page-header {
-  padding: 20px;
-  border-bottom: 1px solid #e0e0e0;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.quick-actions-header {
-  display: flex;
-  gap: 12px;
-}
-
-.inventory-page-header h1 {
-  margin: 0 0 5px 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #333;
-}
-
-.page-subtitle {
-  margin: 0;
-  color: #666;
-  font-size: 14px;
-}
-
-.inventory-page-tabs {
-  display: flex;
-  gap: 0;
-  padding: 0 20px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #f9f9f9;
-}
-
-.inventory-tab {
-  padding: 12px 24px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: #666;
-  border-bottom: 2px solid transparent;
-  transition: all 0.2s;
-}
-
-.inventory-tab:hover {
-  color: #333;
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.inventory-tab.active {
-  color: #2563eb;
-  border-bottom-color: #2563eb;
-  background: white;
-}
-
 .inventory-page-content {
   flex: 1;
   overflow: auto;
+  min-height: 0;
 }

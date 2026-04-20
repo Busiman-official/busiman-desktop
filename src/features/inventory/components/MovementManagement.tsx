@@ -23,7 +23,7 @@ import { MovementList, MovementSelection } from './MovementList';
 import { MovementDetailPanel } from './MovementDetailPanel';
 import { CreateMovementView } from './CreateMovementView';
 import { StockCountingView } from './StockCountingView';
-import { itemDisplaySku } from '../utils/itemDisplaySku';
+import { movementItemPickerLabel } from '../utils/itemDisplaySku';
 import './MovementManagement.css';
 
 type ViewMode = 'list' | 'create' | 'details' | 'approve';
@@ -470,7 +470,7 @@ export const MovementManagement: React.FC = () => {
                 <option value="">All Items</option>
                 {items.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {itemDisplaySku(item)} - {item.name}
+                    {movementItemPickerLabel(item)}
                   </option>
                 ))}
               </Select>
@@ -778,7 +778,7 @@ export const MovementManagement: React.FC = () => {
             <option value="">Select Item</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
-                {itemDisplaySku(item)} - {item.name}
+                {movementItemPickerLabel(item)}
               </option>
             ))}
           </Select>

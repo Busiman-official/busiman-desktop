@@ -2109,7 +2109,7 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       newParams.set('tab', 'items');
       newParams.set('itemId', itemId);
       if (stock.variantId) {
-        newParams.set('itemSubTab', 'variants');
+        newParams.set('itemSubTab', 'stock');
         newParams.set('variantId', stock.variantId);
       } else {
         newParams.set('itemSubTab', 'stock');

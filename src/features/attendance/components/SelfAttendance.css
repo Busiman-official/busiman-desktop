@@ -153,6 +153,32 @@
   font-size: var(--font-size-small);
 }
 
+.self-attendance-bypass-note {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-small);
+  line-height: 1.45;
+  color: #1e3a8a;
+}
+
+.wifi-warn {
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: #fffbeb;
+  color: #92400e;
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-small);
+  border-left: 3px solid #f59e0b;
+}
+
+.wifi-warn-suffix {
+  font-weight: var(--font-weight-normal);
+  opacity: 0.95;
+}
+
 .wifi-success {
   margin-top: var(--spacing-xs);
   padding: var(--spacing-sm) var(--spacing-md);

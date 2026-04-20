@@ -3,7 +3,8 @@
  * Allows employees to check in and check out
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { authStore } from '@/store/authStore';
 import { attendanceService } from '@/services/attendance.service';
 import { wifiService } from '@/services/wifi.service';
 import { socketService } from '@/services/socket.service';
@@ -25,6 +26,10 @@ interface NetworkValidationState {
 }
 
 export const EmployeeAttendance: React.FC = () => {
+  const user = authStore((s) => s.user);
+  const allowCheckinWithoutWifi = user?.allowCheckinWithoutWifi === true;
+  const allowCheckoutWithoutWifi = user?.allowCheckoutWithoutWifi === true;
+
   const [status, setStatus] = useState<AttendanceStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +41,18 @@ export const EmployeeAttendance: React.FC = () => {
     loading: false,
   });
   const isCheckingWifi = React.useRef(false);
+
+  const desktopNetworkBlocksCheckIn = useMemo(() => {
+    if (!window.electronAPI) return false;
+    if (allowCheckinWithoutWifi) return false;
+    return networkValidation.isValid === false;
+  }, [allowCheckinWithoutWifi, networkValidation.isValid]);
+
+  const desktopNetworkBlocksCheckOut = useMemo(() => {
+    if (!window.electronAPI) return false;
+    if (allowCheckoutWithoutWifi) return false;
+    return networkValidation.isValid === false;
+  }, [allowCheckoutWithoutWifi, networkValidation.isValid]);
 
   // Load initial status
   useEffect(() => {
@@ -188,26 +205,40 @@ export const EmployeeAttendance: React.FC = () => {
   };
 
   const handleCheckIn = async () => {
-    // Re-validate network before check-in
-    await checkNetworkStatus();
-    
-    // Check if network is valid after validation
-    if (networkValidation.isValid === false) {
-      setError(networkValidation.reason || 'Network connection is not approved for attendance');
-      return;
+    if (!allowCheckinWithoutWifi) {
+      await checkNetworkStatus();
+
+      if (networkValidation.loading) {
+        setError('Please wait for network validation to complete');
+        return;
+      }
+
+      if (networkValidation.isValid === false) {
+        setError(networkValidation.reason || 'Network connection is not approved for attendance');
+        return;
+      }
+
+      if (window.electronAPI) {
+        if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
+          setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+          return;
+        }
+        if (networkValidation.isValid !== true) {
+          setError('Network connection validation failed. Please check your connection.');
+          return;
+        }
+      }
     }
 
     setLoading(true);
     setError(null);
 
     try {
-      // The attendance service will automatically get network info if not provided
-      // But we can also pass it explicitly if we have it
       const checkInRequest: any = {
         source: AttendanceSource.DESKTOP,
       };
 
-      if (networkValidation.networkInfo) {
+      if (window.electronAPI && networkValidation.networkInfo) {
         if (networkValidation.networkInfo.type === 'wifi' && networkValidation.networkInfo.wifi) {
           checkInRequest.wifi = {
             ssid: networkValidation.networkInfo.wifi.ssid,
@@ -217,7 +248,13 @@ export const EmployeeAttendance: React.FC = () => {
           checkInRequest.ethernet = {
             macAddress: networkValidation.networkInfo.ethernet.macAddress,
           };
+        } else if (!allowCheckinWithoutWifi) {
+          throw new Error('Invalid network information. Please reconnect and try again.');
         }
+      }
+
+      if (!allowCheckinWithoutWifi && window.electronAPI && !checkInRequest.wifi && !checkInRequest.ethernet) {
+        throw new Error('Network connection information is required for desktop attendance');
       }
 
       const result = await attendanceService.checkIn(checkInRequest);
@@ -240,26 +277,40 @@ export const EmployeeAttendance: React.FC = () => {
   };
 
   const handleCheckOut = async () => {
-    // Re-validate network before check-out
-    await checkNetworkStatus();
-    
-    // Check if network is valid after validation
-    if (networkValidation.isValid === false) {
-      setError(networkValidation.reason || 'Network connection is not approved for attendance');
-      return;
+    if (!allowCheckoutWithoutWifi) {
+      await checkNetworkStatus();
+
+      if (networkValidation.loading) {
+        setError('Please wait for network validation to complete');
+        return;
+      }
+
+      if (networkValidation.isValid === false) {
+        setError(networkValidation.reason || 'Network connection is not approved for attendance');
+        return;
+      }
+
+      if (window.electronAPI) {
+        if (!networkValidation.networkInfo || networkValidation.networkInfo.type === 'none') {
+          setError('No network connection detected. Please connect to a WiFi or Ethernet network.');
+          return;
+        }
+        if (networkValidation.isValid !== true) {
+          setError('Network connection validation failed. Please check your connection.');
+          return;
+        }
+      }
     }
 
     setLoading(true);
     setError(null);
 
     try {
-      // The attendance service will automatically get network info if not provided
-      // But we can also pass it explicitly if we have it
       const checkOutRequest: any = {
         source: AttendanceSource.DESKTOP,
       };
 
-      if (networkValidation.networkInfo) {
+      if (window.electronAPI && networkValidation.networkInfo) {
         if (networkValidation.networkInfo.type === 'wifi' && networkValidation.networkInfo.wifi) {
           checkOutRequest.wifi = {
             ssid: networkValidation.networkInfo.wifi.ssid,
@@ -269,7 +320,13 @@ export const EmployeeAttendance: React.FC = () => {
           checkOutRequest.ethernet = {
             macAddress: networkValidation.networkInfo.ethernet.macAddress,
           };
+        } else if (!allowCheckoutWithoutWifi) {
+          throw new Error('Invalid network information. Please reconnect and try again.');
         }
+      }
+
+      if (!allowCheckoutWithoutWifi && window.electronAPI && !checkOutRequest.wifi && !checkOutRequest.ethernet) {
+        throw new Error('Network connection information is required for desktop attendance');
       }
 
       const result = await attendanceService.checkOut(checkOutRequest);
@@ -418,8 +475,8 @@ export const EmployeeAttendance: React.FC = () => {
             disabled={
               loading ||
               !status.canCheckIn ||
-              (window.electronAPI && networkValidation.isValid === false) ||
-              (window.electronAPI && networkValidation.loading)
+              (!allowCheckinWithoutWifi && window.electronAPI && networkValidation.loading) ||
+              desktopNetworkBlocksCheckIn
             }
           >
             {loading ? 'Processing...' : 'Check In'}
@@ -430,8 +487,8 @@ export const EmployeeAttendance: React.FC = () => {
             disabled={
               loading ||
               !status.canCheckOut ||
-              (window.electronAPI && networkValidation.isValid === false) ||
-              (window.electronAPI && networkValidation.loading)
+              (!allowCheckoutWithoutWifi && window.electronAPI && networkValidation.loading) ||
+              desktopNetworkBlocksCheckOut
             }
           >
             {loading ? 'Processing...' : 'Check Out'}

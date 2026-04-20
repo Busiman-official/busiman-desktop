@@ -10,7 +10,7 @@ import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import { getNumberGridMode } from '../utils/numberGridUtils';
 import type { BatchRow } from '../utils/numberGridUtils';
 import { getTrackingType, type TrackingType } from '../utils/trackingUtils';
-import { itemDisplaySku } from '../utils/itemDisplaySku';
+import { movementItemPickerLabel } from '../utils/itemDisplaySku';
 import { NumberGrid } from './NumberGrid';
 import './MovementLinesGrid.css';
 
@@ -746,7 +746,7 @@ function MovementLinesGridInner(
                         <option value="">Select Item</option>
                         {items.map((item) => (
                           <option key={item.id} value={item.id}>
-                            {itemDisplaySku(item, variantsByItem?.[item.id])} - {item.name}
+                            {movementItemPickerLabel(item, variantsByItem?.[item.id])}
                           </option>
                         ))}
                       </Select>
@@ -794,7 +794,7 @@ function MovementLinesGridInner(
                           <option value="">Select...</option>
                           {(variantsByItem[line.itemId] || []).filter((v) => v.isActive).map((v) => (
                             <option key={v.id} value={v.id}>
-                              {v.code} - {v.name}
+                              {(item?.name || 'Product').trim()} · {v.code} — {v.name}
                             </option>
                           ))}
                         </Select>
@@ -807,9 +807,11 @@ function MovementLinesGridInner(
                         onFocus={() => { setFocusedRow(index); setFocusedCol(2); }}
                         data-row={index}
                         data-col={2}
+                        className="movement-variant-master-only"
+                        title={item?.name || undefined}
                         style={{ cursor: 'default' }}
                       >
-                        -
+                        {item?.name?.trim() || '—'}
                       </span>
                     )}
                   </td>

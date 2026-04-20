@@ -39,7 +39,7 @@ export const INVENTORY_PAGE_TARGETS: InventoryPageTarget[] = [
   { id: 'settings-reason-codes', title: 'Reason Codes', subtitle: 'Settings', route: `${BASE}?tab=settings&subTab=reason-codes`, keywords: ['reason', 'code', 'reason code'] },
   { id: 'settings-preferences', title: 'Preferences', subtitle: 'Settings', route: `${BASE}?tab=settings&subTab=preferences`, keywords: ['preference', 'preferences'] },
   // Item Master sub (landing without itemId)
-  { id: 'items-variants', title: 'Item Variants', subtitle: 'Item Master', route: `${BASE}?tab=items&itemSubTab=variants`, keywords: ['variant', 'item variant'] },
+  { id: 'items-stock-variants', title: 'Item Stock (variants)', subtitle: 'Item Master', route: `${BASE}?tab=items&itemSubTab=stock`, keywords: ['variant', 'item variant', 'item stock'] },
   { id: 'items-tracking', title: 'Serial Tracking', subtitle: 'Item Master', route: `${BASE}?tab=items&itemSubTab=tracking`, keywords: ['serial', 'tracking', 'traceability'] },
 ];
 

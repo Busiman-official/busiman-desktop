@@ -10,6 +10,20 @@ import { VariantLevelSection } from './VariantLevelSection';
 import { resolveVariantUnit } from '../variantGridUnits';
 import './productVariantDetailsDrawer.css';
 
+function normalizeOptionalNumber(n: number | null | undefined): number | undefined {
+  if (n == null || (typeof n === 'number' && Number.isNaN(n))) return undefined;
+  return n;
+}
+
+/** Align with apply/save logic so “dirty” detection matches what we persist. */
+function effectiveDimensionsOverride(
+  d: WizardVariantRow['dimensionsOverride'] | undefined,
+): WizardVariantRow['dimensionsOverride'] | undefined {
+  if (!d) return undefined;
+  if (d.length == null && d.width == null && d.height == null) return undefined;
+  return d;
+}
+
 export type ProductVariantDetailsDrawerApplyPayload = {
   variantPatch: Partial<
     Pick<
@@ -107,47 +121,48 @@ export function ProductVariantDetailsDrawer({
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!initialVariantRow) return false;
     const same = {
-      name: variantName,
-      barcode: barcode,
+      name: (variantName ?? '').trim(),
+      barcode: String(barcode ?? '').trim(),
       unitOfMeasure: resolveVariantUnit(unitOfMeasure, productDefaultUnit),
-      images: images.map((i) => ({ url: i.url, publicId: i.publicId, isPrimary: i.isPrimary })),
-      supplierSku: supplierSku,
+      images: [...images]
+        .map((i) => ({ url: i.url, publicId: i.publicId, isPrimary: i.isPrimary }))
+        .sort((a, b) => a.publicId.localeCompare(b.publicId)),
+      supplierSku: String(supplierSku ?? '').trim(),
       hsn: hsn.trim(),
-      costPriceOverride,
-      sellingPriceOverride,
-      mrpOverride,
-      taxOverride,
-      reorderLevel,
-      minStock,
-      maxStock,
-      weightOverride,
-      dimensionsOverride:
-        dimensionsOverride && (dimensionsOverride.length != null || dimensionsOverride.width != null || dimensionsOverride.height != null)
-          ? dimensionsOverride
-          : undefined,
-      packSize,
-      unitsPerBox,
-      shelfLifeDaysOverride,
+      costPriceOverride: normalizeOptionalNumber(costPriceOverride),
+      sellingPriceOverride: normalizeOptionalNumber(sellingPriceOverride),
+      mrpOverride: normalizeOptionalNumber(mrpOverride),
+      taxOverride: normalizeOptionalNumber(taxOverride),
+      reorderLevel: normalizeOptionalNumber(reorderLevel),
+      minStock: normalizeOptionalNumber(minStock),
+      maxStock: normalizeOptionalNumber(maxStock),
+      weightOverride: normalizeOptionalNumber(weightOverride),
+      dimensionsOverride: effectiveDimensionsOverride(dimensionsOverride),
+      packSize: normalizeOptionalNumber(packSize),
+      unitsPerBox: normalizeOptionalNumber(unitsPerBox),
+      shelfLifeDaysOverride: normalizeOptionalNumber(shelfLifeDaysOverride),
     };
     const base = {
-      name: initialVariantRow.name ?? '',
-      barcode: initialVariantRow.barcode ?? '',
+      name: (initialVariantRow.name ?? '').trim(),
+      barcode: String(initialVariantRow.barcode ?? '').trim(),
       unitOfMeasure: resolveVariantUnit(initialVariantRow.unitOfMeasure, productDefaultUnit),
-      images: (initialVariantRow.images ?? []).map((i) => ({ url: i.url, publicId: i.publicId, isPrimary: i.isPrimary })),
-      supplierSku: initialVariantRow.supplierSku ?? '',
+      images: [...(initialVariantRow.images ?? [])]
+        .map((i) => ({ url: i.url, publicId: i.publicId, isPrimary: i.isPrimary }))
+        .sort((a, b) => a.publicId.localeCompare(b.publicId)),
+      supplierSku: String(initialVariantRow.supplierSku ?? '').trim(),
       hsn: (initialVariantRow.hsn ?? '').trim(),
-      costPriceOverride: initialVariantRow.costPriceOverride,
-      sellingPriceOverride: initialVariantRow.sellingPriceOverride,
-      mrpOverride: initialVariantRow.mrpOverride,
-      taxOverride: initialVariantRow.taxOverride,
-      reorderLevel: initialVariantRow.reorderLevel,
-      minStock: initialVariantRow.minStock,
-      maxStock: initialVariantRow.maxStock,
-      weightOverride: initialVariantRow.weightOverride,
-      dimensionsOverride: initialVariantRow.dimensionsOverride,
-      packSize: initialVariantRow.packSize,
-      unitsPerBox: initialVariantRow.unitsPerBox,
-      shelfLifeDaysOverride: initialVariantRow.shelfLifeDaysOverride,
+      costPriceOverride: normalizeOptionalNumber(initialVariantRow.costPriceOverride),
+      sellingPriceOverride: normalizeOptionalNumber(initialVariantRow.sellingPriceOverride),
+      mrpOverride: normalizeOptionalNumber(initialVariantRow.mrpOverride),
+      taxOverride: normalizeOptionalNumber(initialVariantRow.taxOverride),
+      reorderLevel: normalizeOptionalNumber(initialVariantRow.reorderLevel),
+      minStock: normalizeOptionalNumber(initialVariantRow.minStock),
+      maxStock: normalizeOptionalNumber(initialVariantRow.maxStock),
+      weightOverride: normalizeOptionalNumber(initialVariantRow.weightOverride),
+      dimensionsOverride: effectiveDimensionsOverride(initialVariantRow.dimensionsOverride),
+      packSize: normalizeOptionalNumber(initialVariantRow.packSize),
+      unitsPerBox: normalizeOptionalNumber(initialVariantRow.unitsPerBox),
+      shelfLifeDaysOverride: normalizeOptionalNumber(initialVariantRow.shelfLifeDaysOverride),
     };
     return JSON.stringify(same) !== JSON.stringify(base);
   }, [

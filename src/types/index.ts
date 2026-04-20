@@ -26,6 +26,7 @@ export interface User {
   isActive?: boolean;
   canActAsProxy?: boolean;
   allowCheckoutWithoutWifi?: boolean;
+  allowCheckinWithoutWifi?: boolean;
 }
 
 // Auth types
@@ -312,6 +313,7 @@ export interface EmployeeDetails {
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
   allowCheckoutWithoutWifi?: boolean;
+  allowCheckinWithoutWifi?: boolean;
   
   // Task & Work Preferences
   defaultTaskVisibility?: TaskVisibility;
@@ -365,6 +367,7 @@ export interface UpdateEmployeeDetailsRequest {
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
   allowCheckoutWithoutWifi?: boolean;
+  allowCheckinWithoutWifi?: boolean;
   
   // Task & Work Preferences
   defaultTaskVisibility?: TaskVisibility;

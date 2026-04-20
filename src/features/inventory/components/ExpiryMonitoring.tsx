@@ -14,7 +14,7 @@ import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-d
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
-import { itemDisplaySku } from '../utils/itemDisplaySku';
+import { movementItemPickerLabel } from '../utils/itemDisplaySku';
 import './ExpiryMonitoring.css';
 
 type ViewMode = 'alerts' | 'dispose';
@@ -243,7 +243,7 @@ export const ExpiryMonitoring: React.FC = () => {
           <option value="">Select Item</option>
           {items.map((item) => (
             <option key={item.id} value={item.id}>
-              {itemDisplaySku(item)} - {item.name}
+              {movementItemPickerLabel(item)}
             </option>
           ))}
         </Select>
