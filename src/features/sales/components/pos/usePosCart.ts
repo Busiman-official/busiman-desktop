@@ -24,6 +24,9 @@ export interface PosCartLine {
   gstInclusive?: boolean;
   notes?: string;
   hsn?: string;
+  unitOfMeasure?: string;
+  baseUnit?: string;
+  unitOptions?: Array<{ unitCode: string; factorToBase: number }>;
 }
 
 function mergeLine(prev: PosCartLine[], line: PosCartLine): PosCartLine[] {
@@ -44,6 +47,9 @@ function mergeLine(prev: PosCartLine[], line: PosCartLine): PosCartLine[] {
       gstInclusive: next[i].gstInclusive ?? line.gstInclusive ?? true,
       notes: next[i].notes ?? line.notes,
       hsn: next[i].hsn ?? line.hsn,
+      unitOfMeasure: next[i].unitOfMeasure ?? line.unitOfMeasure,
+      baseUnit: next[i].baseUnit ?? line.baseUnit,
+      unitOptions: next[i].unitOptions ?? line.unitOptions,
     };
     return next;
   }

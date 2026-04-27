@@ -10,7 +10,7 @@ interface Props {
   showStockWarning: boolean;
   onSelect: () => void;
   onQuantityDelta: (delta: number) => void;
-  onRemove: (variantId: string) => void;
+  onUnitChange: (unitOfMeasure: string) => void;
 }
 
 /**
@@ -25,7 +25,7 @@ export const PosCartLineListCard: React.FC<Props> = ({
   showStockWarning,
   onSelect,
   onQuantityDelta,
-  onRemove,
+  onUnitChange,
 }) => {
   const onMainKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -63,7 +63,9 @@ export const PosCartLineListCard: React.FC<Props> = ({
         </div>
         <div className="pos-cart-list-card__side">
           <div className="pos-cart-list-card__prices">
-            <span className="pos-cart-list-card__unit">₹{line.unitPrice.toFixed(2)} each</span>
+            <span className="pos-cart-list-card__unit">
+              ₹{line.unitPrice.toFixed(2)} / {line.unitOfMeasure || line.baseUnit || 'ea'}
+            </span>
             <span className="pos-cart-list-card__total">₹{lineTotal.toFixed(2)}</span>
           </div>
           <div
@@ -91,16 +93,19 @@ export const PosCartLineListCard: React.FC<Props> = ({
               +
             </button>
           </div>
-          <button
-            type="button"
-            className="pos-cart-list-card__remove"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(line.variantId);
-            }}
-          >
-            Remove
-          </button>
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <select
+              aria-label="Line unit"
+              value={line.unitOfMeasure || line.baseUnit || ''}
+              onChange={(e) => onUnitChange(e.target.value)}
+            >
+              {(line.unitOptions?.length ? line.unitOptions : [{ unitCode: line.baseUnit || 'pcs', factorToBase: 1 }]).map((u) => (
+                <option key={u.unitCode} value={u.unitCode}>
+                  {u.unitCode}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
     </div>

@@ -29,6 +29,7 @@ export function quotationLineGrossInr(
 export type CreateOrderLinePayload = {
   variantId: string;
   quantity: number;
+  unitOfMeasure?: string;
   unitPrice?: number;
   posListUnitPrice?: number;
   posLineDiscountAmount?: number;
@@ -56,6 +57,8 @@ export function mapOrderLinesForCreateApi(lines: unknown[] | undefined): CreateO
     const quantity = Number(ln.quantity ?? 0);
     const unitPrice = ln.unitPrice != null ? Number(ln.unitPrice) : undefined;
     const out: CreateOrderLinePayload = { variantId, quantity };
+    const uom = typeof ln.unitOfMeasure === 'string' ? ln.unitOfMeasure.trim().toLowerCase() : '';
+    if (uom) out.unitOfMeasure = uom;
     if (unitPrice !== undefined && Number.isFinite(unitPrice)) out.unitPrice = unitPrice;
     const pl = ln.posListUnitPrice;
     if (pl != null && Number.isFinite(Number(pl)) && Number(pl) >= 0) {
@@ -93,6 +96,7 @@ export function mapQuotationLinesForCreateApi(lines: SalesQuotationLine[]): Crea
     const out: CreateOrderLinePayload = {
       variantId,
       quantity,
+      unitOfMeasure: typeof ln.unitOfMeasure === 'string' ? ln.unitOfMeasure.trim().toLowerCase() : undefined,
       unitPrice: Math.round(eff * 10000) / 10000,
     };
     if (listUnit > 0 && Math.abs(listUnit - eff) > 0.0001) {

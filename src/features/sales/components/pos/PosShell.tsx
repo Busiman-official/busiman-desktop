@@ -165,6 +165,14 @@ export const PosShell: React.FC<Props> = ({
     highlightVariantId: string | null;
   } | null>(null);
 
+  const getUnitFactor = useCallback((line: PosCartLine, unitOfMeasure?: string | null): number => {
+    const unit = (unitOfMeasure || line.unitOfMeasure || line.baseUnit || '').trim().toLowerCase();
+    const options = line.unitOptions || [];
+    const matched = options.find((u) => u.unitCode === unit);
+    const factor = matched?.factorToBase;
+    return Number.isFinite(factor) && (factor as number) > 0 ? (factor as number) : 1;
+  }, []);
+
   const discountAmount = useMemo(() => {
     const n = parseFloat(discountInput.replace(/[^0-9.]/g, ''));
     return Number.isFinite(n) && n >= 0 ? n : 0;
@@ -364,9 +372,10 @@ export const PosShell: React.FC<Props> = ({
     return lines.some((l) => {
       if (l.isNonStock || l.allowNegativeStock) return false;
       const a = availableByVariant[l.variantId];
-      return a !== undefined && l.quantity > a;
+      const requiredBaseQty = l.quantity * getUnitFactor(l, l.unitOfMeasure);
+      return a !== undefined && requiredBaseQty > a;
     });
-  }, [lines, availableByVariant, settings?.allowNegativePos]);
+  }, [availableByVariant, getUnitFactor, lines, settings?.allowNegativePos]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -376,9 +385,22 @@ export const PosShell: React.FC<Props> = ({
   const handleDetailUpdate = useCallback(
     (patch: Partial<PosCartLine>) => {
       if (!selectedDetailVariantId) return;
+      const current = lines.find((l) => l.variantId === selectedDetailVariantId);
+      if (!current) return;
+      if (patch.unitOfMeasure && patch.unitOfMeasure !== current.unitOfMeasure) {
+        const currentFactor = getUnitFactor(current, current.unitOfMeasure);
+        const nextFactor = getUnitFactor(current, patch.unitOfMeasure);
+        const nextUnitPrice = (current.unitPrice / currentFactor) * nextFactor;
+        updateLine(selectedDetailVariantId, {
+          ...patch,
+          unitOfMeasure: patch.unitOfMeasure,
+          unitPrice: Math.round(nextUnitPrice * 10000) / 10000,
+        });
+        return;
+      }
       updateLine(selectedDetailVariantId, patch);
     },
-    [selectedDetailVariantId, updateLine]
+    [getUnitFactor, lines, selectedDetailVariantId, updateLine]
   );
 
   /** Removes the line for this variant; clears the detail modal if it was showing that line. */
@@ -401,17 +423,21 @@ export const PosShell: React.FC<Props> = ({
     (variantId: string, delta: number) => {
       const line = lines.find((l) => l.variantId === variantId);
       if (!line) return;
-      const next = Math.max(1, line.quantity + delta);
+      const next = line.quantity + delta;
+      if (next <= 0) {
+        removeLineFromCart(variantId);
+        return;
+      }
       updateLine(variantId, { quantity: next });
     },
-    [lines, updateLine]
+    [lines, removeLineFromCart, updateLine]
   );
 
   const addLineFromMeta = useCallback(
     async (
       meta: PosResolvedLineMeta,
       qty = 1,
-      options?: { quiet?: boolean; unitPrice?: number; notes?: string; hsn?: string; gstRatePercent?: number }
+      options?: { quiet?: boolean; unitPrice?: number; notes?: string; hsn?: string; gstRatePercent?: number; unitOfMeasure?: string }
     ) => {
       if (!salesPointId) return;
       try {
@@ -441,6 +467,9 @@ export const PosShell: React.FC<Props> = ({
           gstRatePercent: gstOpt,
           notes: noteOpt || '',
           hsn: hsnOpt || '',
+          unitOfMeasure: (options?.unitOfMeasure || meta.defaultSalesUnit || meta.baseUnit).trim().toLowerCase(),
+          baseUnit: meta.baseUnit,
+          unitOptions: meta.unitOptions,
         });
         pushRecentVariant(branchId, salesPointId, { variantId: meta.variantId, label: meta.label });
         setRecent(getRecentVariants(branchId, salesPointId));
@@ -477,6 +506,7 @@ export const PosShell: React.FC<Props> = ({
           lines?: Array<{
             variantId?: unknown;
             quantity?: number;
+            unitOfMeasure?: string;
             unitPrice?: number;
             posLineNotes?: string;
             posHsn?: string;
@@ -503,6 +533,7 @@ export const PosShell: React.FC<Props> = ({
           await addLineFromMetaRef.current(meta, qty, {
             quiet: true,
             unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
+            unitOfMeasure: typeof ln.unitOfMeasure === 'string' ? ln.unitOfMeasure : undefined,
             notes: typeof ln.posLineNotes === 'string' ? ln.posLineNotes : undefined,
             hsn: typeof ln.posHsn === 'string' ? ln.posHsn : undefined,
             gstRatePercent:
@@ -1526,12 +1557,15 @@ export const PosShell: React.FC<Props> = ({
                   {lines.map((line) => {
                     const lineTotal = getLineTotalWithGst(line, branchTaxPercent);
                     const avail = availableByVariant[line.variantId];
+                    const unitFactor = getUnitFactor(line, line.unitOfMeasure);
                     const warn =
                       !line.isNonStock &&
                       !line.allowNegativeStock &&
                       !settings?.allowNegativePos &&
                       avail !== undefined &&
-                      line.quantity > avail;
+                      line.quantity * unitFactor > avail;
+                    const availableInSelectedUnit =
+                      avail === undefined ? undefined : Math.round((avail / unitFactor) * 1000) / 1000;
                     return (
                       <PosCartLineListCard
                         key={line.variantId}
@@ -1539,11 +1573,19 @@ export const PosShell: React.FC<Props> = ({
                         lineTotal={lineTotal}
                         selected={selectedDetailVariantId === line.variantId}
                         flash={lastMergedVariantId === line.variantId}
-                        available={avail}
+                        available={availableInSelectedUnit}
                         showStockWarning={warn}
                         onSelect={() => setSelectedDetailVariantId(line.variantId)}
                         onQuantityDelta={(delta) => adjustLineQuantity(line.variantId, delta)}
-                        onRemove={removeLineFromCart}
+                        onUnitChange={(unitOfMeasure) => {
+                          const currentFactor = getUnitFactor(line, line.unitOfMeasure);
+                          const nextFactor = getUnitFactor(line, unitOfMeasure);
+                          const nextUnitPrice = (line.unitPrice / currentFactor) * nextFactor;
+                          updateLine(line.variantId, {
+                            unitOfMeasure,
+                            unitPrice: Math.round(nextUnitPrice * 10000) / 10000,
+                          });
+                        }}
                       />
                     );
                   })}

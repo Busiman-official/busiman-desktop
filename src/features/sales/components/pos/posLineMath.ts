@@ -87,6 +87,7 @@ export function linesAdjustedForOrderTotals(
 export type PosOrderLinesPayloadLine = {
   variantId: string;
   quantity: number;
+  unitOfMeasure?: string;
   unitPrice: number;
   posListUnitPrice: number;
   posLineDiscountAmount: number;
@@ -111,6 +112,7 @@ export function linesForCheckoutPayload(lines: PosCartLine[], defaultGstPercent:
     return {
       variantId: l.variantId,
       quantity: l.quantity,
+      unitOfMeasure: l.unitOfMeasure?.trim().toLowerCase() || l.baseUnit?.trim().toLowerCase(),
       unitPrice: Math.round(eff * 10000) / 10000,
       posListUnitPrice: Math.round(l.unitPrice * 10000) / 10000,
       posLineDiscountAmount: Math.round(disc * 100) / 100,

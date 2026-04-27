@@ -28,3 +28,26 @@ export function resolveVariantUnit(
   if (!rowUnit?.trim()) return d;
   return VARIANT_UNIT_VALUES.has(rowUnit.trim()) ? rowUnit.trim() : d;
 }
+
+export function buildVariantUnitOptions(params: {
+  baseUnit: string;
+  alternateUnits?: Array<{ unitCode: string; isActive?: boolean }>;
+  fallbackOptions?: VariantUnitOption[];
+}): VariantUnitOption[] {
+  const base = (params.baseUnit || 'pcs').trim().toLowerCase();
+  const fromConfig = (params.alternateUnits || [])
+    .filter((u) => u && u.unitCode && u.isActive !== false)
+    .map((u) => ({ value: u.unitCode.trim().toLowerCase(), label: u.unitCode.trim().toLowerCase() }));
+  const merged = [
+    { value: base, label: base },
+    ...fromConfig,
+    ...(params.fallbackOptions || VARIANT_UNIT_OPTIONS),
+  ];
+  const seen = new Set<string>();
+  return merged.filter((o) => {
+    const key = o.value.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}

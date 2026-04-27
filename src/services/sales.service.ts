@@ -126,6 +126,8 @@ export interface SalesQuotationLine {
   variantName: string;
   itemName?: string;
   quantity: number;
+  enteredQuantity?: number;
+  baseQuantity?: number;
   unitPrice: number;
   discountAmount?: number;
   lineTotal: number;
@@ -136,6 +138,7 @@ export interface SalesQuotationLine {
   priceIncludesGst?: boolean;
   lineNotes?: string;
   unitOfMeasure?: string;
+  baseUnitOfMeasure?: string;
 }
 
 export interface SalesQuotation {
@@ -427,6 +430,7 @@ export const salesService = {
       lines: Array<{
         variantId: string;
         quantity: number;
+        unitOfMeasure?: string;
         unitPrice?: number;
         posListUnitPrice?: number;
         posLineDiscountAmount?: number;
@@ -454,6 +458,7 @@ export const salesService = {
       lines: Array<{
         variantId: string;
         quantity: number;
+        unitOfMeasure?: string;
         unitPrice?: number;
         posListUnitPrice?: number;
         posLineDiscountAmount?: number;

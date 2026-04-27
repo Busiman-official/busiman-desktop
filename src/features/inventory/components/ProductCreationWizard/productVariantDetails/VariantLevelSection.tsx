@@ -6,12 +6,13 @@ import { memo, useCallback } from 'react';
 import { Input, Select } from '@/shared/components/ui';
 import { ImageUpload } from '@/shared/components/ui';
 import type { WizardVariantImage } from '../variantGridModel';
-import { VARIANT_UNIT_OPTIONS } from '../variantGridUnits';
+import { type VariantUnitOption } from '../variantGridUnits';
 
 export type VariantLevelSectionProps = {
   variantName: string;
   barcode: string;
   unitOfMeasure: string;
+  unitOptions: VariantUnitOption[];
   baseSkuPreview: string;
   images: WizardVariantImage[];
   supplierSku: string;
@@ -64,6 +65,7 @@ function VariantLevelSectionInner({
   variantName,
   barcode,
   unitOfMeasure,
+  unitOptions,
   baseSkuPreview,
   images,
   supplierSku,
@@ -81,7 +83,6 @@ function VariantLevelSectionInner({
   unitsPerBox,
   shelfLifeDaysOverride,
   defaults,
-  onCodeSuffixChange,
   onVariantNameChange,
   onBarcodeChange,
   onUnitOfMeasureChange,
@@ -152,7 +153,7 @@ function VariantLevelSectionInner({
             </label>
             <Select
               id="pvd-unit"
-              options={VARIANT_UNIT_OPTIONS}
+              options={unitOptions}
               value={unitOfMeasure}
               onChange={(e) => onUnitOfMeasureChange(e.target.value)}
               aria-label="Variant unit"

@@ -69,6 +69,20 @@ export interface UnitConversion {
   conversionFactor: number;
 }
 
+export interface AlternateUnitConfig {
+  unitCode: string;
+  factorToBase: number;
+  isDefaultPurchase?: boolean;
+  isDefaultSales?: boolean;
+  isActive?: boolean;
+}
+
+export interface UnitConfig {
+  baseUnit: string;
+  alternateUnits: AlternateUnitConfig[];
+  allowCustomUnits?: boolean;
+}
+
 export interface IndustryFlags {
   isPerishable: boolean;
   requiresBatchTracking: boolean;
@@ -96,6 +110,7 @@ export interface InventoryItem {
   barcode?: string;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
+  unitConfig?: UnitConfig;
   industryClassification?: IndustryClassification;
   /** Legacy full flags; prefer variant overrides for tracking. */
   industryFlags?: IndustryFlags;
@@ -156,6 +171,8 @@ export interface InventoryVariant {
   /** GST HSN (India): 4, 6, or 8 digits. */
   hsn?: string;
   unitOfMeasureOverride?: string;
+  usesMasterUnitConfig?: boolean;
+  unitConfigOverride?: UnitConfig;
   metadata?: Record<string, any>;
   costPriceOverride?: number;
   sellingPriceOverride?: number;
@@ -203,6 +220,8 @@ export interface CreateVariantRequest {
   barcode?: string;
   hsn?: string;
   unitOfMeasureOverride?: string;
+  usesMasterUnitConfig?: boolean;
+  unitConfigOverride?: UnitConfig;
   metadata?: Record<string, any>;
   costPriceOverride?: number;
   sellingPriceOverride?: number;
@@ -239,6 +258,8 @@ export interface UpdateVariantRequest {
   barcode?: string;
   hsn?: string;
   unitOfMeasureOverride?: string;
+  usesMasterUnitConfig?: boolean;
+  unitConfigOverride?: UnitConfig;
   metadata?: Record<string, any>;
   costPriceOverride?: number;
   sellingPriceOverride?: number;
@@ -347,6 +368,7 @@ export interface CreateInventoryItemRequest {
   isMisc?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
+  unitConfig?: UnitConfig;
   industryFlags: IndustryFlags;
   itemType?: ItemType;
   // Image fields
@@ -378,6 +400,7 @@ export interface UpdateInventoryItemRequest {
   isMisc?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
+  unitConfig?: UnitConfig;
   industryFlags?: Partial<IndustryFlags>;
   itemType?: ItemType;
   isActive?: boolean;
@@ -1725,6 +1748,10 @@ export interface CreateStockMovementRequest {
   manufacturingDate?: string;
   expiryDate?: string;
   quantity: number;
+  enteredQuantity?: number;
+  enteredUnitOfMeasure?: string;
+  baseQuantity?: number;
+  baseUnitOfMeasure?: string;
   unitOfMeasure: string;
   reasonCode: string;
   reasonDescription?: string;
@@ -1776,6 +1803,10 @@ export interface MovementLineResponse {
   toLocationId?: string;
   toLocation?: { id: string; code: string; name: string };
   quantity: number;
+  enteredQuantity?: number;
+  enteredUnitOfMeasure?: string;
+  baseQuantity?: number;
+  baseUnitOfMeasure?: string;
   unitOfMeasure: string;
   batchNumber?: string;
   serialNumbers?: string[];

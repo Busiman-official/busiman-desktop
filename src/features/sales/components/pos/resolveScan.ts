@@ -12,6 +12,32 @@ export interface PosResolvedLineMeta {
   /** True when serial/batch tracking applies; POS capture is Phase 2. */
   serialWarning?: boolean;
   batchWarning?: boolean;
+  baseUnit: string;
+  defaultSalesUnit: string;
+  unitOptions: Array<{ unitCode: string; factorToBase: number }>;
+}
+
+function resolveLineUnits(item: InventoryItem, variant: InventoryVariant): {
+  baseUnit: string;
+  defaultSalesUnit: string;
+  unitOptions: Array<{ unitCode: string; factorToBase: number }>;
+} {
+  const masterCfg = item.unitConfig;
+  const overrideCfg = variant.unitConfigOverride;
+  const useMaster = variant.usesMasterUnitConfig !== false;
+  const cfg = useMaster ? masterCfg : (overrideCfg || masterCfg);
+  const fallback = (variant.unitOfMeasureOverride || item.unitOfMeasure || 'pcs').trim().toLowerCase();
+  const baseUnit = (cfg?.baseUnit || fallback).trim().toLowerCase();
+  const alt = (cfg?.alternateUnits || [])
+    .map((u) => ({
+      unitCode: String(u.unitCode || '').trim().toLowerCase(),
+      factorToBase: Number(u.factorToBase || 0),
+      isDefaultSales: Boolean(u.isDefaultSales),
+    }))
+    .filter((u) => u.unitCode && Number.isFinite(u.factorToBase) && u.factorToBase > 0 && u.unitCode !== baseUnit);
+  const unitOptions = [{ unitCode: baseUnit, factorToBase: 1 }, ...alt.map((u) => ({ unitCode: u.unitCode, factorToBase: u.factorToBase }))];
+  const salesDefault = alt.find((u) => u.isDefaultSales)?.unitCode || variant.unitOfMeasureOverride?.trim().toLowerCase() || baseUnit;
+  return { baseUnit, defaultSalesUnit: salesDefault, unitOptions };
 }
 
 function serialBatchWarnings(item: InventoryItem, v: InventoryVariant): { serial?: boolean; batch?: boolean } {
@@ -71,6 +97,7 @@ export async function resolveBarcodeForPos(barcode: string): Promise<PosResolved
       allowNegativeStock: flags.allowNegativeStock,
       serialWarning: w.serial,
       batchWarning: w.batch,
+      ...resolveLineUnits(fullItem, variant),
     };
   } catch {
     return null;
@@ -96,6 +123,7 @@ export function buildLineMetaFromItemVariant(
     allowNegativeStock: flags.allowNegativeStock,
     serialWarning: w.serial,
     batchWarning: w.batch,
+    ...resolveLineUnits(item, variant),
   };
 }
 

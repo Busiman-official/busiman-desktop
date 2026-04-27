@@ -77,6 +77,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
       <div className="pos-detail-panel__body">
         <section className="pos-detail-section">
           <h4 className="pos-detail-section__label">Quantity &amp; price</h4>
+
           <div className="pos-detail-qty-row">
             <span className="pos-detail-section__hint">Quantity</span>
             <div className="pos-detail-stepper">
@@ -97,6 +98,16 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
               >
                 +
               </button>
+              <Select
+                value={line.unitOfMeasure || line.baseUnit || 'pcs'}
+                onChange={(e) => onUpdate({ unitOfMeasure: e.target.value })}
+              >
+                {(line.unitOptions?.length ? line.unitOptions : [{ unitCode: line.baseUnit || 'pcs', factorToBase: 1 }]).map((u) => (
+                  <option key={u.unitCode} value={u.unitCode}>
+                    {u.unitCode}{u.factorToBase > 1 ? ` (1 = ${u.factorToBase} ${line.baseUnit || 'pcs'})` : ''}
+                  </option>
+                ))}
+              </Select>
             </div>
           </div>
           <Input
@@ -199,7 +210,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             </div>
             <div className="pos-detail-summary__row">
               <span>Quantity</span>
-              <span>× {line.quantity}</span>
+              <span>× {line.quantity} {line.unitOfMeasure || line.baseUnit || 'pcs'}</span>
             </div>
             <div className="pos-detail-summary__row">
               <span>Subtotal</span>

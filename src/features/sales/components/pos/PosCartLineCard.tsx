@@ -60,7 +60,7 @@ export const PosCartLineCard: React.FC<Props> = ({
         </button>
       </div>
       <div className="pos-line-card__prices">
-        <span className="pos-line-card__unit">₹{line.unitPrice.toFixed(2)} ea</span>
+        <span className="pos-line-card__unit">₹{line.unitPrice.toFixed(2)} / {line.unitOfMeasure || line.baseUnit || 'ea'}</span>
         <span className="pos-line-card__line-total">₹{lineTotal.toFixed(2)}</span>
       </div>
       <button type="button" className="pos-line-card__remove" onClick={() => onRemove(line.variantId)}>

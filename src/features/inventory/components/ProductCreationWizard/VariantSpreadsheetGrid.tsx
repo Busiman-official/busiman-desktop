@@ -24,7 +24,7 @@ import {
 } from './variantGridModel';
 import { getFieldError, validateAllVariantRows } from './variantGridValidation';
 import type { VariantRowFieldErrorKey } from './variantGridModel';
-import { VARIANT_UNIT_OPTIONS, resolveVariantUnit } from './variantGridUnits';
+import { resolveVariantUnit, type VariantUnitOption } from './variantGridUnits';
 
 export type VariantSpreadsheetGridHandle = {
   focusCell: (rowIndex: number, colIndex: number) => void;
@@ -40,6 +40,7 @@ export interface VariantSpreadsheetGridProps {
   >;
   /** Product master default unit (step 1); used when a row has no per-variant unit. */
   unitOfMeasure: string;
+  unitOptions?: VariantUnitOption[];
   emptyTitle: string;
   emptyMessage: string;
   emptyAction: React.ReactNode;
@@ -67,6 +68,7 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
       rowErrors,
       onRowErrorsChange,
       unitOfMeasure,
+      unitOptions = [],
       emptyTitle,
       emptyMessage,
       emptyAction,
@@ -584,6 +586,7 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
                     activeRow={activeRow}
                     activeCol={activeCol}
                     unitOfMeasure={unitOfMeasure}
+                    unitOptions={unitOptions}
                     isDefaultRow={isDefaultRow}
                     gridTemplateColumns={GRID_TEMPLATE_COLUMNS}
                     setCellRef={setCellRef}
@@ -610,6 +613,7 @@ type RowViewProps = {
   activeRow: number;
   activeCol: number;
   unitOfMeasure: string;
+  unitOptions?: VariantUnitOption[];
   isDefaultRow: boolean;
   gridTemplateColumns: string;
   setCellRef: (rowIndex: number, colIndex: number, el: HTMLElement | null) => void;
@@ -632,6 +636,7 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
   activeRow,
   activeCol,
   unitOfMeasure,
+  unitOptions = [],
   isDefaultRow,
   gridTemplateColumns,
   setCellRef,
@@ -737,7 +742,7 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
             <Select
               ref={(el) => setCellRef(rowIndex, 3, el)}
               className="variant-grid-unit-select"
-              options={VARIANT_UNIT_OPTIONS}
+              options={unitOptions || []}
               value={resolveVariantUnit(row.unitOfMeasure, unitOfMeasure)}
               onChange={(e) => patchRow(rowIndex, { unitOfMeasure: e.target.value })}
               aria-label={`Variant ${rowIndex + 1} unit of measure`}

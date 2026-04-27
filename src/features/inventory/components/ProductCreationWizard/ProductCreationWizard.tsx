@@ -11,6 +11,7 @@ import {
   ProductType,
   IndustryFlags,
   UnitConversion,
+  UnitConfig,
   CreateInventoryItemRequest,
 } from '@/services/inventory.service';
 import {
@@ -24,7 +25,11 @@ import {
   normalizeVariantRows,
   type WizardVariantRow,
 } from './variantGridModel';
-import { VARIANT_UNIT_OPTIONS, resolveVariantUnit } from './variantGridUnits';
+import {
+  VARIANT_UNIT_OPTIONS,
+  buildVariantUnitOptions,
+  resolveVariantUnit,
+} from './variantGridUnits';
 import { validateAllVariantRows } from './variantGridValidation';
 import { computeVariantSuffixes } from './variantSuffix';
 import { VariantSpreadsheetGrid, type VariantSpreadsheetGridHandle } from './VariantSpreadsheetGrid';
@@ -65,6 +70,13 @@ export interface WizardFormState {
   conversionFrom: string;
   conversionTo: string;
   conversionFactor: string;
+  alternateUnits: Array<{
+    unitCode: string;
+    factorToBase: string;
+    isDefaultPurchase?: boolean;
+    isDefaultSales?: boolean;
+    isActive?: boolean;
+  }>;
   dimensionLength: string;
   dimensionWidth: string;
   dimensionHeight: string;
@@ -114,6 +126,7 @@ export const getInitialFormState = (): WizardFormState => ({
   conversionFrom: '',
   conversionTo: '',
   conversionFactor: '',
+  alternateUnits: [],
   dimensionLength: '',
   dimensionWidth: '',
   dimensionHeight: '',
@@ -148,7 +161,6 @@ const DRAFT_KEY = 'busiman-product-draft';
 const DRAFT_VERSION = 1 as const;
 /** Persist soon after edits; 10s-only saves caused data loss when leaving quickly. */
 const DRAFT_SAVE_DEBOUNCE_MS = 450;
-const TOAST_DURATION_MS = 2000;
 const VARIANT_CODE_DEBOUNCE_MS = 350;
 
 type ProductDraftEnvelopeV1 = {
@@ -158,7 +170,8 @@ type ProductDraftEnvelopeV1 = {
 };
 
 function mergeParsedFormIntoState(parsedRest: Partial<WizardFormState> & { sku?: string }): WizardFormState {
-  const { sku: _legacyDraftSku, ...rest } = parsedRest;
+  const { sku, ...rest } = parsedRest;
+  void sku;
   const base = getInitialFormState();
   const draftUnit =
     typeof rest.unitOfMeasure === 'string' && rest.unitOfMeasure.trim()
@@ -392,7 +405,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       cancelled = true;
     };
   }, []);
-  const [toast, setToast] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [variantRowErrors, setVariantRowErrors] = useState<
     Record<number, { hsn?: string; value?: string; name?: string; barcode?: string }>
@@ -406,7 +418,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   const addFirstVariantRef = useRef<HTMLButtonElement>(null);
   const prevStepForFocusRef = useRef(currentStep);
   const prevVariantRowCountRef = useRef(formData.variantRows.length);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Latest step for window/visibility focus handlers (avoid stale closures). */
   const currentStepRef = useRef(currentStep);
   /** Latest form for synchronous draft flush (beforeunload / tab hide). */
@@ -484,21 +495,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
     const suf = computeVariantSuffixes([detailsDrawerVariantRow])[0] ?? '';
     return suf || '—';
   }, [detailsDrawerRowIndex, detailsDrawerVariantRow]);
-
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => {
-      setToast(null);
-      toastTimerRef.current = null;
-    }, TOAST_DURATION_MS);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    };
-  }, []);
 
   /** Focus item name when master step is shown (initial load or returning from step 2). */
   const focusProductNameField = useCallback(() => {
@@ -600,6 +596,18 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       variantRows: [...prev.variantRows, createEmptyVariantRow(prev.unitOfMeasure)],
     }));
   }, []);
+
+  const unitOptions = useMemo(
+    () =>
+      buildVariantUnitOptions({
+        baseUnit: formData.unitOfMeasure,
+        alternateUnits: formData.alternateUnits.map((u) => ({
+          unitCode: u.unitCode,
+          isActive: u.isActive !== false,
+        })),
+      }),
+    [formData.unitOfMeasure, formData.alternateUnits]
+  );
 
   const setField = useCallback(<K extends keyof WizardFormState>(
     key: K,
@@ -742,6 +750,19 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       itemType: formData.itemType,
     });
     const masterUom = formData.unitOfMeasure.trim() || 'pcs';
+    const unitConfig: UnitConfig = {
+      baseUnit: masterUom,
+      alternateUnits: formData.alternateUnits
+        .map((alt) => ({
+          unitCode: alt.unitCode.trim().toLowerCase(),
+          factorToBase: parseFloat(alt.factorToBase),
+          isDefaultPurchase: !!alt.isDefaultPurchase,
+          isDefaultSales: !!alt.isDefaultSales,
+          isActive: alt.isActive !== false,
+        }))
+        .filter((alt) => alt.unitCode && alt.factorToBase > 0),
+      allowCustomUnits: true,
+    };
     const skus = computeVariantSuffixes(formData.variantRows);
     const variantLines = formData.variantRows
       .map((row, i) => ({
@@ -788,6 +809,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       isMisc: behavior.isMisc,
       unitOfMeasure: masterUom,
       unitConversions: unitConversions.length ? unitConversions : undefined,
+      unitConfig,
       itemType: behavior.itemType,
       industryFlags: {
         ...defaultIndustryFlags,
@@ -1250,7 +1272,83 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                         ))}
                       </Select>
                     </div>
+                  <div className="wizard-form-group" style={{ flex: 1 }}>
+                    <label htmlFor="wizard-unit">Base unit</label>
+                    <Select
+                      id="wizard-unit"
+                      value={formData.unitOfMeasure}
+                      onChange={(e) => setField('unitOfMeasure', e.target.value)}
+                    >
+                      {VARIANT_UNIT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
 
+                  </div>
+                  <div className="wizard-form-group" style={{ gridColumn: '1 / -1' }}>
+                    <label>Alternate units</label>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {formData.alternateUnits.map((alt, idx) => (
+                        <div key={`alt-${idx}`} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8 }}>
+                          <Input
+                            placeholder="Unit (e.g. box)"
+                            value={alt.unitCode}
+                            onChange={(e) =>
+                              setField(
+                                'alternateUnits',
+                                formData.alternateUnits.map((u, i) =>
+                                  i === idx ? { ...u, unitCode: e.target.value } : u
+                                )
+                              )
+                            }
+                          />
+                          <Input
+                            type="number"
+                            min={0.0001}
+                            step={0.0001}
+                            placeholder={`1 ${alt.unitCode || 'alt'} = X ${formData.unitOfMeasure}`}
+                            value={alt.factorToBase}
+                            onChange={(e) =>
+                              setField(
+                                'alternateUnits',
+                                formData.alternateUnits.map((u, i) =>
+                                  i === idx ? { ...u, factorToBase: e.target.value } : u
+                                )
+                              )
+                            }
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() =>
+                              setField(
+                                'alternateUnits',
+                                formData.alternateUnits.filter((_, i) => i !== idx)
+                              )
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                      <div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() =>
+                            setField('alternateUnits', [
+                              ...formData.alternateUnits,
+                              { unitCode: '', factorToBase: '', isActive: true },
+                            ])
+                          }
+                        >
+                          Add alternate unit
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                   <div className="wizard-form-group" style={{ gridColumn: '1 / -1' }}>
                     <p className="wizard-summary-label" style={{ margin: '6px 0 0', fontSize: 12, color: '#0f766e', fontWeight: 600 }}>
@@ -1761,6 +1859,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     rowErrors={variantRowErrors}
                     onRowErrorsChange={setVariantRowErrors}
                     unitOfMeasure={formData.unitOfMeasure}
+                    unitOptions={unitOptions}
                     emptyTitle="No variants yet"
                     emptyMessage="Add at least one row with a variant name (required). Variant code is built from the name unless you set a custom suffix in Details. HSN is optional. The first saved row is the default variant."
                     emptyAction={
@@ -1916,12 +2015,6 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         </aside>
       </div>
 
-      {toast && (
-        <div className="wizard-toast" role="status" aria-live="polite">
-          {toast}
-        </div>
-      )}
-
       <ConfirmDialog
         isOpen={draftPromptOpen}
         title="Restore saved draft?"
@@ -1943,6 +2036,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         onClose={closeDetailsDrawer}
         initialVariantRow={detailsDrawerVariantRow}
         productDefaultUnit={formData.unitOfMeasure}
+        unitOptions={unitOptions}
         defaults={{
           costPrice: formData.costPrice ? parseFloat(formData.costPrice) : undefined,
           sellingPrice: formData.sellingPrice ? parseFloat(formData.sellingPrice) : undefined,

@@ -7,7 +7,7 @@ import { SideDrawer } from '@/shared/components/modals';
 import { Button } from '@/shared/components/ui';
 import type { WizardVariantRow } from '../variantGridModel';
 import { VariantLevelSection } from './VariantLevelSection';
-import { resolveVariantUnit } from '../variantGridUnits';
+import { resolveVariantUnit, type VariantUnitOption } from '../variantGridUnits';
 import './productVariantDetailsDrawer.css';
 
 function normalizeOptionalNumber(n: number | null | undefined): number | undefined {
@@ -61,6 +61,7 @@ export type ProductVariantDetailsDrawerProps = {
   onClose: () => void;
   initialVariantRow: WizardVariantRow | null;
   productDefaultUnit: string;
+  unitOptions: VariantUnitOption[];
   defaults: {
     costPrice?: number;
     sellingPrice?: number;
@@ -81,6 +82,7 @@ export function ProductVariantDetailsDrawer({
   onClose,
   initialVariantRow,
   productDefaultUnit,
+  unitOptions,
   defaults,
   baseSkuPreview,
   onApply,
@@ -288,6 +290,7 @@ export function ProductVariantDetailsDrawer({
                 variantName={variantName}
                 barcode={barcode}
                 unitOfMeasure={unitOfMeasure}
+                unitOptions={unitOptions}
                 baseSkuPreview={baseSkuPreview}
                 images={images}
                 supplierSku={supplierSku}
