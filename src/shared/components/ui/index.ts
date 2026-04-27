@@ -54,3 +54,8 @@ export type { InlineEditFieldProps } from './InlineEditField';
 
 export { DropdownMenu } from './DropdownMenu';
 export type { DropdownMenuProps, DropdownMenuItem } from './DropdownMenu';
+
+export { IndicatorRipple } from './indicator_ripple';
+
+export { BranchModuleCheckboxGroup } from './BranchModuleCheckboxGroup';
+export type { BranchModuleCheckboxGroupProps } from './BranchModuleCheckboxGroup';

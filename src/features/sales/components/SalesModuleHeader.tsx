@@ -3,7 +3,7 @@ import './SalesModuleHeader.css';
 
 export interface SalesTabDef {
   id: string;
-  label: string;
+  label: React.ReactNode;
 }
 
 export interface SalesModuleHeaderProps {

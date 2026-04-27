@@ -8,6 +8,8 @@ interface Props {
   customerId: string | null;
   salesPoints: Record<string, unknown>[];
   customers: Record<string, unknown>[];
+  /** YYYY-MM-DD — sale/invoice date for POS checkout and draft quotation orders. */
+  invoiceDateYmd: string;
 }
 
 export const SalesOrdersPanel: React.FC<Props> = ({
@@ -16,6 +18,7 @@ export const SalesOrdersPanel: React.FC<Props> = ({
   customerId,
   salesPoints,
   customers,
+  invoiceDateYmd,
 }) => {
   const selectedSalesPoint = React.useMemo(() => {
     if (!salesPointId) return null;
@@ -67,6 +70,7 @@ export const SalesOrdersPanel: React.FC<Props> = ({
         customerId={customerId}
         salesPointSessionStatus={sessionStatus}
         customerAllowsSale={customerAllowsSale}
+        invoiceDateYmd={invoiceDateYmd}
       />
     </div>
   );

@@ -6,6 +6,23 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import { config } from '@/config';
 import { authStore } from '@/store/authStore';
 import { logger } from '@/shared/utils/logger';
+import { isTransientNetworkError, isFatalRefreshAuthError } from '@/utils/authHttpErrors';
+import type { RefreshTokenResponse } from '@/types';
+
+/** Single in-flight refresh so concurrent 401s share one token rotation. */
+let refreshPromise: Promise<RefreshTokenResponse> | null = null;
+
+function runSharedRefresh(refreshToken: string): Promise<RefreshTokenResponse> {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const { authService } = await import('./auth.service');
+      return authService.refreshToken(refreshToken);
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
 
 class ApiService {
   private instance: AxiosInstance;
@@ -56,45 +73,44 @@ class ApiService {
         if (error.response?.status === 401 && !originalRequest._retry && !isRefreshEndpoint) {
           originalRequest._retry = true;
 
-          const { refreshToken } = authStore.getState();
+          const { refreshToken, user } = authStore.getState();
 
-          if (refreshToken) {
+          if (refreshToken && user) {
             try {
-              // Try to refresh token
-              const { authService } = await import('./auth.service');
-              const tokenData = await authService.refreshToken(refreshToken);
+              const tokenData = await runSharedRefresh(refreshToken);
 
-              // Update store with new tokens
               authStore.getState().login(
-                authStore.getState().user!,
+                user,
                 tokenData.accessToken,
                 tokenData.refreshToken,
                 tokenData.sessionId
               );
 
-              // Retry original request with new token
               originalRequest.headers.Authorization = `Bearer ${tokenData.accessToken}`;
               return this.instance(originalRequest);
-            } catch (refreshError: any) {
-              // Refresh failed, logout user
+            } catch (refreshError: unknown) {
               logger.error('[ApiService] Token refresh failed', refreshError, {
-                message: refreshError?.message,
-                status: refreshError?.response?.status,
-                data: refreshError?.response?.data,
+                message: refreshError instanceof Error ? refreshError.message : String(refreshError),
+                transient: isTransientNetworkError(refreshError),
               });
-              authStore.getState().logout();
+              if (isTransientNetworkError(refreshError)) {
+                return Promise.reject(refreshError);
+              }
+              if (isFatalRefreshAuthError(refreshError)) {
+                authStore.getState().logout();
+              }
               return Promise.reject(refreshError);
             }
           } else {
-            // No refresh token, logout
             authStore.getState().logout();
           }
         }
 
-        // If refresh endpoint failed, logout immediately
         if (error.response?.status === 401 && isRefreshEndpoint) {
           logger.error('[ApiService] Refresh token endpoint failed - logging out', error);
-          authStore.getState().logout();
+          if (!isTransientNetworkError(error)) {
+            authStore.getState().logout();
+          }
         }
 
         return Promise.reject(error);

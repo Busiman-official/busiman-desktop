@@ -85,6 +85,52 @@
   transition: background 0.15s, color 0.15s;
 }
 
+.sales-module-header__tab-label {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.sales-module-header__tab-indicator {
+  position: absolute;
+  top: -5px;
+  right: -12px;
+}
+
+@keyframes indicator-ripple-wave {
+  0% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+  85% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.indicator-ripple__wave {
+  animation-name: indicator-ripple-wave;
+  animation-duration: 1.8s;
+  animation-timing-function: ease-out;
+  animation-iteration-count: infinite;
+}
+
+.indicator-ripple__wave--a {
+  animation-delay: 0s;
+}
+
+.indicator-ripple__wave--b {
+  animation-delay: 0.35s;
+}
+
+.indicator-ripple__wave--c {
+  animation-delay: 0.7s;
+}
+
 .sales-module-header__tab:last-child {
   border-right: none;
 }
@@ -110,6 +156,22 @@
   min-width: 0;
   flex: 0 1 auto;
   margin-left: auto;
+}
+
+.sales-module-header__branch-stack {
+  display: flex;
+  align-items: center;
+  gap: var(--mwh-right-gap);
+  min-width: 0;
+}
+
+.sales-module-header__invoice-date {
+  min-width: 9.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: var(--mwh-select-font-size, 0.875rem);
+  border: 1px solid var(--color-border, #ccc);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
 }
 
 .sales-module-header__branch .select-group,

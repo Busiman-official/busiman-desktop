@@ -21,6 +21,7 @@ import {
   mapOrderLinesForCreateApi,
   orderLineGrossWithGst,
 } from '@/features/sales/utils/mapLinesForCreateOrder';
+import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import './OrderDetailPage.css';
 
@@ -59,6 +60,8 @@ type OrderDoc = {
   branchId?: unknown;
   createdBy?: unknown;
   lines?: OrderLine[];
+  /** Business sale / invoice date (UTC calendar day from API). */
+  invoiceDate?: string;
   createdAt?: string;
   updatedAt?: string;
   notes?: string;
@@ -587,8 +590,12 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
 
   const created = order?.createdAt ? new Date(order.createdAt) : null;
   const updated = order?.updatedAt ? new Date(order.updatedAt) : null;
+  const saleMs = order ? orderSaleTimestampMs(order as OrderDoc) : 0;
+  const saleInstant = saleMs > 0 ? new Date(saleMs) : null;
   const durationMs =
-    created && updated && order?.status === 'completed' ? Math.max(0, updated.getTime() - created.getTime()) : null;
+    saleInstant && updated && order?.status === 'completed'
+      ? Math.max(0, updated.getTime() - saleInstant.getTime())
+      : null;
   const durationLabel =
     durationMs == null
       ? '—'
@@ -608,11 +615,22 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
     const rows: Array<{ key: string; dot: 'grey' | 'amber' | 'green' | 'blue'; title: string; desc: string; ts: string }> =
       [];
     const ca = order.createdAt ? new Date(order.createdAt).toLocaleString() : '';
+    const saleTs =
+      saleMs > 0
+        ? new Date(saleMs).toLocaleDateString(undefined, { dateStyle: 'long' })
+        : ca;
     rows.push({
-      key: 'c',
+      key: 'sale',
+      dot: 'green',
+      title: 'Sale (invoice) date',
+      desc: 'Business date for this order; used as the date of sale in history and reporting.',
+      ts: saleTs,
+    });
+    rows.push({
+      key: 'entry',
       dot: 'grey',
-      title: 'Order created',
-      desc: 'Order was created in the system.',
+      title: 'Entered in system',
+      desc: 'When this order was recorded in the application.',
       ts: ca,
     });
     if (order.status && order.status !== 'draft') {
@@ -650,7 +668,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
       ts: ca,
     });
     return rows;
-  }, [order, lineCount]);
+  }, [order, lineCount, saleMs]);
 
   const profile = customerDetail?.profile;
   const summary = customerDetail?.summary;
@@ -659,14 +677,17 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
     return rows
       .filter((r) => idStr(r._id) !== orderId)
       .slice(0, 3)
-      .map((r) => ({
-        id: idStr(r._id),
-        num: String(r.orderNumber ?? ''),
-        date: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '',
-        mode: String(r.mode || ''),
-        status: String(r.status || ''),
-        totalInclGst: Number(r.total ?? 0),
-      }));
+      .map((r) => {
+        const sm = orderSaleTimestampMs(r as OrderDoc);
+        return {
+          id: idStr(r._id),
+          num: String(r.orderNumber ?? ''),
+          date: sm > 0 ? new Date(sm).toLocaleDateString() : '',
+          mode: String(r.mode || ''),
+          status: String(r.status || ''),
+          totalInclGst: Number(r.total ?? 0),
+        };
+      });
   }, [customerDetail?.orders, orderId]);
 
   const customerIdForLink = idStr(order?.customerId);
@@ -1087,7 +1108,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                       ['Sales point', spName],
                       ['Cashier', cashierLabel],
                       ['Branch', branchName],
-                      ['Created', created ? created.toLocaleString() : '—'],
+                      [
+                        'Sale date',
+                        saleInstant ? saleInstant.toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—',
+                      ],
+                      ['Entered (system)', created ? created.toLocaleString() : '—'],
                       [
                         'Completed',
                         order.status === 'completed' && updated ? updated.toLocaleString() : '—',

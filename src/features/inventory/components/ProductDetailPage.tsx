@@ -23,6 +23,7 @@ import {
 import { Button, Card, Input, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
+import { movementTransactionIso } from '@/utils/commercialDates';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { VariantManagement } from './VariantManagement';
@@ -683,7 +684,17 @@ export const ProductDetailPage: React.FC = () => {
                       const variant = movement.variantId ? variants.find(v => v.id === movement.variantId) : null;
                       return (
                         <tr key={movement.id}>
-                          <td>{movement.createdAt ? new Date(movement.createdAt).toLocaleString() : '-'}</td>
+                          <td
+                            title={
+                              movement.postingDate && movement.createdAt
+                                ? `Entered: ${new Date(movement.createdAt).toLocaleString()}`
+                                : undefined
+                            }
+                          >
+                            {movement.createdAt || movement.postingDate
+                              ? new Date(movementTransactionIso(movement)).toLocaleString()
+                              : '-'}
+                          </td>
                           <td className="movement-number">{movement.movementNumber}</td>
                           <td>
                             <span className={`movement-type-badge movement-type-${movement.movementType.toLowerCase()}`}>

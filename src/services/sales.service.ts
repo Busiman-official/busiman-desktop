@@ -437,6 +437,8 @@ export const salesService = {
       }>;
       paymentMethodCode?: string;
       discountAmount?: number;
+      /** YYYY-MM-DD business sale / invoice date. */
+      invoiceDate?: string;
     },
     branchId?: string | null
   ) {
@@ -465,6 +467,8 @@ export const salesService = {
       discountAmount?: number;
       /** Defer payment: adds order total to customer outstanding (requires customerId). */
       holdPayment?: boolean;
+      /** YYYY-MM-DD business sale / invoice date. */
+      invoiceDate?: string;
     },
     branchId?: string | null
   ): Promise<PosCheckoutResult> {

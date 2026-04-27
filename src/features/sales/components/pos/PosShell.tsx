@@ -58,6 +58,8 @@ interface Props {
   salesPointSessionStatus?: 'open' | 'closed' | null;
   /** False when counter customer is known inactive (from branch customer list). */
   customerAllowsSale?: boolean;
+  /** Sale / invoice calendar date (YYYY-MM-DD) sent with checkout and draft B2B orders. */
+  invoiceDateYmd: string;
 }
 
 const DEBOUNCE_MS = 280;
@@ -86,6 +88,7 @@ export const PosShell: React.FC<Props> = ({
   customerId,
   salesPointSessionStatus,
   customerAllowsSale = true,
+  invoiceDateYmd,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const resolvePrice = usePriceResolver(branchId);
@@ -716,6 +719,7 @@ export const PosShell: React.FC<Props> = ({
             customerId: custId,
             lines: linesForQuotationDraftOrder(lines, branchTaxPercent),
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
+            invoiceDate: invoiceDateYmd,
           },
           branchId
         );
@@ -729,7 +733,7 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutModalBusy(false);
       }
     },
-    [branchId, branchTaxPercent, customerAllowsSale, customerId, lines, salesPointId, totals.discountAmount]
+    [branchId, branchTaxPercent, customerAllowsSale, customerId, invoiceDateYmd, lines, salesPointId, totals.discountAmount]
   );
 
   useEffect(() => {
@@ -956,6 +960,7 @@ export const PosShell: React.FC<Props> = ({
             paymentMethodCode: paymentCode,
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
             holdPayment: Boolean(wantHold && customerIdForOrder),
+            invoiceDate: invoiceDateYmd,
           },
           branchId
         );
@@ -995,6 +1000,7 @@ export const PosShell: React.FC<Props> = ({
       branchId,
       branchTaxPercent,
       clear,
+      invoiceDateYmd,
       lines,
       paymentCode,
       salesPointId,

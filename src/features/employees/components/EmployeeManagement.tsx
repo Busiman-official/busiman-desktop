@@ -9,7 +9,7 @@ import { shiftService } from '@/services/shift.service';
 import { branchService } from '@/services/branch.service';
 import { User, UserRole, EmployeeDetails, UpdateEmployeeDetailsRequest, Branch } from '@/types';
 import { Shift } from '@/types/shift';
-import { Button, Input, Card, Select } from '@/shared/components/ui';
+import { Button, Input, Card, Select, BranchModuleCheckboxGroup } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
@@ -61,8 +61,8 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
     name: '',
     password: '',
     role: UserRole.EMPLOYEE,
-    department: '',
     branchId: '',
+    visibleDepartments: [],
     phoneNumber: '',
     employeeId: '',
     designation: '',
@@ -72,6 +72,10 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [, setLoadingBranches] = useState(false);
+  const selectedBranchDepartments = React.useMemo(() => {
+    const selected = branches.find((b) => b.id === formData.branchId);
+    return selected?.departments ?? [];
+  }, [branches, formData.branchId]);
 
   useEffect(() => {
     loadEmployees();
@@ -176,8 +180,8 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       name: '',
       password: '',
       role: UserRole.EMPLOYEE,
-      department: '',
       branchId: '',
+      visibleDepartments: [],
       phoneNumber: '',
       employeeId: '',
       designation: '',
@@ -224,10 +228,22 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       return;
     }
 
+    if (formData.branchId && selectedBranchDepartments.length > 0 && (!formData.visibleDepartments || formData.visibleDepartments.length === 0)) {
+      setError('Select at least one module for this employee');
+      return;
+    }
+
     try {
       setLoading(true);
-      // Create employee first
-      const newEmployee = await employeeService.createEmployee(formData as CreateEmployeeRequest);
+      const payload: CreateEmployeeRequest = {
+        ...formData,
+        department: formData.visibleDepartments?.[0],
+        visibleDepartments:
+          formData.visibleDepartments && formData.visibleDepartments.length > 0
+            ? formData.visibleDepartments
+            : undefined,
+      };
+      const newEmployee = await employeeService.createEmployee(payload);
       setSuccess('Employee created successfully');
       
       // If shift is selected, assign it to the employee
@@ -323,10 +339,25 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => {
+      if (name === 'branchId') {
+        const nextBranchId = value;
+        const nextDepartments = branches.find((b) => b.id === nextBranchId)?.departments ?? [];
+        return {
+          ...prev,
+          branchId: nextBranchId,
+          visibleDepartments: nextDepartments.length ? [...nextDepartments] : [],
+        };
+      }
+      return {
+        ...prev,
+        [name]: value,
+      };
+    });
+  };
+
+  const handleVisibleDepartmentsChange = (next: string[]) => {
+    setFormData((prev) => ({ ...prev, visibleDepartments: next }));
   };
 
   const handleSectionToggle = (sectionId: string) => {
@@ -434,7 +465,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                     <th>Name</th>
                     <th>Email</th>
                     <th>Role</th>
-                    <th>Department</th>
+                    <th>Modules</th>
                     <th>Branch</th>
                     <th>Employee ID</th>
                     <th>Status</th>
@@ -459,7 +490,11 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                         <td>
                           <span className={`role-badge role-badge--${employee.role}`}>{employee.role}</span>
                         </td>
-                        <td>{employee.department || '-'}</td>
+                        <td>
+                          {employee.visibleDepartments?.length
+                            ? employee.visibleDepartments.join(', ')
+                            : employee.department || '—'}
+                        </td>
                         <td>{employee.branchId ? branches.find(b => b.id === employee.branchId)?.name || '-' : '-'}</td>
                       <td>{employee.employeeId || '-'}</td>
                       <td>
@@ -541,6 +576,20 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
 
                 <div className="form-row">
                   <Select
+                    label="Branch"
+                    name="branchId"
+                    value={formData.branchId}
+                    onChange={handleChange as any}
+                    disabled={loading}
+                    options={[
+                      { value: '', label: 'Select branch' },
+                      ...branches.map((b) => ({
+                        value: b.id,
+                        label: `${b.name} (${b.code})`,
+                      })),
+                    ]}
+                  />
+                  <Select
                     label="Role *"
                     name="role"
                     value={formData.role}
@@ -554,13 +603,20 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                       { value: UserRole.ADMIN, label: 'Admin' },
                     ]}
                   />
-                  <Input
-                    label="Department"
-                    type="text"
-                    name="department"
-                    value={formData.department}
-                    onChange={handleChange}
-                    disabled={loading}
+                </div>
+
+                <div className="form-row form-row--full">
+                  <BranchModuleCheckboxGroup
+                    label="Modules *"
+                    options={selectedBranchDepartments}
+                    value={formData.visibleDepartments ?? []}
+                    onChange={handleVisibleDepartmentsChange}
+                    disabled={loading || !formData.branchId}
+                    hint={
+                      formData.branchId
+                        ? 'Defaults to all modules enabled for the branch. The employee only sees what you select after sign-in.'
+                        : 'Choose a branch first to pick modules.'
+                    }
                   />
                 </div>
 

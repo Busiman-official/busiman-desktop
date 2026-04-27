@@ -15,7 +15,7 @@ import { User, UserRole } from '@/types';
 import { logger } from '@/shared/utils/logger';
 import { Modal } from '@/shared/components/modals/Modal';
 
-const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'hr', 'finance', 'sales'];
+const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'sales', 'reports', 'calendar'] as const;
 import './CompanySettings.css';
 
 type CompanySettingsTab = 'details' | 'branches';
@@ -48,7 +48,6 @@ export const CompanySettings: React.FC = () => {
     departments: [],
   });
   const [managers, setManagers] = useState<User[]>([]);
-  const [customDepartment, setCustomDepartment] = useState('');
 
   const [wipeWarnOpen, setWipeWarnOpen] = useState(false);
   const [wipeConfirmOpen, setWipeConfirmOpen] = useState(false);
@@ -139,16 +138,6 @@ export const CompanySettings: React.FC = () => {
         return { ...prev, departments: [...departments, dept] };
       }
     });
-  };
-
-  const handleAddCustomDepartment = () => {
-    if (customDepartment.trim() && !branchForm.departments?.includes(customDepartment.trim())) {
-      setBranchForm((prev) => ({
-        ...prev,
-        departments: [...(prev.departments || []), customDepartment.trim()],
-      }));
-      setCustomDepartment('');
-    }
   };
 
   const handleCreateBranch = async () => {
@@ -739,7 +728,7 @@ export const CompanySettings: React.FC = () => {
                     <label>Departments</label>
                     <div className="departments-selection">
                       <div className="standard-departments">
-                        <strong>Standard Departments:</strong>
+                        <strong>Modules available for this branch:</strong>
                         <div className="department-checkboxes">
                           {STANDARD_DEPARTMENTS.map((dept) => (
                             <label key={dept} className="department-checkbox">
@@ -748,53 +737,10 @@ export const CompanySettings: React.FC = () => {
                                 checked={branchForm.departments?.includes(dept) || false}
                                 onChange={() => handleDepartmentToggle(dept)}
                               />
-                              <span>{dept}</span>
+                              <span>{dept.charAt(0).toUpperCase() + dept.slice(1)}</span>
                             </label>
                           ))}
                         </div>
-                      </div>
-                      <div className="custom-departments">
-                        <strong>Custom Departments:</strong>
-                        <div className="custom-department-input">
-                          <input
-                            type="text"
-                            className="form-input"
-                            value={customDepartment}
-                            onChange={(e) => setCustomDepartment(e.target.value)}
-                            placeholder="Enter custom department name"
-                            onKeyPress={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleAddCustomDepartment();
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn-secondary btn-sm"
-                            onClick={handleAddCustomDepartment}
-                          >
-                            Add
-                          </button>
-                        </div>
-                        {(branchForm.departments?.filter((d) => !STANDARD_DEPARTMENTS.includes(d)).length ?? 0) > 0 && (
-                          <div className="custom-departments-list">
-                            {(branchForm.departments ?? [])
-                              .filter((d) => !STANDARD_DEPARTMENTS.includes(d))
-                              .map((dept) => (
-                                <span key={dept} className="department-tag">
-                                  {dept}
-                                  <button
-                                    type="button"
-                                    className="department-tag-remove"
-                                    onClick={() => handleDepartmentToggle(dept)}
-                                  >
-                                    ×
-                                  </button>
-                                </span>
-                              ))}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>

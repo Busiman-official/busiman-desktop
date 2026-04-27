@@ -35,6 +35,7 @@ import {
 } from "@/shared/components/ui";
 import { LoadingState, EmptyState } from "@/shared/components/data-display";
 import { extractErrorMessage } from "@/utils/error";
+import { movementTransactionIso } from "@/utils/commercialDates";
 import { logger } from "@/shared/utils/logger";
 import { ConfirmDialog } from "@/shared/components/modals";
 import { ResizableSplitPane } from "@/shared/components/layout";
@@ -437,7 +438,10 @@ export const ItemMaster: React.FC = () => {
     } else {
       // If no itemId in URL, clear selection and return to list view
       setSelectedItemId(null);
-      setViewMode("list");
+      // Keep create-wizard mode stable when opened via ?addProduct=1.
+      if (viewMode !== "add") {
+        setViewMode("list");
+      }
       // Still apply itemSubTab from URL so deep links open with the correct sub-tab
       if (
         subTabParam === "overview" ||
@@ -452,7 +456,7 @@ export const ItemMaster: React.FC = () => {
         setItemSubTab(subTabParam as ItemSubTab);
       }
     }
-  }, [searchParams]);
+  }, [searchParams, viewMode]);
 
   // Resolve selected variant from URL / defaults when item variants load; keep URL in sync on Stock tab
   useEffect(() => {
@@ -2479,7 +2483,7 @@ export const ItemMaster: React.FC = () => {
             <table className="history-table">
               <thead>
                 <tr>
-                  <th>Date</th>
+                  <th>Transaction date</th>
                   <th>Movement Type</th>
                   <th>From Location</th>
                   <th>To Location</th>
@@ -2491,7 +2495,15 @@ export const ItemMaster: React.FC = () => {
               <tbody>
                 {historyData.map((movement) => (
                   <tr key={movement.id}>
-                    <td>{new Date(movement.createdAt).toLocaleDateString()}</td>
+                    <td
+                      title={
+                        movement.postingDate
+                          ? `Entered: ${new Date(movement.createdAt).toLocaleString()}`
+                          : undefined
+                      }
+                    >
+                      {new Date(movementTransactionIso(movement)).toLocaleDateString()}
+                    </td>
                     <td>{getMovementTypeLabel(movement.movementType)}</td>
                     <td>{movement.fromLocation?.code || "-"}</td>
                     <td>{movement.toLocation?.code || "-"}</td>

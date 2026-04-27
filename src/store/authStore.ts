@@ -8,6 +8,7 @@ import { AuthState, User, UserRole } from '@/types';
 import { authService } from '@/services/auth.service';
 import { logger } from '@/shared/utils/logger';
 import { branchContextStore } from './branchContextStore';
+import { isTransientNetworkError } from '@/utils/authHttpErrors';
 
 interface AuthStore extends AuthState {
   login: (user: User, accessToken: string, refreshToken: string, sessionId?: string) => void;
@@ -16,6 +17,8 @@ interface AuthStore extends AuthState {
   hasRole: (role: UserRole) => boolean;
   hasAnyRole: (roles: UserRole[]) => boolean;
   initializeAuth: () => Promise<void>;
+  /** After connectivity returns — refresh tokens without full init spinner or clearing state on network blips. */
+  trySilentRefresh: () => Promise<void>;
   isInitializing: boolean;
 }
 
@@ -89,17 +92,46 @@ export const authStore = create<AuthStore>()(
             });
           }
         } catch (error: unknown) {
-          // Session invalid or expired, clear auth state
           logger.error('[AuthStore] Failed to refresh token on initialization', error, {
             message: error instanceof Error ? error.message : String(error),
+            transient: isTransientNetworkError(error),
           });
-          
+
+          if (isTransientNetworkError(error)) {
+            set({
+              isAuthenticated: true,
+              isInitializing: false,
+            });
+            return;
+          }
+
           set({
             user: null,
             accessToken: null,
             refreshToken: null,
             isAuthenticated: false,
             isInitializing: false,
+          });
+        }
+      },
+
+      trySilentRefresh: async () => {
+        const { refreshToken, user } = get();
+        if (!refreshToken || !user) return;
+        try {
+          const tokenData = await authService.refreshToken(refreshToken);
+          set({
+            accessToken: tokenData.accessToken,
+            refreshToken: tokenData.refreshToken,
+            isAuthenticated: true,
+          });
+        } catch (error: unknown) {
+          if (isTransientNetworkError(error)) return;
+          set({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            isAuthenticated: false,
           });
         }
       },

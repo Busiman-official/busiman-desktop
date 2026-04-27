@@ -1670,6 +1670,7 @@ export interface MovementAuditReport {
   reasonCode: string;
   createdBy: string;
   createdAt: string;
+  postingDate?: string;
 }
 
 export interface DamageWasteAnalysisReport {
@@ -1730,6 +1731,8 @@ export interface CreateStockMovementRequest {
   referenceNumber?: string;
   requiresApproval?: boolean;
   attachments?: Array<{ url: string; type: string; uploadedAt: string }>;
+  /** Business posting date (optional; POS sets from invoice date). */
+  postingDate?: string;
 }
 
 export interface MovementLineRequest {
@@ -1858,6 +1861,8 @@ export interface StockMovementResponse {
   attachments: Array<{ url: string; type: string; uploadedAt: string }>;
   executionMode: MovementExecutionMode;
   nonStockReason?: 'ITEM_NOT_STOCK_MANAGED';
+  /** Business transaction date when set (else use createdAt for display). */
+  postingDate?: string;
   createdBy: {
     id: string;
     name: string;

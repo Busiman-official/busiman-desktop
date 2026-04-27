@@ -17,6 +17,8 @@ export interface User {
   name: string;
   role: UserRole;
   department?: string;
+  /** Stored module slugs (subset of branch); omitted on legacy accounts. */
+  visibleDepartments?: string[];
   branchId?: string;
   branchDepartments?: string[];
   phoneNumber?: string;
@@ -52,6 +54,7 @@ export interface LoginResponse {
 export interface RefreshTokenResponse {
   accessToken: string;
   refreshToken: string;
+  sessionId?: string;
 }
 
 // Proxy types
@@ -288,6 +291,7 @@ export interface EmployeeDetails {
   role: UserRole;
   designation?: string;
   department?: string;
+  visibleDepartments?: string[];
   branchId?: string;
   reportingManager?: {
     id: string;
@@ -352,6 +356,7 @@ export interface UpdateEmployeeDetailsRequest {
   role?: UserRole;
   designation?: string;
   department?: string;
+  visibleDepartments?: string[];
   branchId?: string;
   reportingManagerId?: string;
   employmentType?: EmploymentType;

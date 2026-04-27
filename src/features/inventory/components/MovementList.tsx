@@ -14,6 +14,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
+import { movementTransactionIso } from '@/utils/commercialDates';
 import './MovementList.css';
 
 export type MovementRowSource = 'movement' | 'document';
@@ -39,7 +40,8 @@ function getRowKey(row: MovementRow): string {
   return row.source === 'movement' ? `movement-${row.data.id}` : `document-${row.data.id}`;
 }
 
-function getRowCreatedAt(row: MovementRow): string {
+function getRowTransactionIso(row: MovementRow): string {
+  if (row.source === 'movement') return movementTransactionIso(row.data);
   return row.data.createdAt;
 }
 
@@ -117,7 +119,7 @@ export const MovementList: React.FC<MovementListProps> = ({
       .filter((m) => !(m.referenceNumber && documentNumbers.has(m.referenceNumber)))
       .map((data) => ({ source: 'movement', data }));
     const all: MovementRow[] = [...movementRows, ...documentRows];
-    all.sort((a, b) => new Date(getRowCreatedAt(b)).getTime() - new Date(getRowCreatedAt(a)).getTime());
+    all.sort((a, b) => new Date(getRowTransactionIso(b)).getTime() - new Date(getRowTransactionIso(a)).getTime());
     return all;
   }, [movements, documents]);
 
@@ -244,7 +246,7 @@ export const MovementList: React.FC<MovementListProps> = ({
           <table>
             <thead>
               <tr>
-                <th>Date & Time</th>
+                <th>Transaction date</th>
                 <th>Type</th>
                 <th>Total Lines</th>
                 <th>Variant</th>
@@ -271,7 +273,15 @@ export const MovementList: React.FC<MovementListProps> = ({
                       onClick={() => onSelectMovement(selection)}
                       onDoubleClick={() => onOpenDetails?.(selection)}
                     >
-                      <td>{new Date(m.createdAt).toLocaleString()}</td>
+                      <td
+                        title={
+                          m.postingDate
+                            ? `Entered: ${new Date(m.createdAt).toLocaleString()}`
+                            : undefined
+                        }
+                      >
+                        {new Date(movementTransactionIso(m)).toLocaleString()}
+                      </td>
                       <td>{m.movementType}</td>
                       <td>1</td>
                       <td>{variantDisplay}</td>

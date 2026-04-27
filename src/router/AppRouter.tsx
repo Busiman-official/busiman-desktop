@@ -5,7 +5,7 @@
 
 import React, { useEffect, lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { ProtectedRoute, DashboardRedirect } from '@/shared/components/routing';
+import { ProtectedRoute, DashboardRedirect, RequireBranchModule } from '@/shared/components/routing';
 import { NavigationFocusHandler } from '@/shared/components/routing/NavigationFocusHandler';
 import { AppLayout } from '@/shared/components/layout';
 import { UserRole } from '@/types';
@@ -78,8 +78,22 @@ export const AppRouter: React.FC = () => {
             <Route element={<AppLayout />}>
               {/* Dashboard redirects to role-specific dashboard */}
               <Route path="/dashboard" element={<DashboardRedirect />} />
-              <Route path="/attendance" element={<AttendancePage />} />
-              <Route path="/reports" element={<ReportsPage />} />
+              <Route
+                path="/attendance"
+                element={
+                  <RequireBranchModule module="attendance">
+                    <AttendancePage />
+                  </RequireBranchModule>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <RequireBranchModule module="reports">
+                    <ReportsPage />
+                  </RequireBranchModule>
+                }
+              />
               <Route
                 path="/reports/admin"
                 element={
@@ -88,10 +102,38 @@ export const AppRouter: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-              <Route path="/calendar" element={<CalendarPage />} />
-              <Route path="/inventory" element={<InventoryPage />} />
-              <Route path="/sales/*" element={<SalesPage />} />
-              <Route path="/inventory/products/:id" element={<ProductDetailPage />} />
+              <Route
+                path="/calendar"
+                element={
+                  <RequireBranchModule module="calendar">
+                    <CalendarPage />
+                  </RequireBranchModule>
+                }
+              />
+              <Route
+                path="/inventory"
+                element={
+                  <RequireBranchModule module="inventory">
+                    <InventoryPage />
+                  </RequireBranchModule>
+                }
+              />
+              <Route
+                path="/sales/*"
+                element={
+                  <RequireBranchModule module="sales">
+                    <SalesPage />
+                  </RequireBranchModule>
+                }
+              />
+              <Route
+                path="/inventory/products/:id"
+                element={
+                  <RequireBranchModule module="inventory">
+                    <ProductDetailPage />
+                  </RequireBranchModule>
+                }
+              />
               <Route path="/settings" element={<SettingsPage />} />
 
               {/* Role-specific routes */}

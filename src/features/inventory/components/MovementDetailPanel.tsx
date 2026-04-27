@@ -12,6 +12,7 @@ import {
 import { Button, Card } from '@/shared/components/ui';
 import { LoadingState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
+import { movementTransactionIso } from '@/utils/commercialDates';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import './MovementDetailPanel.css';
@@ -262,7 +263,14 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
               <h3>Audit</h3>
               <div className="detail-grid">
                 <div><label>Created By</label><div>{movement.createdBy?.name ?? '-'} {movement.createdBy?.email ? `(${movement.createdBy.email})` : ''}</div></div>
-                <div><label>Created At</label><div>{new Date(movement.createdAt).toLocaleString()}</div></div>
+                <div>
+                  <label>Transaction date</label>
+                  <div>{new Date(movementTransactionIso(movement)).toLocaleString()}</div>
+                </div>
+                <div>
+                  <label>Entered in system</label>
+                  <div>{new Date(movement.createdAt).toLocaleString()}</div>
+                </div>
                 {movement.approvedBy && <div><label>Approved By</label><div>{movement.approvedBy}</div></div>}
                 {movement.approvedAt && <div><label>Approved At</label><div>{new Date(movement.approvedAt).toLocaleString()}</div></div>}
               </div>
@@ -293,9 +301,16 @@ export const MovementDetailPanel: React.FC<MovementDetailPanelProps> = ({
             <div className="detail-section">
               <h3>Audit Trail</h3>
               <div className="audit-timeline">
+                {movement.postingDate ? (
+                  <div className="audit-event">
+                    <div className="audit-event-time">{new Date(movement.postingDate).toLocaleString()}</div>
+                    <div className="audit-event-action">Business posting date</div>
+                    <div className="audit-event-user">Sale / invoice attribution</div>
+                  </div>
+                ) : null}
                 <div className="audit-event">
                   <div className="audit-event-time">{new Date(movement.createdAt).toLocaleString()}</div>
-                  <div className="audit-event-action">Created</div>
+                  <div className="audit-event-action">Recorded in system</div>
                   <div className="audit-event-user">By {movement.createdBy?.name ?? '-'}</div>
                 </div>
                 {(movement.status === MovementStatus.COMPLETED || movement.status === MovementStatus.APPROVED) && movement.approvedAt && (

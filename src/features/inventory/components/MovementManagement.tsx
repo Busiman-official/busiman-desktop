@@ -16,6 +16,7 @@ import {
 import { Button, Input, Card, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
+import { movementTransactionIso } from '@/utils/commercialDates';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { ResizableSplitPane } from '@/shared/components/layout';
@@ -598,7 +599,15 @@ export const MovementManagement: React.FC = () => {
                           {movement.status}
                         </span>
                       </td>
-                      <td>{new Date(movement.createdAt).toLocaleDateString()}</td>
+                      <td
+                        title={
+                          movement.postingDate
+                            ? `Entered: ${new Date(movement.createdAt).toLocaleString()}`
+                            : undefined
+                        }
+                      >
+                        {new Date(movementTransactionIso(movement)).toLocaleDateString()}
+                      </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <div className="row-actions">
                           <Button

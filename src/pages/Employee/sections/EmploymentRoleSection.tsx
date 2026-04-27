@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { EmployeeDetails, UpdateEmployeeDetailsRequest, UserRole, EmploymentType, User, Branch } from '@/types';
-import { CollapsibleSection, InlineEditField } from '@/shared/components/ui';
+import { CollapsibleSection, InlineEditField, BranchModuleCheckboxGroup } from '@/shared/components/ui';
 import { employeeService } from '@/services/employee.service';
 import { branchService } from '@/services/branch.service';
 import { logger } from '@/shared/utils/logger';
@@ -31,6 +31,10 @@ export const EmploymentRoleSection: React.FC<EmploymentRoleSectionProps> = ({
   const [loadingManagers, setLoadingManagers] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const branchDepartments = React.useMemo(() => {
+    const branch = branches.find((b) => b.id === employee.branchId);
+    return branch?.departments ?? [];
+  }, [branches, employee.branchId]);
 
   useEffect(() => {
     if (isExpanded && canEdit) {
@@ -103,6 +107,37 @@ export const EmploymentRoleSection: React.FC<EmploymentRoleSectionProps> = ({
     onUnsavedChange(false);
   };
 
+  const handleBranchChange = async (value: string) => {
+    const nextDepts = branches.find((b) => b.id === value)?.departments ?? [];
+    const prevVis =
+      employee.visibleDepartments && employee.visibleDepartments.length > 0
+        ? employee.visibleDepartments
+        : branchDepartments;
+    const intersect = nextDepts.filter((d) => prevVis.includes(d));
+    const nextVisible = intersect.length > 0 ? intersect : nextDepts;
+    const update: UpdateEmployeeDetailsRequest = {
+      branchId: value || undefined,
+      visibleDepartments: nextVisible,
+      department: nextVisible[0] || undefined,
+    };
+    await onUpdate(update);
+    onUnsavedChange(false);
+  };
+
+  const handleModulesChange = async (next: string[]) => {
+    const update: UpdateEmployeeDetailsRequest = {
+      visibleDepartments: next,
+      department: next[0] || undefined,
+    };
+    await onUpdate(update);
+    onUnsavedChange(false);
+  };
+
+  const selectedModules =
+    employee.visibleDepartments && employee.visibleDepartments.length > 0
+      ? employee.visibleDepartments.filter((d) => branchDepartments.includes(d))
+      : branchDepartments;
+
   return (
     <CollapsibleSection
       title="Employment & Role Details"
@@ -143,13 +178,31 @@ export const EmploymentRoleSection: React.FC<EmploymentRoleSectionProps> = ({
             placeholder="Enter designation"
           />
 
-          <InlineEditField
-            label="Department"
-            value={employee.department || ''}
-            onSave={(value) => handleSave('department', value)}
-            disabled={!canEdit}
-            placeholder="Enter department"
-          />
+          {canEdit ? (
+            <div className="form-field form-field--full-width">
+              <BranchModuleCheckboxGroup
+                label="Modules"
+                options={branchDepartments}
+                value={selectedModules}
+                onChange={(next) => void handleModulesChange(next)}
+                disabled={!canEdit || !employee.branchId}
+                hint={
+                  employee.branchId
+                    ? 'Only selected modules appear for this employee after sign-in.'
+                    : 'Assign a branch to configure modules.'
+                }
+              />
+            </div>
+          ) : (
+            <div className="form-field">
+              <label className="field-label">Modules</label>
+              <div className="field-value read-only">
+                {selectedModules.length
+                  ? selectedModules.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ')
+                  : '—'}
+              </div>
+            </div>
+          )}
 
           {canEdit ? (
             <div className="form-field">

@@ -22,6 +22,7 @@ import {
 } from '@/features/sales/utils/mapLinesForCreateOrder';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import { extractErrorMessage } from '@/utils/error';
+import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import { authStore } from '@/store/authStore';
 import './CustomerDetailsPage.css';
 
@@ -106,6 +107,7 @@ type CustomerOrderRow = {
   status?: string;
   mode?: string;
   total?: number;
+  invoiceDate?: string;
   createdAt?: string;
   paymentPending?: boolean;
   paymentPendingAmount?: number;
@@ -130,6 +132,7 @@ type PaymentOrderGroup = {
   paymentPending?: boolean;
   mode: string;
   createdAt: string;
+  saleDateMs: number;
   orderTotal: number;
   isDue: boolean;
   isCompleted: boolean;
@@ -289,7 +292,7 @@ export const CustomerDetailsPage: React.FC = () => {
   );
 
   const ordersTabFiltered = useMemo(() => {
-    return customerOrdersVisible.filter((o) => {
+    const list = customerOrdersVisible.filter((o) => {
       const st = String((o as { status?: string }).status);
       const pend = Boolean((o as { paymentPending?: boolean }).paymentPending);
       if (ordersTabFilter === 'completed') return st === 'completed' && !pend;
@@ -298,6 +301,10 @@ export const CustomerDetailsPage: React.FC = () => {
       }
       return true;
     });
+    return [...list].sort(
+      (a, b) =>
+        orderSaleTimestampMs(b as CustomerOrderRow) - orderSaleTimestampMs(a as CustomerOrderRow)
+    );
   }, [customerOrdersVisible, ordersTabFilter]);
 
   const pagedOrders = useMemo(() => {
@@ -348,8 +355,7 @@ export const CustomerDetailsPage: React.FC = () => {
     });
     const sorted = [...orders].sort(
       (a, b) =>
-        new Date(String((b as { createdAt?: string }).createdAt || 0)).getTime() -
-        new Date(String((a as { createdAt?: string }).createdAt || 0)).getTime()
+        orderSaleTimestampMs(b as CustomerOrderRow) - orderSaleTimestampMs(a as CustomerOrderRow)
     );
     return sorted.map((raw) => {
       const id = docId(raw as { _id?: string; id?: string });
@@ -377,6 +383,7 @@ export const CustomerDetailsPage: React.FC = () => {
         paymentPending,
         mode: String((raw as { mode?: string }).mode || ''),
         createdAt: String((raw as { createdAt?: string }).createdAt || ''),
+        saleDateMs: orderSaleTimestampMs(raw as CustomerOrderRow),
         orderTotal,
         isDue,
         isCompleted,
@@ -1110,7 +1117,7 @@ export const CustomerDetailsPage: React.FC = () => {
                           <th>Mode</th>
                           <th>Lines</th>
                           <th>Amount</th>
-                          <th>Date</th>
+                          <th>Sale date</th>
                           <th>Payment</th>
                           <th>Actions</th>
                         </tr>
@@ -1182,7 +1189,17 @@ export const CustomerDetailsPage: React.FC = () => {
                                   </button>
                                 </td>
                                 <td>{formatInr(Number(o.total || 0))}</td>
-                                <td>{o.createdAt ? new Date(o.createdAt).toLocaleDateString('en-IN') : '—'}</td>
+                                <td
+                                  title={
+                                    o.createdAt
+                                      ? `Entered: ${new Date(o.createdAt).toLocaleString('en-IN')}`
+                                      : undefined
+                                  }
+                                >
+                                  {orderSaleTimestampMs(o) > 0
+                                    ? new Date(orderSaleTimestampMs(o)).toLocaleDateString('en-IN')
+                                    : '—'}
+                                </td>
                                 <td>{payCell}</td>
                                 <td>
                                   <div className="cd-row-actions">
@@ -1359,8 +1376,17 @@ export const CustomerDetailsPage: React.FC = () => {
                             ) : (
                               <Badge variant="neutral">{g.status}</Badge>
                             )}
-                            <span className="cd-payment-group__date">
-                              {g.createdAt ? new Date(g.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                            <span
+                              className="cd-payment-group__date"
+                              title={
+                                g.createdAt
+                                  ? `Entered: ${new Date(g.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`
+                                  : undefined
+                              }
+                            >
+                              {g.saleDateMs > 0
+                                ? new Date(g.saleDateMs).toLocaleDateString('en-IN', { dateStyle: 'medium' })
+                                : '—'}
                             </span>
                           </button>
                           <div className="cd-payment-group__amounts">

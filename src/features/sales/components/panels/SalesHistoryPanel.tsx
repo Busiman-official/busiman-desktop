@@ -15,6 +15,7 @@ import type { SelectOption } from '@/shared/components/ui';
 import { salesService } from '@/services/sales.service';
 import { mapOrderLinesForCreateApi } from '../../utils/mapLinesForCreateOrder';
 import { docId, entityId, idStr } from '../../utils/ids';
+import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import './SalesHistoryPanel.css';
 
 type StatusFilter = 'all' | 'completed' | 'draft' | 'cancelled';
@@ -47,12 +48,6 @@ function startOfWeek(d: Date): Date {
 
 function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-
-function parseCreatedAt(v: unknown): number {
-  if (!v) return 0;
-  const t = new Date(String(v)).getTime();
-  return Number.isFinite(t) ? t : 0;
 }
 
 function isDraftBucketStatus(s: string): boolean {
@@ -237,7 +232,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     for (const r of rows) {
       const st = String(r.status || '');
       const total = Number(r.total ?? 0);
-      const ts = parseCreatedAt(r.createdAt);
+      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
       if (st === 'completed') {
         sumCompleted += total;
         nCompleted += 1;
@@ -258,7 +253,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       const st = String(r.status || '');
       if (!matchesStatusFilter(st, statusFilter)) return false;
       if (!matchesModeFilter(r, modeFilter)) return false;
-      const ts = parseCreatedAt(r.createdAt);
+      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
       if (!matchesDateFilter(ts, dateFilter)) return false;
       const total = Number(r.total ?? 0);
       if (!matchesAmountFilter(total, amountFilter)) return false;
@@ -272,8 +267,8 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       return true;
     });
     list = [...list].sort((a, b) => {
-      const ta = parseCreatedAt(a.createdAt);
-      const tb = parseCreatedAt(b.createdAt);
+      const ta = orderSaleTimestampMs(a as { invoiceDate?: string; createdAt?: string });
+      const tb = orderSaleTimestampMs(b as { invoiceDate?: string; createdAt?: string });
       return dateDesc ? tb - ta : ta - tb;
     });
     return list;
@@ -604,12 +599,24 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
 
   const exportRows = useCallback(
     (subset: Record<string, unknown>[]) => {
-      const header = ['Order ID', 'Order #', 'Customer', 'Phone', 'Status', 'Mode', 'Total', 'Created'];
+      const header = [
+        'Order ID',
+        'Order #',
+        'Customer',
+        'Phone',
+        'Status',
+        'Mode',
+        'Total',
+        'Sale date',
+        'Entered (system)',
+      ];
       const lines = subset.map((r) => {
         const oid = docId(r as { _id?: string; id?: string });
         const { name, phone } = customerCell(r, customerFallback);
         const mp = modePill(r);
         const st = statusPill(r);
+        const saleMs = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
+        const saleStr = saleMs ? new Date(saleMs).toISOString().slice(0, 10) : '';
         return [
           String(oid ?? ''),
           String((r as { orderNumber?: string }).orderNumber ?? ''),
@@ -618,6 +625,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           st.label,
           mp.label,
           String(Number(r.total ?? 0)),
+          saleStr,
           String((r as { createdAt?: string }).createdAt ?? ''),
         ];
       });
@@ -751,7 +759,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           <button type="button" className="sales-history-stat sales-history-stat--green" onClick={statCardHandlers.revenue}>
             <div className="sales-history-stat__label">Revenue today</div>
             <div className="sales-history-stat__value">₹{stats.revenueToday.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-            <div className="sales-history-stat__ctx">Completed orders · today</div>
+            <div className="sales-history-stat__ctx">Completed orders · today (by sale date)</div>
           </button>
           <button type="button" className="sales-history-stat" onClick={statCardHandlers.avg}>
             <div className="sales-history-stat__label">Average order value</div>
@@ -865,7 +873,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                 <th>Status</th>
                 <th>Mode</th>
                 <th className="sales-history-th-num">Total</th>
-                <th>Created</th>
+                <th>Sale date</th>
                 <th aria-label="Actions" />
               </tr>
             </thead>
@@ -908,7 +916,13 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                   const mp = modePill(r);
                   const { name, phone } = customerCell(r, customerFallback);
                   const created = (r as { createdAt?: string }).createdAt;
-                  const dateStr = created ? new Date(created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+                  const saleMs = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
+                  const dateStr = saleMs
+                    ? new Date(saleMs).toLocaleDateString(undefined, { dateStyle: 'medium' })
+                    : '—';
+                  const enteredTitle = created
+                    ? `Entered in system: ${new Date(created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`
+                    : '';
                   const high = total >= 5000;
                   const sel = Boolean(id && selected.has(id));
                   return (
@@ -976,7 +990,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                       <td className="sales-history-td-num" style={{ fontWeight: 700 }}>
                         ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
-                      <td title={String(created ?? '')}>{dateStr}</td>
+                      <td title={enteredTitle || String(created ?? '')}>{dateStr}</td>
                       <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"

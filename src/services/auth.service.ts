@@ -2,9 +2,12 @@
  * Authentication Service
  */
 
+import axios from 'axios';
 import { api } from './api';
+import { config } from '@/config';
 import { LoginRequest, LoginResponse, RefreshTokenResponse } from '@/types';
 import { extractApiData } from '@/utils/api';
+import type { ApiResponse } from '@/utils/api';
 
 export class AuthService {
   /**
@@ -26,14 +29,20 @@ export class AuthService {
   }
 
   /**
-   * Refresh access token
+   * Refresh access token using a bare Axios call (no api interceptors) to avoid
+   * refresh → 401 → interceptor → refresh recursion.
    */
   async refreshToken(refreshToken: string): Promise<RefreshTokenResponse> {
-    const response = await api.post<{ success: boolean; data: RefreshTokenResponse; message: string }>('/auth/refresh', {
-      refreshToken,
-    });
+    const response = await axios.post<ApiResponse<RefreshTokenResponse>>(
+      `${config.api.baseURL}/auth/refresh`,
+      { refreshToken },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: config.api.timeout,
+      }
+    );
     const tokenData = extractApiData<RefreshTokenResponse>(response);
-    if (!tokenData) {
+    if (!tokenData?.accessToken || !tokenData?.refreshToken) {
       throw new Error('Invalid response format from server');
     }
     return tokenData;

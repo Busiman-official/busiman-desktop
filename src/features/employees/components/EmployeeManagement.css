@@ -233,6 +233,10 @@
   gap: var(--spacing-lg);
 }
 
+.employee-form .form-row--full {
+  grid-template-columns: 1fr;
+}
+
 .input-group {
   display: flex;
   flex-direction: column;

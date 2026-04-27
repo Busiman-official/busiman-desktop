@@ -97,15 +97,18 @@ export const Navbar: React.FC = () => {
   const isActive = (path: string): boolean => {
     if (path === '/dashboard') {
       const roleDashboard = getRoleDashboard();
-      return location.pathname === roleDashboard || 
-             location.pathname === '/dashboard' ||
-             (user && (
-               (user.role === UserRole.ADMIN && location.pathname === '/admin') ||
-               (user.role === UserRole.HR && location.pathname === '/hr') ||
-               (user.role === UserRole.MANAGER && location.pathname === '/manager') ||
-               (user.role === UserRole.EMPLOYEE && location.pathname === '/employee') ||
-               (user.role === UserRole.INVENTORY_APPROVER && location.pathname === '/employee')
-             ));
+      return (
+        location.pathname === roleDashboard ||
+        location.pathname === '/dashboard' ||
+        Boolean(
+          user &&
+            ((user.role === UserRole.ADMIN && location.pathname === '/admin') ||
+              (user.role === UserRole.HR && location.pathname === '/hr') ||
+              (user.role === UserRole.MANAGER && location.pathname === '/manager') ||
+              (user.role === UserRole.EMPLOYEE && location.pathname === '/employee') ||
+              (user.role === UserRole.INVENTORY_APPROVER && location.pathname === '/employee'))
+        )
+      );
     }
     if (path === '/reports') {
       if (user?.role === UserRole.ADMIN) {
@@ -125,21 +128,33 @@ export const Navbar: React.FC = () => {
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
+  const hasModule = (slug: string): boolean => {
+    const s = slug.toLowerCase();
+    const fromCtx = departments?.some((d) => d.name.toLowerCase() === s);
+    if (fromCtx) return true;
+    return (user?.branchDepartments ?? []).some((d) => String(d).toLowerCase() === s);
+  };
+
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (item.disabled) return false;
     if (item.path === '/reports' && user?.role === UserRole.ADMIN) {
       return false;
     }
-    // Show inventory only if branch has inventory department, or user is admin
+    const isAdmin = user?.role === UserRole.ADMIN;
     if (item.path === '/inventory') {
-      const hasInventoryDept = departments?.some((d) => d.name.toLowerCase() === 'inventory');
-      const isAdmin = user?.role === UserRole.ADMIN;
-      return hasInventoryDept || isAdmin;
+      return hasModule('inventory') || isAdmin;
     }
     if (item.path === '/sales') {
-      const hasSalesDept = departments?.some((d) => d.name.toLowerCase() === 'sales');
-      const isAdmin = user?.role === UserRole.ADMIN;
-      return hasSalesDept || isAdmin;
+      return hasModule('sales') || isAdmin;
+    }
+    if (item.path === '/attendance') {
+      return hasModule('attendance') || isAdmin;
+    }
+    if (item.path === '/reports') {
+      return hasModule('reports') || isAdmin;
+    }
+    if (item.path === '/calendar') {
+      return hasModule('calendar') || isAdmin;
     }
     if (item.roles && user) {
       return item.roles.includes(user.role);

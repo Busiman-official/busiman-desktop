@@ -1,0 +1,9 @@
+.offline-connectivity-banner {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: #92400e;
+  background: #fef3c7;
+  border-bottom: 1px solid #fcd34d;
+}

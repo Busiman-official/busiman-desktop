@@ -23,6 +23,7 @@ import {
 } from '@/features/sales/components/panels';
 import { docId } from '@/features/sales/utils/ids';
 import { salesService } from '@/services/sales.service';
+import { IndicatorRipple } from '@/features/sales/components/indicator_ripple';
 import { CustomerDetailsPage } from './CustomerDetailsPage';
 import { OrderDetailPage, OrderDetailHeaderActions } from './OrderDetailPage';
 import './SalesPage.css';
@@ -59,6 +60,13 @@ function pickDefaultBranchId(branches: Branch[]): string | null {
     String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
   );
   return sorted[0]?.id ?? null;
+}
+
+function localDateISO(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export const SalesPage: React.FC = () => {
@@ -122,6 +130,15 @@ export const SalesPage: React.FC = () => {
     p.set('branchId', id);
     setSearchParams(p, { replace: true });
   }, [isAdmin, branches, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!isOrdersTab || isCustomerDetail || isOrderDetail) return;
+    const cur = searchParams.get('invoiceDate');
+    if (cur && /^\d{4}-\d{2}-\d{2}$/.test(cur)) return;
+    const p = new URLSearchParams(searchParams);
+    p.set('invoiceDate', localDateISO());
+    setSearchParams(p, { replace: true });
+  }, [isOrdersTab, isCustomerDetail, isOrderDetail, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!branchId) return;
@@ -196,6 +213,21 @@ export const SalesPage: React.FC = () => {
     [searchParams, setSearchParams]
   );
 
+  const setInvoiceDateParam = useCallback(
+    (ymd: string) => {
+      const p = new URLSearchParams(searchParams);
+      if (ymd && /^\d{4}-\d{2}-\d{2}$/.test(ymd)) p.set('invoiceDate', ymd);
+      else p.delete('invoiceDate');
+      setSearchParams(p, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
+
+  const posInvoiceDateYmd = useMemo(() => {
+    const raw = searchParams.get('invoiceDate')?.trim() || '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : localDateISO();
+  }, [searchParams]);
+
   const branchSelectOptions = useMemo(() => {
     const fromApi = branches.map((b) => ({
       value: b.id,
@@ -208,15 +240,54 @@ export const SalesPage: React.FC = () => {
     return [{ value: '', label: '— Select branch —' }, ...fromApi];
   }, [branches, searchParams]);
 
+  const tabDefs = useMemo(() => {
+    const showSalesPointAttention = Boolean(branchId) && salesPoints.length === 0;
+    return TAB_DEFS.map((tab) => {
+      if (tab.id !== 'salesPoints' || !showSalesPointAttention) return tab;
+      return {
+        ...tab,
+        label: (
+          <span className="sales-module-header__tab-label">
+            {tab.label}
+            <IndicatorRipple
+              className="sales-module-header__tab-indicator"
+              title="No sales points found. Please create one."
+            />
+          </span>
+        ),
+      };
+    });
+  }, [branchId, salesPoints.length]);
+
   const showBranchInHeader = isAdmin && !isCustomersTabUi;
-  const branchSlot = showBranchInHeader ? (
-    <Select
-      value={searchParams.get('branchId') || ''}
-      onChange={(e) => setBranchQueryId(e.target.value)}
-      options={branchSelectOptions}
+  const showPosInvoiceDate =
+    isOrdersTab && !isCustomerDetail && !isOrderDetail;
+  const invoiceDateInput = showPosInvoiceDate ? (
+    <input
+      type="date"
+      className="sales-module-header__invoice-date"
+      value={posInvoiceDateYmd}
+      min="2000-01-01"
+      max={localDateISO(new Date(Date.now() + 2 * 86400000))}
+      onChange={(e) => setInvoiceDateParam(e.target.value)}
+      aria-label="Invoice date"
+      title="Sale / invoice date for checkouts from this screen (system entry time is recorded separately)"
     />
+  ) : null;
+  const branchSlot = showBranchInHeader ? (
+    <div className="sales-module-header__branch-stack">
+      <Select
+        value={searchParams.get('branchId') || ''}
+        onChange={(e) => setBranchQueryId(e.target.value)}
+        options={branchSelectOptions}
+      />
+      {invoiceDateInput}
+    </div>
   ) : !isCustomersTabUi ? (
-    <span className="sales-module-header__branch-label">Your branch</span>
+    <div className="sales-module-header__branch-stack">
+      <span className="sales-module-header__branch-label">Your branch</span>
+      {invoiceDateInput}
+    </div>
   ) : null;
 
   const spOptions = useMemo(
@@ -313,6 +384,7 @@ export const SalesPage: React.FC = () => {
       customerId={customerId}
       salesPoints={salesPoints}
       customers={customers}
+      invoiceDateYmd={posInvoiceDateYmd}
     />
   );
 
@@ -346,7 +418,7 @@ export const SalesPage: React.FC = () => {
     <div className="sales-page sales-page--unified">
       <SalesModuleHeader
         title={pageTitle}
-        tabs={TAB_DEFS}
+        tabs={tabDefs}
         activeTab={activeTab}
         onTabChange={(id) => setTab(id as SalesTabId)}
         tabActiveOverride={tabActiveOverride}

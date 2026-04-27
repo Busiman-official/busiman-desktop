@@ -17,6 +17,7 @@ import {
 import { Button, Input, Card, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
+import { movementTransactionIso } from '@/utils/commercialDates';
 import { logger } from '@/shared/utils/logger';
 import './InventoryReports.css';
 
@@ -229,7 +230,7 @@ export const InventoryReports: React.FC = () => {
               <th>Quantity</th>
               <th>Reason</th>
               <th>Created By</th>
-              <th>Date</th>
+              <th>Transaction date</th>
             </tr>
           </thead>
           <tbody>
@@ -243,7 +244,20 @@ export const InventoryReports: React.FC = () => {
                 <td>{movement.quantity}</td>
                 <td>{movement.reasonCode}</td>
                 <td>{movement.createdBy}</td>
-                <td>{new Date(movement.createdAt).toLocaleDateString()}</td>
+                <td
+                  title={
+                    movement.postingDate
+                      ? `Entered: ${new Date(movement.createdAt).toLocaleDateString()}`
+                      : undefined
+                  }
+                >
+                  {new Date(
+                    movementTransactionIso({
+                      postingDate: movement.postingDate,
+                      createdAt: movement.createdAt,
+                    })
+                  ).toLocaleDateString()}
+                </td>
               </tr>
             ))}
           </tbody>

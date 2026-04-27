@@ -24,6 +24,7 @@ export interface CreateEmployeeRequest {
   password: string;
   role: UserRole;
   department?: string;
+  visibleDepartments?: string[];
   branchId?: string;
   phoneNumber?: string;
   address?: string;
