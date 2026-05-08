@@ -22,6 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Attendance', path: '/attendance' },
   { label: 'Inventory', path: '/inventory' },
   { label: 'Sales', path: '/sales' },
+  { label: 'Purchases', path: '/purchases' },
   { label: 'Reports', path: '/reports' },
   { label: 'Reports', path: '/reports/admin', roles: ['admin'] },
   { label: 'Calendar', path: '/calendar' },
@@ -146,6 +147,9 @@ export const Navbar: React.FC = () => {
     }
     if (item.path === '/sales') {
       return hasModule('sales') || isAdmin;
+    }
+    if (item.path === '/purchases') {
+      return hasModule('purchases') || isAdmin;
     }
     if (item.path === '/attendance') {
       return hasModule('attendance') || isAdmin;

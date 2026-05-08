@@ -18,6 +18,7 @@ const AdminReportsPage = lazy(() => import('@/pages/Reports/AdminReportsPage').t
 const CalendarPage = lazy(() => import('@/pages/Calendar/CalendarPage').then(module => ({ default: module.CalendarPage })));
 const InventoryPage = lazy(() => import('@/pages/Inventory/InventoryPage').then(module => ({ default: module.InventoryPage })));
 const SalesPage = lazy(() => import('@/pages/Sales/SalesPage').then(module => ({ default: module.SalesPage })));
+const PurchasesPage = lazy(() => import('@/pages/Purchases/PurchasesPage').then(module => ({ default: module.PurchasesPage })));
 const ProductDetailPage = lazy(() => import('@/features/inventory/components/ProductDetailPage').then(module => ({ default: module.ProductDetailPage })));
 const SettingsPage = lazy(() => import('@/pages/Settings/SettingsPage').then(module => ({ default: module.SettingsPage })));
 const AdminPage = lazy(() => import('@/pages/Admin/AdminPage').then(module => ({ default: module.AdminPage })));
@@ -123,6 +124,14 @@ export const AppRouter: React.FC = () => {
                 element={
                   <RequireBranchModule module="sales">
                     <SalesPage />
+                  </RequireBranchModule>
+                }
+              />
+              <Route
+                path="/purchases/*"
+                element={
+                  <RequireBranchModule module="purchases">
+                    <PurchasesPage />
                   </RequireBranchModule>
                 }
               />

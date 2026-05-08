@@ -429,6 +429,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
 
   const canEdit = currentUser?.role === UserRole.HR || currentUser?.role === UserRole.ADMIN;
   const canEditLimited = currentUser?.role === UserRole.MANAGER;
+  const canLogoutOthers = currentUser?.role === UserRole.ADMIN;
 
   const onlineCount = employees.filter((e) => isEmployeeOnline(e.id)).length;
 
@@ -518,7 +519,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                           >
                             Edit
                           </Button>
-                          {isEmployeeOnline(employee.id) && (
+                          {canLogoutOthers && isEmployeeOnline(employee.id) && (
                             <Button
                               variant="secondary"
                               size="sm"

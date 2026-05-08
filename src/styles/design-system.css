@@ -50,6 +50,8 @@
   --sidebar-width: 200px;
   --border-radius: 2px;
   --border-width: 1px;
+  /** Hairline card borders (high-DPI friendly) */
+  --border-width-hairline: 0.5px;
 
   /* Shadows - Minimal */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
