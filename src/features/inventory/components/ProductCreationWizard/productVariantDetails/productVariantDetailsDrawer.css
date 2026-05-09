@@ -61,6 +61,10 @@
   gap: 4px;
 }
 
+.product-variant-details-field--full {
+  grid-column: 1 / -1;
+}
+
 .product-variant-details-toggle {
   display: inline-flex;
   align-items: center;

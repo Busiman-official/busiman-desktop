@@ -64,6 +64,33 @@ interface Props {
 
 const DEBOUNCE_MS = 280;
 
+function posSearchMatchBadge(searchMatch: ItemSearchResult['searchMatch']): {
+  label: string;
+  className: string;
+  title: string;
+} {
+  const kind = searchMatch?.kind ?? 'master';
+  if (kind === 'variant') {
+    return {
+      label: 'Variant',
+      className: 'pos-suggest-badge--variant',
+      title: 'Matched on variant code, name, barcode, or HSN',
+    };
+  }
+  if (kind === 'both') {
+    return {
+      label: 'Product + variant',
+      className: 'pos-suggest-badge--both',
+      title: 'Matched on product fields and on a variant',
+    };
+  }
+  return {
+    label: 'Product',
+    className: 'pos-suggest-badge--master',
+    title: 'Matched on product name, SKU, barcode, category, tags, or description',
+  };
+}
+
 function paymentOptionsFromSettings(s: SalesSettingsData | null) {
   if (!s?.paymentMethods?.length) {
     return [
@@ -419,18 +446,18 @@ export const PosShell: React.FC<Props> = ({
     removeLineFromCart(selectedDetailVariantId);
   }, [selectedDetailVariantId, removeLineFromCart]);
 
-  const adjustLineQuantity = useCallback(
-    (variantId: string, delta: number) => {
-      const line = lines.find((l) => l.variantId === variantId);
-      if (!line) return;
-      const next = line.quantity + delta;
-      if (next <= 0) {
+  const setLineQuantity = useCallback(
+    (variantId: string, nextQty: number) => {
+      const q = Math.trunc(Number(nextQty));
+      if (!Number.isFinite(q)) return;
+      if (q <= 0) {
         removeLineFromCart(variantId);
         return;
       }
-      updateLine(variantId, { quantity: next });
+      const cap = 999_999;
+      updateLine(variantId, { quantity: Math.min(cap, q) });
     },
-    [lines, removeLineFromCart, updateLine]
+    [removeLineFromCart, updateLine]
   );
 
   const addLineFromMeta = useCallback(
@@ -570,7 +597,11 @@ export const PosShell: React.FC<Props> = ({
   }, [posLoadOrderIdParam, branchId, salesPointId, clear, setSearchParams, showToast]);
 
   const handleActivateProduct = useCallback(
-    async (item: InventoryItem, variants: InventoryVariant[]) => {
+    async (
+      item: InventoryItem,
+      variants: InventoryVariant[],
+      options?: { highlightVariantId?: string }
+    ) => {
       if (!salesPointId) return;
       setCheckoutError(null);
       if (variants.length === 0) {
@@ -583,10 +614,16 @@ export const PosShell: React.FC<Props> = ({
         return;
       }
       const defaultV = variants.find((x) => x.isDefault) || variants[0];
+      const preferred =
+        options?.highlightVariantId &&
+        variants.some((x) => x.id === options.highlightVariantId)
+          ? options.highlightVariantId
+          : null;
       const hi =
-        lastMergedVariantId && variants.some((x) => x.id === lastMergedVariantId)
+        preferred ||
+        (lastMergedVariantId && variants.some((x) => x.id === lastMergedVariantId)
           ? lastMergedVariantId
-          : defaultV.id;
+          : defaultV.id);
       setVariantPicker({ item, variants, highlightVariantId: hi });
     },
     [addLineFromMeta, lastMergedVariantId, salesPointId]
@@ -635,12 +672,34 @@ export const PosShell: React.FC<Props> = ({
           setCheckoutError('No variants for this item.');
           return;
         }
-        await handleActivateProduct(fullItem, list);
+        if (list.length === 1) {
+          await handleActivateProduct(fullItem, list);
+          return;
+        }
+
+        const sm = item.searchMatch;
+        const variantId =
+          sm?.variant?.id && (sm.kind === 'variant' || sm.kind === 'both')
+            ? sm.variant.id
+            : undefined;
+
+        if (variantId) {
+          const picked = list.find((v) => v.id === variantId);
+          if (picked) {
+            const meta = buildLineMetaFromItemVariant(fullItem, picked);
+            await addLineFromMeta(meta, 1);
+            return;
+          }
+        }
+
+        await handleActivateProduct(fullItem, list, {
+          highlightVariantId: sm?.variant?.id,
+        });
       } catch (err: unknown) {
         setCheckoutError(err instanceof Error ? err.message : 'Could not add item');
       }
     },
-    [handleActivateProduct, salesPointId]
+    [addLineFromMeta, handleActivateProduct, salesPointId]
   );
 
   const tryAddFromInput = useCallback(async () => {
@@ -1252,22 +1311,52 @@ export const PosShell: React.FC<Props> = ({
           role="listbox"
           aria-label="Matching products"
         >
-          {suggestions.map((it, idx) => (
-            <li key={it.id} role="presentation">
-              <button
-                type="button"
-                id={`pos-lookup-option-${idx}`}
-                role="option"
-                aria-selected={highlightIndex === idx}
-                className={`pos-suggest-item ${highlightIndex === idx ? 'pos-suggest-item--active' : ''}`}
-                onMouseEnter={() => setHighlightIndex(idx)}
-                onClick={() => onPickSearchItem(it)}
-              >
-                <span className="pos-suggest-name">{it.name}</span>
-                <span className="pos-suggest-sku">{it.sku}</span>
-              </button>
-            </li>
-          ))}
+          {suggestions.map((it, idx) => {
+            const badge = posSearchMatchBadge(it.searchMatch);
+            const vm = it.searchMatch?.variant;
+            const showVariantDetail =
+              !!vm && (it.searchMatch?.kind === 'variant' || it.searchMatch?.kind === 'both');
+            const ariaParts = [
+              badge.label,
+              it.name,
+              showVariantDetail && vm?.name ? vm.name : null,
+              it.sku ? `SKU ${it.sku}` : null,
+            ].filter(Boolean);
+            return (
+              <li key={`${it.id}-${idx}`} role="presentation">
+                <button
+                  type="button"
+                  id={`pos-lookup-option-${idx}`}
+                  role="option"
+                  aria-selected={highlightIndex === idx}
+                  aria-label={ariaParts.join('. ')}
+                  title={badge.title}
+                  className={`pos-suggest-item ${highlightIndex === idx ? 'pos-suggest-item--active' : ''}`}
+                  onMouseEnter={() => setHighlightIndex(idx)}
+                  onClick={() => onPickSearchItem(it)}
+                >
+                  <div className="pos-suggest-item__row">
+                    <span className={`pos-suggest-badge ${badge.className}`}>{badge.label}</span>
+                    <span className="pos-suggest-name">{it.name}</span>
+                  </div>
+                  {showVariantDetail && vm ? (
+                    <span className="pos-suggest-variant">
+                      <span className="pos-suggest-variant__label">Variant</span>
+                      <span className="pos-suggest-variant__text">
+                        {vm.name}
+                        {vm.code ? ` · ${vm.code}` : ''}
+                      </span>
+                    </span>
+                  ) : null}
+                  <span className="pos-suggest-sku">
+                    {it.hasVariants && it.searchMatch?.kind === 'master'
+                      ? `Listing SKU: ${it.sku}`
+                      : `SKU: ${it.sku}`}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>
@@ -1576,7 +1665,7 @@ export const PosShell: React.FC<Props> = ({
                         available={availableInSelectedUnit}
                         showStockWarning={warn}
                         onSelect={() => setSelectedDetailVariantId(line.variantId)}
-                        onQuantityDelta={(delta) => adjustLineQuantity(line.variantId, delta)}
+                        onQuantityChange={(q) => setLineQuantity(line.variantId, q)}
                         onUnitChange={(unitOfMeasure) => {
                           const currentFactor = getUnitFactor(line, line.unitOfMeasure);
                           const nextFactor = getUnitFactor(line, unitOfMeasure);

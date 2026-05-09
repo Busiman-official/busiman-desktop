@@ -158,6 +158,11 @@
   color: #0f172a;
 }
 
+.pos-detail-stepper .pos-qty-stepper__input {
+  min-height: 40px;
+  line-height: 20px;
+}
+
 .pos-detail-gst-mode {
   display: flex;
   gap: 8px;

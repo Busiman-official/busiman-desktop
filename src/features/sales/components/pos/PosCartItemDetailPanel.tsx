@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Button, Input, Select, Textarea } from '@/shared/components/ui';
 import type { PosCartLine } from './usePosCart';
+import { PosQuantityStepper } from './PosQuantityStepper';
 import {
   POS_GST_RATE_OPTIONS,
   getLineDiscountAmount,
@@ -81,23 +82,15 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
           <div className="pos-detail-qty-row">
             <span className="pos-detail-section__hint">Quantity</span>
             <div className="pos-detail-stepper">
-              <button
-                type="button"
-                className="pos-detail-stepper__btn"
-                aria-label="Decrease quantity"
-                onClick={() => onUpdate({ quantity: Math.max(1, line.quantity - 1) })}
-              >
-                −
-              </button>
-              <span className="pos-detail-stepper__val">{line.quantity}</span>
-              <button
-                type="button"
-                className="pos-detail-stepper__btn"
-                aria-label="Increase quantity"
-                onClick={() => onUpdate({ quantity: line.quantity + 1 })}
-              >
-                +
-              </button>
+              <PosQuantityStepper
+                quantity={line.quantity}
+                onCommit={(n) => onUpdate({ quantity: n })}
+                min={1}
+                max={999_999}
+                buttonClassName="pos-detail-stepper__btn"
+                inputClassName="pos-detail-stepper__val pos-qty-stepper__input"
+                inputAriaLabel={`Quantity for ${line.label}`}
+              />
               <Select
                 value={line.unitOfMeasure || line.baseUnit || 'pcs'}
                 onChange={(e) => onUpdate({ unitOfMeasure: e.target.value })}
@@ -113,6 +106,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
           <Input
             label={isGstInclusive(line) ? 'Unit price (₹, incl. GST)' : 'Unit price (₹, excl. GST)'}
             type="number"
+            onFocus={(e) => e.target.select()}
             min={0}
             step={0.01}
             value={line.unitPrice}
@@ -174,6 +168,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             <Input
               label={line.lineDiscountType === 'percent' ? 'Percent' : 'Amount (₹)'}
               type="number"
+              onFocus={(e) => e.target.select()}
               min={0}
               step={line.lineDiscountType === 'percent' ? 1 : 0.01}
               value={line.lineDiscountValue ?? 0}

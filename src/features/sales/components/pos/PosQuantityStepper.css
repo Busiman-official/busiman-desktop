@@ -1,0 +1,35 @@
+/* Shared numeric input inside POS steppers — matches former span footprint, minimal layout shift */
+.pos-qty-stepper__input {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  min-width: 2.25rem;
+  max-width: 3.5rem;
+  width: auto;
+  flex: 0 1 auto;
+}
+
+.pos-qty-stepper__input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pos-qty-stepper__input:focus {
+  outline: none;
+}
+
+.pos-qty-stepper__input:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+  border-radius: 4px;
+  background: rgba(241, 245, 249, 0.9);
+}

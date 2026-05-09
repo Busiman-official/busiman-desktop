@@ -180,6 +180,40 @@
   cursor: not-allowed;
 }
 
+.item-master-col-actions {
+  width: 40px;
+  text-align: center;
+  vertical-align: middle;
+  padding: 4px !important;
+}
+
+.item-master-row-kebab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.item-master-row-kebab:hover {
+  background: var(--color-bg-secondary, #f1f5f9);
+  color: var(--color-text-primary, #0f172a);
+}
+
+.item-master-row-kebab:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+}
+
 .item-master-table th,
 .item-master-table td {
   padding: 12px;

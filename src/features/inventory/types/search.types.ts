@@ -47,12 +47,23 @@ export interface SerialSearchResult extends SearchResult {
   status: string;
 }
 
+/** How an item row matched the query (for POS / inventory search UI). */
+export interface ItemSearchMatchInfo {
+  kind: 'master' | 'variant' | 'both';
+  variant?: {
+    id: string;
+    code: string;
+    name: string;
+  };
+}
+
 export interface ItemSearchResult extends SearchResult {
   type: 'item';
   sku: string;
   name: string;
   hasVariants: boolean;
   category?: string;
+  searchMatch?: ItemSearchMatchInfo;
 }
 
 export interface MovementSearchResult extends SearchResult {

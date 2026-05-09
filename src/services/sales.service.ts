@@ -280,6 +280,11 @@ export const salesService = {
     return extractApiData(response);
   },
 
+  async deleteSalesPoint(id: string, branchId?: string | null) {
+    const response = await api.delete(`/sales/sales-points/${id}`, { params: branchParams(branchId) });
+    return extractApiData(response);
+  },
+
   async openSalesPointSession(id: string, branchId?: string | null) {
     const response = await api.post(
       `/sales/sales-points/${id}/session/open`,

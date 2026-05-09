@@ -171,12 +171,17 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
     }
   }, [lists, formPriceListId, drawerOpen]);
 
+  useEffect(() => {
+    if (!drawerOpen || !!editingId || !!formLocationId || locs.length === 0) return;
+    setFormLocationId(locs[0].id);
+  }, [drawerOpen, editingId, formLocationId, locs]);
+
   const openCreate = useCallback(() => {
     setEditingId(null);
     setDrawerError(null);
     setFormName('');
     setFormType('store');
-    setFormLocationId('');
+    setFormLocationId(locs[0]?.id || '');
     setFormPriceListId('');
     setFormCashierId('');
     setFormPrinter('');
@@ -191,7 +196,7 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
       if (id) setFormPriceListId(id);
     }
     setDrawerOpen(true);
-  }, [lists]);
+  }, [lists, locs]);
 
   useImperativeHandle(
     ref,
@@ -288,7 +293,11 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
       if (editingId) {
         await salesService.updateSalesPoint(editingId, body, branchId);
       } else {
-        await salesService.createSalesPoint(body, branchId);
+        const created = await salesService.createSalesPoint(body, branchId);
+        const createdId = docId(created as { _id?: string; id?: string });
+        if (createdId) {
+          await salesService.openSalesPointSession(createdId, branchId);
+        }
       }
       closeDrawer();
       load();
@@ -338,6 +347,25 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
       load();
     } catch (e: unknown) {
       setPageError(e instanceof Error ? e.message : 'Activate failed');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleDelete = async (p: Record<string, unknown>) => {
+    const id = docId(p as { _id?: string; id?: string });
+    if (!id || !branchId) return;
+    const name = String(p.name || 'this sales point');
+    const yes = window.confirm(
+      `Delete "${name}" permanently?\n\nThis only works when it has no orders or quotations and no open session.`
+    );
+    if (!yes) return;
+    setActionId(id);
+    try {
+      await salesService.deleteSalesPoint(id, branchId);
+      load();
+    } catch (e: unknown) {
+      setPageError(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       setActionId(null);
     }
@@ -578,9 +606,19 @@ export const SalesSalesPointsPanel = forwardRef<SalesSalesPointsPanelHandle, Pro
                     </Button>
                   </>
                 ) : (
-                  <Button variant="primary" disabled={busy} onClick={() => handleActivate(p)}>
-                    Activate
-                  </Button>
+                  <>
+                    <Button variant="primary" disabled={busy} onClick={() => handleActivate(p)}>
+                      Activate
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="sales-sp-btn--danger"
+                      disabled={busy}
+                      onClick={() => handleDelete(p)}
+                    >
+                      Delete
+                    </Button>
+                  </>
                 )}
               </div>
             </article>

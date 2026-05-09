@@ -1,5 +1,6 @@
 import React from 'react';
 import type { PosCartLine } from './usePosCart';
+import { PosQuantityStepper } from './PosQuantityStepper';
 
 interface Props {
   line: PosCartLine;
@@ -41,23 +42,18 @@ export const PosCartLineCard: React.FC<Props> = ({
     </div>
     <div className="pos-line-card__controls">
       <div className="pos-line-card__stepper">
-        <button
-          type="button"
-          className="pos-stepper-btn"
-          aria-label="Decrease quantity"
-          onClick={() => onQtyChange(line.variantId, line.quantity - 1)}
-        >
-          −
-        </button>
-        <span className="pos-stepper-val">{line.quantity}</span>
-        <button
-          type="button"
-          className="pos-stepper-btn"
-          aria-label="Increase quantity"
-          onClick={() => onQtyChange(line.variantId, line.quantity + 1)}
-        >
-          +
-        </button>
+        <PosQuantityStepper
+          quantity={line.quantity}
+          onCommit={(q) => {
+            if (q <= 0) onRemove(line.variantId);
+            else onQtyChange(line.variantId, q);
+          }}
+          min={0}
+          max={999_999}
+          buttonClassName="pos-stepper-btn"
+          inputClassName="pos-stepper-val pos-qty-stepper__input"
+          inputAriaLabel={`Quantity for ${line.label}`}
+        />
       </div>
       <div className="pos-line-card__prices">
         <span className="pos-line-card__unit">₹{line.unitPrice.toFixed(2)} / {line.unitOfMeasure || line.baseUnit || 'ea'}</span>

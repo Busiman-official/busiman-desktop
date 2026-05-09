@@ -72,6 +72,10 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [, setLoadingBranches] = useState(false);
+  const [adminPasswordNew, setAdminPasswordNew] = useState('');
+  const [adminPasswordConfirm, setAdminPasswordConfirm] = useState('');
+  const [adminPasswordBusy, setAdminPasswordBusy] = useState(false);
+  const [adminPasswordNotice, setAdminPasswordNotice] = useState<string | null>(null);
   const selectedBranchDepartments = React.useMemo(() => {
     const selected = branches.find((b) => b.id === formData.branchId);
     return selected?.departments ?? [];
@@ -106,6 +110,12 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       loadEmployeeDetails();
     }
   }, [selectedEmployeeId, viewMode]);
+
+  useEffect(() => {
+    setAdminPasswordNew('');
+    setAdminPasswordConfirm('');
+    setAdminPasswordNotice(null);
+  }, [selectedEmployeeId]);
 
   // Warn before leaving with unsaved changes
   useEffect(() => {
@@ -425,6 +435,42 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   const handleCancelUpdate = () => {
     setShowConfirmModal(false);
     setPendingUpdate(null);
+  };
+
+  const canResetEmployeePassword =
+    currentUser?.role === UserRole.ADMIN &&
+    !!selectedEmployeeId &&
+    selectedEmployeeId !== currentUser?.id;
+
+  const handleAdminPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEmployeeId || !canResetEmployeePassword) return;
+
+    setAdminPasswordNotice(null);
+
+    if (adminPasswordNew.length < 6) {
+      setAdminPasswordNotice('Password must be at least 6 characters.');
+      return;
+    }
+    if (adminPasswordNew !== adminPasswordConfirm) {
+      setAdminPasswordNotice('Passwords do not match.');
+      return;
+    }
+
+    try {
+      setAdminPasswordBusy(true);
+      await employeeService.resetPassword(selectedEmployeeId, adminPasswordNew);
+      setAdminPasswordNew('');
+      setAdminPasswordConfirm('');
+      setAdminPasswordNotice(
+        'Password updated. This employee must sign in with the new password; active sessions were signed out.',
+      );
+      await loadActiveSessions();
+    } catch (err: unknown) {
+      setAdminPasswordNotice(extractErrorMessage(err, 'Failed to update password'));
+    } finally {
+      setAdminPasswordBusy(false);
+    }
   };
 
   const canEdit = currentUser?.role === UserRole.HR || currentUser?.role === UserRole.ADMIN;
@@ -762,6 +808,54 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                     onToggle={() => handleSectionToggle('permissions')}
                     onUnsavedChange={setUnsavedChanges}
                   />
+
+                  {canResetEmployeePassword && (
+                    <Card className="employee-admin-password-card" padding="lg">
+                      <h3 className="employee-admin-password-title">Set sign-in password</h3>
+                      <p className="employee-admin-password-hint">
+                        Administrators only. Resets this employee&apos;s password and ends their active sessions.
+                      </p>
+                      {adminPasswordNotice && (
+                        <div
+                          className={
+                            adminPasswordNotice.startsWith('Password updated')
+                              ? 'success-message'
+                              : 'error-message'
+                          }
+                          role="status"
+                        >
+                          {adminPasswordNotice}
+                        </div>
+                      )}
+                      <form onSubmit={handleAdminPasswordSubmit} className="employee-form">
+                        <div className="form-row">
+                          <Input
+                            label="New password *"
+                            type="password"
+                            name="adminNewPassword"
+                            autoComplete="new-password"
+                            value={adminPasswordNew}
+                            onChange={(ev) => setAdminPasswordNew(ev.target.value)}
+                            disabled={adminPasswordBusy}
+                          />
+                          <Input
+                            label="Confirm password *"
+                            type="password"
+                            name="adminConfirmPassword"
+                            autoComplete="new-password"
+                            value={adminPasswordConfirm}
+                            onChange={(ev) => setAdminPasswordConfirm(ev.target.value)}
+                            disabled={adminPasswordBusy}
+                          />
+                        </div>
+                        <div className="form-actions">
+                          <Button type="submit" variant="primary" disabled={adminPasswordBusy}>
+                            {adminPasswordBusy ? 'Saving…' : 'Update password'}
+                          </Button>
+                        </div>
+                      </form>
+                    </Card>
+                  )}
 
                   <SystemAuditSection
                     employee={employeeDetails}

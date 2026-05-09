@@ -12,7 +12,7 @@
  * Code review guide: CODE_REVIEW_GUIDELINES_ITEM_MASTER.md
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -25,6 +25,7 @@ import {
   MovementType,
   SerialResponse,
   UpdateVariantRequest,
+  CreateVariantRequest,
 } from "@/services/inventory.service";
 import { getDefaultReason, getMovementTypeLabel } from "../constants/movementReasonMapping";
 import {
@@ -53,10 +54,30 @@ import {
   ProductVariantDetailsDrawer,
   type ProductVariantDetailsDrawerApplyPayload,
 } from "./ProductCreationWizard/productVariantDetails";
+import { buildVariantUnitOptions } from "./ProductCreationWizard/variantGridUnits";
 import "./ItemMaster.css";
 import "./ProductCreationWizard/ProductCreationWizard.css";
 
 type ViewMode = "list" | "details" | "add";
+
+/** Query keys that keep the item details split-view / deep link open — must be cleared when closing the panel or the URL will re-select the row. */
+const ITEM_MASTER_SELECTION_SEARCH_KEYS = [
+  "itemId",
+  "variantId",
+  "itemSubTab",
+  "serialNumber",
+  "edit",
+] as const;
+
+function stripItemMasterSelectionFromParams(
+  prev: URLSearchParams,
+): URLSearchParams {
+  const p = new URLSearchParams(prev);
+  for (const key of ITEM_MASTER_SELECTION_SEARCH_KEYS) {
+    p.delete(key);
+  }
+  return p;
+}
 
 function rowIndustryType(item: InventoryItem): string {
   return (
@@ -191,6 +212,55 @@ function variantPatchToUpdateRequest(
   };
   if (Object.keys(meta).length > 0) out.metadata = meta;
   return out;
+}
+
+function variantPatchToCreateRequest(
+  itemId: string,
+  patch: ProductVariantDetailsDrawerApplyPayload["variantPatch"],
+): CreateVariantRequest {
+  const code = (patch.value ?? "").trim().toUpperCase();
+  if (!code) {
+    throw new Error("Variant SKU (code) is required");
+  }
+  const name = (patch.name ?? "").trim();
+  if (!name) {
+    throw new Error("Variant name is required");
+  }
+  const meta: Record<string, unknown> = {};
+  if (patch.supplierSku?.trim()) {
+    meta.supplierSku = patch.supplierSku.trim();
+  }
+  return {
+    itemId,
+    code,
+    name,
+    barcode: patch.barcode?.trim() || undefined,
+    hsn: patch.hsn?.trim() || undefined,
+    unitOfMeasureOverride: patch.unitOfMeasure,
+    metadata: Object.keys(meta).length > 0 ? meta : undefined,
+    costPriceOverride: patch.costPriceOverride,
+    sellingPriceOverride: patch.sellingPriceOverride,
+    mrpOverride: patch.mrpOverride,
+    taxOverride: patch.taxOverride,
+    reorderLevel: patch.reorderLevel,
+    minStock: patch.minStock,
+    maxStock: patch.maxStock,
+    allowBackorder: patch.allowBackorder,
+    trackSerialOverride: patch.trackSerialOverride,
+    trackBatchOverride: patch.trackBatchOverride,
+    isActive: patch.isActive ?? true,
+    isDiscontinued: patch.isDiscontinued,
+    weightOverride: patch.weightOverride,
+    dimensionsOverride: patch.dimensionsOverride,
+    packSize: patch.packSize,
+    unitsPerBox: patch.unitsPerBox,
+    shelfLifeDaysOverride: patch.shelfLifeDaysOverride,
+    images: patch.images?.map((i) => ({
+      url: i.url,
+      publicId: i.publicId,
+      isPrimary: i.isPrimary,
+    })),
+  };
 }
 
 export const ItemMaster: React.FC = () => {
@@ -342,6 +412,9 @@ export const ItemMaster: React.FC = () => {
   const [bulkVariantEditContext, setBulkVariantEditContext] =
     useState<BulkVariantEditContext | null>(null);
   const [bulkVariantEditLoading, setBulkVariantEditLoading] = useState(false);
+  const [addVariantContext, setAddVariantContext] = useState<{
+    item: InventoryItem;
+  } | null>(null);
 
   // Ref to track if we've processed the edit param
   const editParamProcessed = useRef(false);
@@ -350,6 +423,24 @@ export const ItemMaster: React.FC = () => {
     const o = CATEGORY_OPTIONS.find((x) => x.value === value);
     return o?.label ?? value;
   }, []);
+
+  const variantDrawerUnitOptions = useMemo(() => {
+    const item = addVariantContext?.item ?? bulkVariantEditContext?.item;
+    if (!item) {
+      return buildVariantUnitOptions({ baseUnit: "pcs" });
+    }
+    const uc = item.unitConfig;
+    const base =
+      (item.unitOfMeasure || uc?.baseUnit || "pcs").trim().toLowerCase() ||
+      "pcs";
+    return buildVariantUnitOptions({
+      baseUnit: base,
+      alternateUnits: uc?.alternateUnits?.map((u) => ({
+        unitCode: u.unitCode,
+        isActive: u.isActive,
+      })),
+    });
+  }, [addVariantContext?.item, bulkVariantEditContext?.item]);
 
   // Ref to prevent duplicate loads for same itemId/subTab combination
   const lastLoadedRef = useRef<{
@@ -400,6 +491,10 @@ export const ItemMaster: React.FC = () => {
     const subTabParam = searchParams.get("itemSubTab");
 
     if (itemId) {
+      // Do not clobber the add-product wizard if the URL still has itemId (e.g. Ctrl+N after a stale link).
+      if (viewMode === "add") {
+        return;
+      }
       // Always set view mode to details and selectedItemId when itemId is in URL
       // This ensures deep linking works correctly even if items haven't loaded yet
       setSelectedItemId(itemId);
@@ -537,6 +632,16 @@ export const ItemMaster: React.FC = () => {
     );
   }, [searchParams, setSearchParams]);
 
+  const closeItemDetailsPanel = useCallback(() => {
+    setSelectedItemId(null);
+    setSelectedVariantId(null);
+    setViewMode("list");
+    setSearchParams(
+      (prev) => stripItemMasterSelectionFromParams(prev),
+      { replace: true },
+    );
+  }, [setSearchParams]);
+
   // Keyboard shortcuts and navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -563,14 +668,21 @@ export const ItemMaster: React.FC = () => {
           if (hasUnsavedChanges) {
             setPendingNavigation(() => () => {
               setViewMode("list");
+              setSearchParams(
+                (prev) => stripItemMasterSelectionFromParams(prev),
+                { replace: true },
+              );
             });
             setShowUnsavedDialog(true);
           } else {
             setViewMode("list");
+            setSearchParams(
+              (prev) => stripItemMasterSelectionFromParams(prev),
+              { replace: true },
+            );
           }
         } else if (viewMode === "details" && selectedItemId) {
-          setSelectedItemId(null);
-          setViewMode("list");
+          closeItemDetailsPanel();
         }
       }
     };
@@ -579,7 +691,13 @@ export const ItemMaster: React.FC = () => {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [viewMode, selectedItemId, hasUnsavedChanges]);
+  }, [
+    viewMode,
+    selectedItemId,
+    hasUnsavedChanges,
+    closeItemDetailsPanel,
+    setSearchParams,
+  ]);
 
   // Define loadItems before useEffect that uses it
   const loadItems = useCallback(async () => {
@@ -1057,6 +1175,7 @@ export const ItemMaster: React.FC = () => {
           list.some((v) => v.id === preferredVariantId)
             ? list.find((v) => v.id === preferredVariantId)!
             : (list.find((v) => v.isDefault) ?? list[0]);
+        setAddVariantContext(null);
         setBulkVariantEditContext({
           item,
           apiVariant,
@@ -1070,6 +1189,19 @@ export const ItemMaster: React.FC = () => {
     },
     [],
   );
+
+  const openAddVariantDrawer = useCallback((item: InventoryItem) => {
+    setListRowMenu(null);
+    setError(null);
+    setBulkVariantEditContext(null);
+    setAddVariantContext({ item });
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      next.add(item.id);
+      return next;
+    });
+    void loadVariants(item.id);
+  }, []);
 
   const loadHistoryData = async (itemId: string) => {
     try {
@@ -1100,6 +1232,11 @@ export const ItemMaster: React.FC = () => {
       if (selectedItemId === itemToDelete) {
         setViewMode("list");
         setSelectedItemId(null);
+        setSelectedVariantId(null);
+        setSearchParams(
+          (prev) => stripItemMasterSelectionFromParams(prev),
+          { replace: true },
+        );
       }
       loadItems();
     } catch (err: any) {
@@ -1429,6 +1566,7 @@ export const ItemMaster: React.FC = () => {
                         </span>
                       )}
                     </th>
+                    <th className="item-master-col-actions" aria-label="Row actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1456,7 +1594,7 @@ export const ItemMaster: React.FC = () => {
                             onContextMenu={(e) => {
                               if (
                                 (e.target as HTMLElement).closest(
-                                  "input,.drag-handle-cell,button,a",
+                                  "input,.drag-handle-cell,button,a,.item-master-col-actions",
                                 )
                               ) {
                                 return;
@@ -1579,10 +1717,35 @@ export const ItemMaster: React.FC = () => {
                             <td>{categoryOptionLabel(item.category || "") || "-"}</td>
                             <td>{item.unitOfMeasure}</td>
                             <td>{rowIndustryType(item)}</td>
+                            <td
+                              className="item-master-col-actions"
+                              onClick={(e) => e.stopPropagation()}
+                              onContextMenu={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="item-master-row-kebab"
+                                aria-label={`Actions for ${item.name}`}
+                                aria-haspopup="menu"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const el = e.currentTarget;
+                                  const rect = el.getBoundingClientRect();
+                                  setListRowMenu({
+                                    kind: "item",
+                                    item,
+                                    x: rect.left,
+                                    y: rect.bottom + 4,
+                                  });
+                                }}
+                              >
+                                ⋮
+                              </button>
+                            </td>
                           </tr>
                           {isExpanded && (
                             <tr>
-                              <td colSpan={5} className="expanded-content">
+                              <td colSpan={6} className="expanded-content">
                                 <div className="expanded-variants-container">
                                   {/* Variants List - Read-Only Display */}
                                   <div className="expanded-variants-list">
@@ -1779,10 +1942,7 @@ export const ItemMaster: React.FC = () => {
             </Button>
             <Button
               variant="ghost"
-              onClick={() => {
-                setSelectedItemId(null);
-                setViewMode("list");
-              }}
+              onClick={closeItemDetailsPanel}
               title="Close Details"
               size="sm"
               className="item-detail-close-btn"
@@ -2628,6 +2788,39 @@ export const ItemMaster: React.FC = () => {
                   <button
                     type="button"
                     role="menuitem"
+                    onClick={() => openAddVariantDrawer(listRowMenu.item)}
+                  >
+                    Add variant
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      navigateMovementFromList(
+                        listRowMenu.item.id,
+                        MovementType.RECEIPT,
+                        null,
+                      )
+                    }
+                  >
+                    Receive
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      navigateMovementFromList(
+                        listRowMenu.item.id,
+                        MovementType.ISSUE,
+                        null,
+                      )
+                    }
+                  >
+                    Issue
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
                     onClick={() => {
                       setListRowMenu(null);
                       setItemToDelete(listRowMenu.item.id);
@@ -2661,6 +2854,18 @@ export const ItemMaster: React.FC = () => {
                     }
                   >
                     Open details
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      void openVariantEditDrawer(
+                        listRowMenu.item,
+                        listRowMenu.variant.id,
+                      )
+                    }
+                  >
+                    Edit variant
                   </button>
                   <button
                     type="button"
@@ -2722,59 +2927,118 @@ export const ItemMaster: React.FC = () => {
             document.body,
           )
         : null}
-      {bulkVariantEditContext ? (
+      {addVariantContext || bulkVariantEditContext ? (
         <ProductVariantDetailsDrawer
-          key={bulkVariantEditContext.apiVariant.id}
-          isOpen
-          onClose={() => setBulkVariantEditContext(null)}
-          initialVariantRow={bulkVariantEditContext.wizardRow}
-          productDefaultUnit={
-            bulkVariantEditContext.item.unitOfMeasure?.trim() || "pcs"
+          key={
+            addVariantContext
+              ? `add-variant-${addVariantContext.item.id}`
+              : bulkVariantEditContext!.apiVariant.id
           }
-          defaults={{
-            costPrice: bulkVariantEditContext.item.costPrice,
-            sellingPrice: bulkVariantEditContext.item.sellingPrice,
-            mrp: undefined,
-            tax: undefined,
-            trackSerial: detailIndustryFlags(bulkVariantEditContext.item)
-              .requiresSerialTracking,
-            trackBatch: detailIndustryFlags(bulkVariantEditContext.item)
-              .requiresBatchTracking,
-            weight: bulkVariantEditContext.item.weight?.value,
-            dimensions: bulkVariantEditContext.item.dimensions
-              ? {
-                  length: bulkVariantEditContext.item.dimensions.length,
-                  width: bulkVariantEditContext.item.dimensions.width,
-                  height: bulkVariantEditContext.item.dimensions.height,
-                }
-              : undefined,
-            shelfLifeDays: undefined,
+          mode={addVariantContext ? "create" : "edit"}
+          isOpen
+          onClose={() => {
+            setAddVariantContext(null);
+            setBulkVariantEditContext(null);
           }}
-          baseSkuPreview={bulkVariantEditContext.apiVariant.code}
-          onApply={(payload) => {
-            const ctx = bulkVariantEditContext;
-            const req = variantPatchToUpdateRequest(
-              payload.variantPatch,
-              ctx.apiVariant.metadata,
-            );
-            void inventoryService
-              .updateVariant(ctx.apiVariant.id, req)
-              .then(async () => {
-                setSuccess("Variant updated successfully");
-                clearSuccessMessage();
-                setBulkVariantEditContext(null);
-                await loadVariants(ctx.item.id);
-                await loadVariantStock(ctx.item.id);
-                if (selectedItemId === ctx.item.id) {
-                  await loadStockData(ctx.item.id);
+          initialVariantRow={
+            addVariantContext
+              ? {
+                  id: "new",
+                  value: "",
+                  name: "",
+                  isActive: true,
                 }
-                loadItems();
-              })
-              .catch((err) => {
-                setError(
-                  extractErrorMessage(err, "Failed to update variant"),
+              : bulkVariantEditContext!.wizardRow
+          }
+          productDefaultUnit={
+            (addVariantContext?.item ?? bulkVariantEditContext!.item)
+              .unitOfMeasure?.trim() || "pcs"
+          }
+          unitOptions={variantDrawerUnitOptions}
+          defaults={(() => {
+            const item =
+              addVariantContext?.item ?? bulkVariantEditContext!.item;
+            return {
+              costPrice: item.costPrice,
+              sellingPrice: item.sellingPrice,
+              mrp: undefined,
+              tax: undefined,
+              trackSerial: detailIndustryFlags(item).requiresSerialTracking,
+              trackBatch: detailIndustryFlags(item).requiresBatchTracking,
+              weight: item.weight?.value,
+              dimensions: item.dimensions
+                ? {
+                    length: item.dimensions.length,
+                    width: item.dimensions.width,
+                    height: item.dimensions.height,
+                  }
+                : undefined,
+              shelfLifeDays: undefined,
+            };
+          })()}
+          baseSkuPreview={
+            addVariantContext ? "" : bulkVariantEditContext!.apiVariant.code
+          }
+          onApply={(payload) => {
+            if (addVariantContext) {
+              const item = addVariantContext.item;
+              try {
+                const req = variantPatchToCreateRequest(
+                  item.id,
+                  payload.variantPatch,
                 );
-              });
+                void inventoryService
+                  .createVariant(req)
+                  .then(async (created) => {
+                    setSuccess(
+                      created.migration
+                        ? "Variant created; product-level stock assigned where needed."
+                        : "Variant created successfully",
+                    );
+                    clearSuccessMessage();
+                    setAddVariantContext(null);
+                    await loadVariants(item.id);
+                    await loadVariantStock(item.id);
+                    if (selectedItemId === item.id) {
+                      await loadStockData(item.id);
+                    }
+                    loadItems();
+                  })
+                  .catch((err) => {
+                    setError(
+                      extractErrorMessage(err, "Failed to create variant"),
+                    );
+                  });
+              } catch (e: unknown) {
+                setError(
+                  e instanceof Error ? e.message : "Invalid variant data",
+                );
+              }
+            } else {
+              const ctx = bulkVariantEditContext!;
+              const req = variantPatchToUpdateRequest(
+                payload.variantPatch,
+                ctx.apiVariant.metadata,
+              );
+              void inventoryService
+                .updateVariant(ctx.apiVariant.id, req)
+                .then(async () => {
+                  setSuccess("Variant updated successfully");
+                  clearSuccessMessage();
+                  setBulkVariantEditContext(null);
+                  await loadVariants(ctx.item.id);
+                  await loadVariantStock(ctx.item.id);
+                  if (selectedItemId === ctx.item.id) {
+                    await loadStockData(ctx.item.id);
+                  }
+                  loadItems();
+                })
+                .catch((err) => {
+                  setError(
+                    extractErrorMessage(err, "Failed to update variant"),
+                  );
+                });
+            }
           }}
         />
       ) : null}
@@ -2798,7 +3062,13 @@ export const ItemMaster: React.FC = () => {
               loadItems();
             }
           }}
-          onCancel={() => setViewMode("list")}
+          onCancel={() => {
+            setViewMode("list");
+            setSearchParams(
+              (prev) => stripItemMasterSelectionFromParams(prev),
+              { replace: true },
+            );
+          }}
         />
       )}
       {(viewMode === "list" || viewMode === "details") && (

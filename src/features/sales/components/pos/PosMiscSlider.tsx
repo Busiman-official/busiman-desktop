@@ -5,7 +5,11 @@ interface PosMiscSliderProps {
   branchId: string;
   salesPointId: string | null;
   disabled?: boolean;
-  onActivateProduct: (item: InventoryItem, variants: InventoryVariant[]) => void | Promise<void>;
+  onActivateProduct: (
+    item: InventoryItem,
+    variants: InventoryVariant[],
+    options?: { highlightVariantId?: string }
+  ) => void | Promise<void>;
 }
 
 export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({

@@ -7,6 +7,7 @@ import {
   posLineStockFlagsFromItem,
   type PosResolvedLineMeta,
 } from './resolveScan';
+import { PosQuantityStepper } from './PosQuantityStepper';
 import './PosVariantPickerModal.css';
 
 export type PosVariantPickerLine = {
@@ -207,15 +208,18 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
     return { units, total, variantCount: sessionLines.length };
   }, [sessionLines]);
 
-  const bumpDraft = useCallback((variantId: string, delta: number, maxStock: number, unlimited: boolean) => {
-    setDraftQty((prev) => {
-      const cur = prev[variantId] ?? 1;
-      const next = Math.max(0, cur + delta);
-      if (unlimited) return { ...prev, [variantId]: Math.min(next, POS_PICKER_SOFT_QTY_CAP) };
-      const capped = maxStock > 0 ? Math.min(next, maxStock) : next;
-      return { ...prev, [variantId]: capped };
-    });
-  }, []);
+  const commitDraftQty = useCallback(
+    (variantId: string, value: number, maxStock: number, unlimited: boolean) => {
+      setDraftQty((prev) => {
+        let next = Math.max(0, Math.trunc(value));
+        if (!Number.isFinite(next)) return prev;
+        if (unlimited) next = Math.min(next, POS_PICKER_SOFT_QTY_CAP);
+        else next = maxStock > 0 ? Math.min(next, maxStock) : next;
+        return { ...prev, [variantId]: next };
+      });
+    },
+    []
+  );
 
   const handleAddVariant = useCallback(
     (v: InventoryVariant) => {
@@ -427,25 +431,15 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                     ) : (
                       <div className="pos-variant-card__actions">
                         <div className="pos-variant-card__stepper">
-                          <button
-                            type="button"
-                            className="pos-variant-card__step-btn"
-                            aria-label="Decrease quantity"
-                            disabled={qty <= 0}
-                            onClick={() => bumpDraft(v.id, -1, maxCap, unlimited)}
-                          >
-                            −
-                          </button>
-                          <span className="pos-variant-card__step-val">{qty}</span>
-                          <button
-                            type="button"
-                            className="pos-variant-card__step-btn"
-                            aria-label="Increase quantity"
-                            disabled={unlimited ? qty >= POS_PICKER_SOFT_QTY_CAP : qty >= maxCap}
-                            onClick={() => bumpDraft(v.id, 1, maxCap, unlimited)}
-                          >
-                            +
-                          </button>
+                          <PosQuantityStepper
+                            quantity={qty}
+                            onCommit={(n) => commitDraftQty(v.id, n, maxCap, unlimited)}
+                            min={0}
+                            max={unlimited ? POS_PICKER_SOFT_QTY_CAP : maxCap}
+                            buttonClassName="pos-variant-card__step-btn"
+                            inputClassName="pos-variant-card__step-val pos-qty-stepper__input"
+                            inputAriaLabel={`Quantity for ${v.name}`}
+                          />
                         </div>
                         <button
                           type="button"

@@ -51,6 +51,11 @@
   min-height: 120px;
   flex: 1;
   padding-bottom: 4px;
+  transition: opacity 0.15s ease;
+}
+
+.pos-quick-add__grid--refreshing {
+  opacity: 0.92;
 }
 
 .pos-quick-add__hint {

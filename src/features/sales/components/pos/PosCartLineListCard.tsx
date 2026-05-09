@@ -1,5 +1,6 @@
 import React from 'react';
 import type { PosCartLine } from './usePosCart';
+import { PosQuantityStepper } from './PosQuantityStepper';
 
 interface Props {
   line: PosCartLine;
@@ -9,7 +10,8 @@ interface Props {
   available?: number;
   showStockWarning: boolean;
   onSelect: () => void;
-  onQuantityDelta: (delta: number) => void;
+  /** Set absolute quantity (0 removes line in parent). */
+  onQuantityChange: (quantity: number) => void;
   onUnitChange: (unitOfMeasure: string) => void;
 }
 
@@ -24,7 +26,7 @@ export const PosCartLineListCard: React.FC<Props> = ({
   available,
   showStockWarning,
   onSelect,
-  onQuantityDelta,
+  onQuantityChange,
   onUnitChange,
 }) => {
   const onMainKeyDown = (e: React.KeyboardEvent) => {
@@ -70,28 +72,19 @@ export const PosCartLineListCard: React.FC<Props> = ({
           </div>
           <div
             className="pos-cart-list-line-stepper"
+            aria-live="polite"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              className="pos-cart-list-line-stepper__btn"
-              aria-label="Decrease quantity"
-              onClick={() => onQuantityDelta(-1)}
-            >
-              −
-            </button>
-            <span className="pos-cart-list-line-stepper__val" aria-live="polite">
-              {line.quantity}
-            </span>
-            <button
-              type="button"
-              className="pos-cart-list-line-stepper__btn"
-              aria-label="Increase quantity"
-              onClick={() => onQuantityDelta(1)}
-            >
-              +
-            </button>
+            <PosQuantityStepper
+              quantity={line.quantity}
+              onCommit={onQuantityChange}
+              min={0}
+              max={999_999}
+              buttonClassName="pos-cart-list-line-stepper__btn"
+              inputClassName="pos-cart-list-line-stepper__val pos-qty-stepper__input"
+              inputAriaLabel={`Quantity for ${line.label}`}
+            />
           </div>
           <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             <select

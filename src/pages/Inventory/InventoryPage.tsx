@@ -157,6 +157,12 @@ export const InventoryPage: React.FC = () => {
     const newParams = new URLSearchParams(searchParams);
     newParams.set('tab', 'items');
     newParams.delete('locationId');
+    // Clear item deep-link params so ItemMaster does not force details view over the add wizard.
+    newParams.delete('itemId');
+    newParams.delete('variantId');
+    newParams.delete('itemSubTab');
+    newParams.delete('serialNumber');
+    newParams.delete('edit');
     newParams.set('addProduct', '1');
     setSearchParams(newParams, { replace: true });
     setActiveTab('items');

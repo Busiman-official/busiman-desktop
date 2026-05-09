@@ -363,6 +363,20 @@
   gap: var(--spacing-xl);
 }
 
+.employee-admin-password-title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.employee-admin-password-hint {
+  margin: 0 0 var(--spacing-lg);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
 @media (max-width: 768px) {
   .employee-management-content {
     padding: var(--spacing-lg);
