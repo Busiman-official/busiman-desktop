@@ -1,6 +1,6 @@
 {
   "name": "busiman-desktop",
-  "version": "1.17.2",
+  "version": "1.18.0",
   "description": "Busiman Desktop Application",
   "main": "dist-electron/main.js",
   "author": {
