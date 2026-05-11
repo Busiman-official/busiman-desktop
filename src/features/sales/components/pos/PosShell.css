@@ -529,21 +529,70 @@
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.14);
 }
 
-.pos-suggest-list {
+.pos-suggest-panel {
   position: absolute;
   left: 0;
   right: 0;
   top: 100%;
   margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
-  max-height: 240px;
-  overflow: auto;
+  max-height: min(260px, 42vh);
+  overflow: hidden;
   z-index: 10;
+}
+
+.pos-suggest-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 14px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.pos-suggest-loading__spinner {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid #e2e8f0;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: pos-suggest-spin 0.65s linear infinite;
+}
+
+@keyframes pos-suggest-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pos-suggest-loading__text {
+  font-weight: 500;
+}
+
+.pos-suggest-empty {
+  padding: 16px 14px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.pos-suggest-panel .pos-suggest-list {
+  position: static;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  max-height: min(260px, 42vh);
+}
+
+.pos-suggest-list {
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
 }
 
 .pos-suggest-item {

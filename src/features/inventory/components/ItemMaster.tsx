@@ -442,6 +442,35 @@ export const ItemMaster: React.FC = () => {
     });
   }, [addVariantContext?.item, bulkVariantEditContext?.item]);
 
+  /** When a variant is selected on a variant item, Stock + History use the same ledger slice (variantId must match). */
+  const showVariantScopedStock = useMemo(() => {
+    if (!selectedItem) return false;
+    const itemVariants = variants.filter(
+      (v: { itemId?: string }) => v.itemId === selectedItem.id,
+    );
+    return (
+      !!selectedItem.hasVariants &&
+      !!selectedVariantId &&
+      itemVariants.some((v: { id: string }) => v.id === selectedVariantId)
+    );
+  }, [selectedItem, selectedVariantId, variants]);
+
+  const scopedStockLedgerRows = useMemo(() => {
+    if (!showVariantScopedStock) return stockData;
+    return stockData.filter(
+      (s) => s.variantId?.toString() === selectedVariantId,
+    );
+  }, [showVariantScopedStock, stockData, selectedVariantId]);
+
+  const scopedMovementHistory = useMemo(() => {
+    if (!showVariantScopedStock) return historyData;
+    return historyData.filter(
+      (m: { variantId?: string }) =>
+        m.variantId != null &&
+        String(m.variantId) === String(selectedVariantId),
+    );
+  }, [showVariantScopedStock, historyData, selectedVariantId]);
+
   // Ref to prevent duplicate loads for same itemId/subTab combination
   const lastLoadedRef = useRef<{
     itemId: string | null;
@@ -825,7 +854,7 @@ export const ItemMaster: React.FC = () => {
 
     if (key === lastKey) return; // Already loaded this combination
 
-    if (itemSubTab === "stock") {
+    if (itemSubTab === "stock" || itemSubTab === "history") {
       loadStockData(selectedItemId);
     }
 
@@ -1018,7 +1047,7 @@ export const ItemMaster: React.FC = () => {
   };
 
   useEffect(() => {
-    // Reload history when filters change
+    // Reload history when filters change (variant scoping is client-side on historyData)
     if (itemSubTab === "history" && selectedItemId) {
       loadHistoryData(selectedItemId);
     }
@@ -1977,19 +2006,7 @@ export const ItemMaster: React.FC = () => {
       return <LoadingState message="Loading stock data..." />;
     }
 
-    const itemVariants = variants.filter(
-      (v: { itemId?: string }) => v.itemId === selectedItem.id,
-    );
-    const showVariantScopedStock =
-      selectedItem.hasVariants &&
-      !!selectedVariantId &&
-      itemVariants.some((v: { id: string }) => v.id === selectedVariantId);
-
-    const variantLedgerRows = showVariantScopedStock
-      ? stockData.filter(
-          (s) => s.variantId?.toString() === selectedVariantId,
-        )
-      : stockData;
+    const variantLedgerRows = scopedStockLedgerRows;
 
     const totalOnHand = stockData.reduce((a, s) => a + s.onHandQuantity, 0);
     const totalReserved = stockData.reduce(
@@ -2511,7 +2528,9 @@ export const ItemMaster: React.FC = () => {
     if (!selectedItem) return null;
 
     // Group stock by location (from Locations tab - now consolidated here)
-    const stockByLocation = stockData.reduce(
+    const historyLedgerRows = scopedStockLedgerRows;
+
+    const stockByLocation = historyLedgerRows.reduce(
       (acc, stock) => {
         const locId = stock.locationId;
         if (!acc[locId]) {
@@ -2544,7 +2563,13 @@ export const ItemMaster: React.FC = () => {
         <div className="history-section">
           <h4>Item Locations</h4>
           {Object.keys(stockByLocation).length === 0 ? (
-            <EmptyState message="No locations found for this item" />
+            <EmptyState
+              message={
+                showVariantScopedStock
+                  ? "No location stock for this variant."
+                  : "No locations found for this item"
+              }
+            />
           ) : (
             <table className="locations-table">
               <thead>
@@ -2637,8 +2662,14 @@ export const ItemMaster: React.FC = () => {
             </Button>
           </div>
 
-          {historyData.length === 0 ? (
-            <EmptyState message="No movement history found for this item" />
+          {scopedMovementHistory.length === 0 ? (
+            <EmptyState
+              message={
+                showVariantScopedStock
+                  ? "No movement history for this variant."
+                  : "No movement history found for this item"
+              }
+            />
           ) : (
             <table className="history-table">
               <thead>
@@ -2653,7 +2684,7 @@ export const ItemMaster: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {historyData.map((movement) => (
+                {scopedMovementHistory.map((movement) => (
                   <tr key={movement.id}>
                     <td
                       title={

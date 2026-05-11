@@ -114,6 +114,127 @@
   max-width: 160px;
 }
 
+.sales-history-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sales-history-date-field__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.sales-history-date-field__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Native `<input type="date">` keeps ISO value + system picker; overlay shows dd/mm/yyyy. */
+.sales-history-date-native-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 158px;
+  max-width: 158px;
+}
+
+.sales-history-date-native-wrap .sales-history-date-native-input-group {
+  margin: 0;
+  width: 100%;
+}
+
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date'] {
+  font-size: 12px;
+  padding: 6px 8px;
+  /* Reserve space for the native calendar control (Chromium / Edge) */
+  padding-right: 34px;
+  min-height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  width: 100%;
+  box-sizing: border-box;
+  /* Do NOT set color:transparent on the whole input — it hides the calendar icon in WebKit. */
+  color: #0f172a;
+}
+
+/* Hide only the rendered date segments; picker indicator stays opaque */
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit,
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit-fields-wrapper,
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit-text,
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit-month-field,
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit-day-field,
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-datetime-edit-year-field {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+}
+
+.sales-history-date-native-wrap .sales-history-date-native-input-group .input[type='date']:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.sales-history-date-native-display {
+  position: absolute;
+  left: 10px;
+  /* Stay clear of ::-webkit-calendar-picker-indicator so we don't paint over it */
+  right: 38px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 12px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #fff;
+  border-radius: 2px;
+}
+
+.sales-history-date-native-display--placeholder {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.sales-history-date-clear {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sales-history-date-clear:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.sales-history-date-clear:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 .sales-history-toolbar__spacer {
   flex: 1;
   min-width: 8px;

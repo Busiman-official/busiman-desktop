@@ -85,6 +85,26 @@ function matchesDateFilter(ts: number, f: DateFilter): boolean {
   return true;
 }
 
+/** Local calendar day match for invoice/sale date (YYYY-MM-DD). */
+function matchesSaleCalendarDay(ts: number, ymd: string): boolean {
+  if (!ts || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return false;
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const rowYmd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return rowYmd === ymd;
+}
+
+/** Display-only: ISO date from `<input type="date">` → dd/mm/yyyy (local digits). */
+function formatYmdToDdMmYyyy(ymd: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
+  const [yStr, mStr, dStr] = ymd.split('-');
+  const y = Number(yStr);
+  const m = Number(mStr);
+  const d = Number(dStr);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return '';
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+}
+
 function matchesAmountFilter(total: number, f: AmountFilter): boolean {
   if (f === 'any') return true;
   if (f === 'high') return total > 5000;
@@ -185,6 +205,8 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [dateFilter, setDateFilter] = useState<DateFilter>('any');
+  /** Specific calendar day (YYYY-MM-DD); empty uses relative Date: preset only. */
+  const [saleDateYmd, setSaleDateYmd] = useState('');
   const [amountFilter, setAmountFilter] = useState<AmountFilter>('any');
   const [dateDesc, setDateDesc] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -254,7 +276,12 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       if (!matchesStatusFilter(st, statusFilter)) return false;
       if (!matchesModeFilter(r, modeFilter)) return false;
       const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
-      if (!matchesDateFilter(ts, dateFilter)) return false;
+      const ymd = saleDateYmd.trim();
+      if (ymd) {
+        if (!matchesSaleCalendarDay(ts, ymd)) return false;
+      } else if (!matchesDateFilter(ts, dateFilter)) {
+        return false;
+      }
       const total = Number(r.total ?? 0);
       if (!matchesAmountFilter(total, amountFilter)) return false;
       if (q) {
@@ -272,7 +299,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       return dateDesc ? tb - ta : ta - tb;
     });
     return list;
-  }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, amountFilter, dateDesc, customerFallback]);
+  }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, dateDesc, customerFallback]);
 
   const filteredIds = useMemo(
     () =>
@@ -690,21 +717,25 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
 
   const statCardHandlers = {
     total: () => {
+      setSaleDateYmd('');
       setStatusFilter('all');
       setDateFilter('any');
       setAmountFilter('any');
     },
     revenue: () => {
+      setSaleDateYmd('');
       setDateFilter('today');
       setStatusFilter('completed');
       setAmountFilter('any');
     },
     avg: () => {
+      setSaleDateYmd('');
       setStatusFilter('completed');
       setDateFilter('any');
       setAmountFilter('any');
     },
     pending: () => {
+      setSaleDateYmd('');
       setStatusFilter('draft');
       setDateFilter('any');
       setAmountFilter('any');
@@ -821,9 +852,56 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
         ) : (
           <div className="sales-history-toolbar">
             <div className="sales-history-toolbar__filters">
+              <div className="sales-history-date-field">
+                <label className="sales-history-date-field__label" htmlFor="sales-history-sale-date">
+                  Sale date
+                </label>
+                <div className="sales-history-date-field__row">
+                  <div className="sales-history-date-native-wrap">
+                    <Input
+                      id="sales-history-sale-date"
+                      className="sales-history-date-native-input-group"
+                      type="date"
+                      value={saleDateYmd}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSaleDateYmd(v);
+                        if (v) setDateFilter('any');
+                      }}
+                      aria-label="Filter orders by sale date"
+                    />
+                    <span
+                      className={`sales-history-date-native-display${saleDateYmd ? '' : ' sales-history-date-native-display--placeholder'}`}
+                      aria-hidden="true"
+                    >
+                      {saleDateYmd
+                        ? formatYmdToDdMmYyyy(saleDateYmd) || saleDateYmd
+                        : 'dd/mm/yyyy'}
+                    </span>
+                  </div>
+                  {saleDateYmd ? (
+                    <button
+                      type="button"
+                      className="sales-history-date-clear"
+                      onClick={() => setSaleDateYmd('')}
+                      aria-label="Clear sale date filter"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+              </div>
               <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} options={statusOpts} />
               <Select value={modeFilter} onChange={(e) => setModeFilter(e.target.value as ModeFilter)} options={modeOpts} />
-              <Select value={dateFilter} onChange={(e) => setDateFilter(e.target.value as DateFilter)} options={dateOpts} />
+              <Select
+                value={dateFilter}
+                onChange={(e) => {
+                  const v = e.target.value as DateFilter;
+                  setDateFilter(v);
+                  if (v !== 'any') setSaleDateYmd('');
+                }}
+                options={dateOpts}
+              />
               <Select value={amountFilter} onChange={(e) => setAmountFilter(e.target.value as AmountFilter)} options={amountOpts} />
             </div>
             <div className="sales-history-toolbar__spacer" />

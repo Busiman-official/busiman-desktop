@@ -126,6 +126,7 @@ export const PosShell: React.FC<Props> = ({
   const [settings, setSettings] = useState<SalesSettingsData | null>(null);
   const [lookupQuery, setLookupQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<ItemSearchResult[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
@@ -259,17 +260,16 @@ export const PosShell: React.FC<Props> = ({
   }, [posOrderForCustomerIntent, customerId, branchId]);
 
   useEffect(() => {
-    if (!debouncedSearch || debouncedSearch.length < 2) {
+    const q = debouncedSearch.trim();
+    if (!q) {
       setSuggestions([]);
+      setSearchSuggestionsLoading(false);
       return;
     }
     let cancelled = false;
+    setSearchSuggestionsLoading(true);
     searchService
-      .search(
-        debouncedSearch,
-        { types: ['item'], branchId },
-        12
-      )
+      .search(q, { types: ['item'], branchId }, 12)
       .then((res) => {
         if (!cancelled) {
           let items = (res.items || []) as ItemSearchResult[];
@@ -281,8 +281,14 @@ export const PosShell: React.FC<Props> = ({
           setSuggestions(items);
         }
       })
-      .catch(() => {
-        if (!cancelled) setSuggestions([]);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === 'Search canceled') return;
+        setSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSearchSuggestionsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -296,6 +302,12 @@ export const PosShell: React.FC<Props> = ({
       return Math.min(i, suggestions.length - 1);
     });
   }, [suggestions]);
+
+  const lookupDebouncing =
+    lookupQuery.trim().length > 0 && lookupQuery.trim() !== debouncedSearch.trim();
+  const suggestPanelLoading = searchSuggestionsLoading || lookupDebouncing;
+  const showSuggestPanel =
+    suggestOpen && Boolean(salesPointId) && lookupQuery.trim().length > 0;
 
   useEffect(() => {
     const onDoc = (ev: MouseEvent) => {
@@ -504,6 +516,7 @@ export const PosShell: React.FC<Props> = ({
           showToast(`Added: ${meta.label}`);
           setLookupQuery('');
           setSuggestions([]);
+          setSearchSuggestionsLoading(false);
           setSuggestOpen(false);
           setHighlightIndex(null);
           lookupInputRef.current?.focus();
@@ -649,6 +662,7 @@ export const PosShell: React.FC<Props> = ({
         setVariantPicker(null);
         setLookupQuery('');
         setSuggestions([]);
+        setSearchSuggestionsLoading(false);
         setSuggestOpen(false);
         setHighlightIndex(null);
         lookupInputRef.current?.focus();
@@ -707,6 +721,10 @@ export const PosShell: React.FC<Props> = ({
     if (!salesPointId || checkoutModalBusy || checkoutCustomerModal) return;
     const q = lookupQuery.trim();
     if (!q) return;
+    if (suggestPanelLoading) {
+      setCheckoutError('Wait for product search to finish.');
+      return;
+    }
     const resolved = await resolveBarcodeForPos(q);
     if (resolved) {
       await addLineFromMeta(resolved, 1);
@@ -728,6 +746,7 @@ export const PosShell: React.FC<Props> = ({
     onPickSearchItem,
     salesPointId,
     suggestions,
+    suggestPanelLoading,
   ]);
 
   const handleLookupSubmit = async (e: React.FormEvent) => {
@@ -751,6 +770,9 @@ export const PosShell: React.FC<Props> = ({
     if (branchId && salesPointId) clearPosDraft(branchId, salesPointId);
     clear();
     setLookupQuery('');
+    setSuggestions([]);
+    setSearchSuggestionsLoading(false);
+    setSuggestOpen(false);
     setHighlightIndex(null);
     setCheckoutError(null);
     setDiscountInput('0');
@@ -1214,6 +1236,7 @@ export const PosShell: React.FC<Props> = ({
     // working draft stays separate; no banner needed
     setLookupQuery('');
     setSuggestions([]);
+    setSearchSuggestionsLoading(false);
     setSuggestOpen(false);
     setHighlightIndex(null);
     setCheckoutError(null);
@@ -1251,8 +1274,8 @@ export const PosShell: React.FC<Props> = ({
               ref={lookupInputRef}
               id="pos-product-lookup-input"
               role="combobox"
-              aria-expanded={suggestOpen && suggestions.length > 0}
-              aria-controls="pos-product-lookup-listbox"
+              aria-expanded={showSuggestPanel}
+              aria-controls="pos-product-lookup-panel"
               aria-autocomplete="list"
               aria-activedescendant={
                 highlightIndex !== null && suggestions.length > 0
@@ -1268,7 +1291,7 @@ export const PosShell: React.FC<Props> = ({
               onFocus={() => setSuggestOpen(true)}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
-                  if (suggestions.length === 0) return;
+                  if (suggestPanelLoading || suggestions.length === 0) return;
                   e.preventDefault();
                   setSuggestOpen(true);
                   setHighlightIndex((prev) => {
@@ -1278,7 +1301,7 @@ export const PosShell: React.FC<Props> = ({
                   return;
                 }
                 if (e.key === 'ArrowUp') {
-                  if (suggestions.length === 0) return;
+                  if (suggestPanelLoading || suggestions.length === 0) return;
                   e.preventDefault();
                   setSuggestOpen(true);
                   setHighlightIndex((prev) => {
@@ -1304,60 +1327,79 @@ export const PosShell: React.FC<Props> = ({
           </div>
         </div>
       </form>
-      {suggestOpen && suggestions.length > 0 ? (
-        <ul
-          id="pos-product-lookup-listbox"
-          className="pos-suggest-list"
-          role="listbox"
-          aria-label="Matching products"
+      {showSuggestPanel ? (
+        <div
+          id="pos-product-lookup-panel"
+          className="pos-suggest-panel"
+          aria-busy={suggestPanelLoading}
         >
-          {suggestions.map((it, idx) => {
-            const badge = posSearchMatchBadge(it.searchMatch);
-            const vm = it.searchMatch?.variant;
-            const showVariantDetail =
-              !!vm && (it.searchMatch?.kind === 'variant' || it.searchMatch?.kind === 'both');
-            const ariaParts = [
-              badge.label,
-              it.name,
-              showVariantDetail && vm?.name ? vm.name : null,
-              it.sku ? `SKU ${it.sku}` : null,
-            ].filter(Boolean);
-            return (
-              <li key={`${it.id}-${idx}`} role="presentation">
-                <button
-                  type="button"
-                  id={`pos-lookup-option-${idx}`}
-                  role="option"
-                  aria-selected={highlightIndex === idx}
-                  aria-label={ariaParts.join('. ')}
-                  title={badge.title}
-                  className={`pos-suggest-item ${highlightIndex === idx ? 'pos-suggest-item--active' : ''}`}
-                  onMouseEnter={() => setHighlightIndex(idx)}
-                  onClick={() => onPickSearchItem(it)}
-                >
-                  <div className="pos-suggest-item__row">
-                    <span className={`pos-suggest-badge ${badge.className}`}>{badge.label}</span>
-                    <span className="pos-suggest-name">{it.name}</span>
-                  </div>
-                  {showVariantDetail && vm ? (
-                    <span className="pos-suggest-variant">
-                      <span className="pos-suggest-variant__label">Variant</span>
-                      <span className="pos-suggest-variant__text">
-                        {vm.name}
-                        {vm.code ? ` · ${vm.code}` : ''}
+          {suggestPanelLoading ? (
+            <div className="pos-suggest-loading" role="status" aria-live="polite">
+              <span className="pos-suggest-loading__spinner" aria-hidden />
+              <span className="pos-suggest-loading__text">
+                {lookupDebouncing ? 'Searching…' : 'Searching products…'}
+              </span>
+            </div>
+          ) : suggestions.length === 0 ? (
+            <div className="pos-suggest-empty" role="status">
+              No matching products. Try another term or scan a barcode.
+            </div>
+          ) : (
+            <ul
+              id="pos-product-lookup-listbox"
+              className="pos-suggest-list"
+              role="listbox"
+              aria-label="Matching products"
+            >
+              {suggestions.map((it, idx) => {
+                const badge = posSearchMatchBadge(it.searchMatch);
+                const vm = it.searchMatch?.variant;
+                const showVariantDetail =
+                  !!vm && (it.searchMatch?.kind === 'variant' || it.searchMatch?.kind === 'both');
+                const ariaParts = [
+                  badge.label,
+                  it.name,
+                  showVariantDetail && vm?.name ? vm.name : null,
+                  it.sku ? `SKU ${it.sku}` : null,
+                ].filter(Boolean);
+                return (
+                  <li key={`${it.id}-${idx}`} role="presentation">
+                    <button
+                      type="button"
+                      id={`pos-lookup-option-${idx}`}
+                      role="option"
+                      aria-selected={highlightIndex === idx}
+                      aria-label={ariaParts.join('. ')}
+                      title={badge.title}
+                      className={`pos-suggest-item ${highlightIndex === idx ? 'pos-suggest-item--active' : ''}`}
+                      onMouseEnter={() => setHighlightIndex(idx)}
+                      onClick={() => onPickSearchItem(it)}
+                    >
+                      <div className="pos-suggest-item__row">
+                        <span className={`pos-suggest-badge ${badge.className}`}>{badge.label}</span>
+                        <span className="pos-suggest-name">{it.name}</span>
+                      </div>
+                      {showVariantDetail && vm ? (
+                        <span className="pos-suggest-variant">
+                          <span className="pos-suggest-variant__label">Variant</span>
+                          <span className="pos-suggest-variant__text">
+                            {vm.name}
+                            {vm.code ? ` · ${vm.code}` : ''}
+                          </span>
+                        </span>
+                      ) : null}
+                      <span className="pos-suggest-sku">
+                        {it.hasVariants && it.searchMatch?.kind === 'master'
+                          ? `Listing SKU: ${it.sku}`
+                          : `SKU: ${it.sku}`}
                       </span>
-                    </span>
-                  ) : null}
-                  <span className="pos-suggest-sku">
-                    {it.hasVariants && it.searchMatch?.kind === 'master'
-                      ? `Listing SKU: ${it.sku}`
-                      : `SKU: ${it.sku}`}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       ) : null}
     </div>
   );
@@ -1431,6 +1473,7 @@ export const PosShell: React.FC<Props> = ({
             onConfirm={handleVariantPickerConfirm}
           />
 
+          {/* eslint-disable-next-line no-constant-condition -- intentionally disabled recent strip */}
           {false && recent.length > 0 && salesPointId ? (
             <div className="pos-recent">
               {/* <span className="pos-recent-label">Recent</span> */}
