@@ -105,6 +105,12 @@ export interface CustomerListResponse {
   counts: { all: number; active: number; vip: number; inactive: number };
 }
 
+export type {
+  SalesOrderPaymentAttachment,
+  SalesOrderPaymentDetails,
+  SalesOrderPaymentLine,
+} from '@/features/sales/utils/orderPayments';
+
 /** Response from POST /sales/pos/checkout */
 export type PosCheckoutResult = {
   order: { _id: string; orderNumber: string; total?: number };
@@ -473,6 +479,8 @@ export const salesService = {
         posGstInclusive?: boolean;
       }>;
       paymentMethodCode?: string;
+      /** Split tender; required when holdPayment is false. Amounts must sum to order total. */
+      payments?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine[];
       createInvoice?: boolean;
       discountAmount?: number;
       /** Defer payment: adds order total to customer outstanding (requires customerId). */

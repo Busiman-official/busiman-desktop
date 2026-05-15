@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PosCartLine } from './usePosCart';
 import { PosQuantityStepper } from './PosQuantityStepper';
+import { formatPosQuantityDisplay } from './posQuantity';
 
 interface Props {
   line: PosCartLine;
@@ -36,7 +37,8 @@ export const PosCartLineCard: React.FC<Props> = ({
       )}
       {showStockWarning && available !== undefined && (
         <div className="pos-line-card__warn">
-          Only {available} available at this location (cart needs {line.quantity}).
+          Only {formatPosQuantityDisplay(available)} available at this location (cart needs{' '}
+          {formatPosQuantityDisplay(line.quantity)}).
         </div>
       )}
     </div>

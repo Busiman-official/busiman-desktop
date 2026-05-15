@@ -8,6 +8,7 @@ import {
   type PosResolvedLineMeta,
 } from './resolveScan';
 import { PosQuantityStepper } from './PosQuantityStepper';
+import { roundPosQuantity } from './posQuantity';
 import './PosVariantPickerModal.css';
 
 export type PosVariantPickerLine = {
@@ -211,7 +212,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   const commitDraftQty = useCallback(
     (variantId: string, value: number, maxStock: number, unlimited: boolean) => {
       setDraftQty((prev) => {
-        let next = Math.max(0, Math.trunc(value));
+        let next = roundPosQuantity(Math.max(0, value));
         if (!Number.isFinite(next)) return prev;
         if (unlimited) next = Math.min(next, POS_PICKER_SOFT_QTY_CAP);
         else next = maxStock > 0 ? Math.min(next, maxStock) : next;

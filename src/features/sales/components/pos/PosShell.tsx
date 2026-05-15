@@ -46,6 +46,22 @@ import {
   PosCustomerSelectionModal,
   type PosNewCustomerPayload,
 } from './PosCustomerSelectionModal';
+import { PosPaymentSplitSection } from './PosPaymentSplitSection';
+import { PosPaymentDetailsModal } from './PosPaymentDetailsModal';
+import {
+  buildCheckoutPayments,
+  computeCashRemainder,
+  emptyNonCashAmounts,
+  isSplitPaymentBalanced,
+  maxNonCashForMethod,
+  nonCashAmountsFromInputs,
+  parsePaymentAmountInput,
+  roundMoney,
+  sumNonCashAmounts,
+  type PosPaymentMethodDetails,
+} from './posPaymentSplit';
+import { formatOrderPayments } from '../../utils/orderPayments';
+import { formatPosQuantityDisplay, roundPosQuantity } from './posQuantity';
 import './PosShell.css';
 
 type CustomerModalMode = 'sale' | 'quotation';
@@ -130,7 +146,14 @@ export const PosShell: React.FC<Props> = ({
   const [suggestions, setSuggestions] = useState<ItemSearchResult[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
-  const [paymentCode, setPaymentCode] = useState('cash');
+  const [nonCashAmountInputs, setNonCashAmountInputs] = useState<Record<string, string>>({});
+  const [paymentDetailsByMethod, setPaymentDetailsByMethod] = useState<
+    Record<string, PosPaymentMethodDetails>
+  >({});
+  const [paymentDetailsModal, setPaymentDetailsModal] = useState<{
+    methodCode: string;
+    methodLabel: string;
+  } | null>(null);
   /** When set, POS checkout records the sale on the customer's outstanding balance (pay later). */
   const [holdPaymentForAccount, setHoldPaymentForAccount] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -144,6 +167,7 @@ export const PosShell: React.FC<Props> = ({
   const [checkoutSuccess, setCheckoutSuccess] = useState<{
     orderNumber: string;
     onAccount?: boolean;
+    paymentSummary?: string;
   } | null>(null);
   const [customerModalMode, setCustomerModalMode] = useState<CustomerModalMode>('sale');
   const [quotationDrawerOpen, setQuotationDrawerOpen] = useState(false);
@@ -377,10 +401,8 @@ export const PosShell: React.FC<Props> = ({
   const payOpts = useMemo(() => paymentOptionsFromSettings(settings), [settings]);
 
   useEffect(() => {
-    if (payOpts.length && !payOpts.some((p) => p.value === paymentCode)) {
-      setPaymentCode(payOpts[0].value);
-    }
-  }, [payOpts, paymentCode]);
+    setNonCashAmountInputs(emptyNonCashAmounts(payOpts));
+  }, [payOpts]);
 
   const branchTaxPercent = settings?.taxRatePercent ?? 0;
 
@@ -390,6 +412,49 @@ export const PosShell: React.FC<Props> = ({
     }
     return computePosCartTotals(lines, branchTaxPercent, discountAmount);
   }, [lines, settings, discountAmount, branchTaxPercent]);
+
+  const nonCashAmounts = useMemo(
+    () => nonCashAmountsFromInputs(payOpts, nonCashAmountInputs),
+    [payOpts, nonCashAmountInputs],
+  );
+
+  const cashPaymentAmount = useMemo(
+    () => computeCashRemainder(totals.total, nonCashAmounts),
+    [totals.total, nonCashAmounts],
+  );
+
+  const paymentSplitOverAllocated = useMemo(
+    () => sumNonCashAmounts(nonCashAmounts) > roundMoney(totals.total) + 0.0001,
+    [nonCashAmounts, totals.total],
+  );
+
+  const paymentSplitValid = useMemo(
+    () =>
+      totals.total >= 0 &&
+      !paymentSplitOverAllocated &&
+      isSplitPaymentBalanced(totals.total, nonCashAmounts),
+    [totals.total, nonCashAmounts, paymentSplitOverAllocated],
+  );
+
+  const resetPaymentSplit = useCallback(() => {
+    setNonCashAmountInputs(emptyNonCashAmounts(payOpts));
+    setPaymentDetailsByMethod({});
+    setPaymentDetailsModal(null);
+  }, [payOpts]);
+
+  const handleNonCashAmountChange = useCallback(
+    (methodCode: string, raw: string) => {
+      setNonCashAmountInputs((prev) => {
+        const current = nonCashAmountsFromInputs(payOpts, prev);
+        const maxAllowed = maxNonCashForMethod(totals.total, methodCode, current);
+        let nextVal = parsePaymentAmountInput(raw);
+        if (nextVal > maxAllowed) nextVal = maxAllowed;
+        const display = raw.trim() === '' ? '' : String(nextVal);
+        return { ...prev, [methodCode]: display };
+      });
+    },
+    [payOpts, totals.total],
+  );
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -460,7 +525,7 @@ export const PosShell: React.FC<Props> = ({
 
   const setLineQuantity = useCallback(
     (variantId: string, nextQty: number) => {
-      const q = Math.trunc(Number(nextQty));
+      const q = roundPosQuantity(Number(nextQty));
       if (!Number.isFinite(q)) return;
       if (q <= 0) {
         removeLineFromCart(variantId);
@@ -490,12 +555,14 @@ export const PosShell: React.FC<Props> = ({
           options?.gstRatePercent != null && Number.isFinite(options.gstRatePercent)
             ? normalizePosGstRatePercent(options.gstRatePercent)
             : normalizePosGstRatePercent(settings?.taxRatePercent);
+        const lineQty = roundPosQuantity(qty);
+        if (lineQty <= 0) return;
         addOrMerge({
           variantId: meta.variantId,
           itemId: meta.itemId,
           sku: meta.sku,
           label: meta.label,
-          quantity: qty,
+          quantity: lineQty,
           unitPrice: pr.price,
           isNonStock: meta.isNonStock,
           allowNegativeStock: meta.allowNegativeStock,
@@ -568,7 +635,14 @@ export const PosShell: React.FC<Props> = ({
           const meta = await resolveVariantIdForPos(vid);
           if (cancelled) return;
           if (!meta) continue;
-          const qty = Math.max(0, Number(ln.quantity ?? 0));
+          const qty = roundPosQuantity(
+            Math.max(
+              0,
+              Number(
+                (ln as { enteredQuantity?: number }).enteredQuantity ?? ln.quantity ?? 0,
+              ),
+            ),
+          );
           if (qty <= 0) continue;
           await addLineFromMetaRef.current(meta, qty, {
             quiet: true,
@@ -656,7 +730,7 @@ export const PosShell: React.FC<Props> = ({
         const units = picked.reduce((s, l) => s + l.quantity, 0);
         const label =
           picked.length === 1
-            ? `${picked[0].quantity}× ${picked[0].meta.label}`
+            ? `${formatPosQuantityDisplay(picked[0].quantity)}× ${picked[0].meta.label}`
             : `${units} units across ${picked.length} variants`;
         showToast(`Added to cart: ${label}`);
         setVariantPicker(null);
@@ -776,8 +850,9 @@ export const PosShell: React.FC<Props> = ({
     setHighlightIndex(null);
     setCheckoutError(null);
     setDiscountInput('0');
+    resetPaymentSplit();
     lookupInputRef.current?.focus();
-  }, [branchId, salesPointId, clear]);
+  }, [branchId, salesPointId, clear, resetPaymentSplit]);
 
   const resumeHeldDraft = useCallback(
     (draft: PosHeldDraft) => {
@@ -991,6 +1066,7 @@ export const PosShell: React.FC<Props> = ({
       if (branchId && salesPointId) clearPosDraft(branchId, salesPointId);
       clear();
       setDiscountInput('0');
+      resetPaymentSplit();
       setQuotationSourceOrder(null);
       setQuotationDrawerOpen(false);
 
@@ -1014,7 +1090,7 @@ export const PosShell: React.FC<Props> = ({
       });
       lookupInputRef.current?.focus();
     },
-    [branchId, clear, salesPointId]
+    [branchId, clear, resetPaymentSplit, salesPointId]
   );
 
   useEffect(() => {
@@ -1064,12 +1140,24 @@ export const PosShell: React.FC<Props> = ({
         }
         const wantHold =
           opts?.holdPayment !== undefined ? opts.holdPayment : holdPaymentForAccount;
+        if (!wantHold && !paymentSplitValid) {
+          setCheckoutModalError('Payment amounts must equal the bill total.');
+          return;
+        }
+        const payments = wantHold
+          ? undefined
+          : buildCheckoutPayments(
+              payOpts,
+              totals.total,
+              nonCashAmountInputs,
+              paymentDetailsByMethod,
+            );
         const res = await salesService.posCheckout(
           {
             salesPointId,
             customerId: customerIdForOrder,
             lines: linesForCheckoutPayload(lines, branchTaxPercent),
-            paymentMethodCode: paymentCode,
+            payments,
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
             holdPayment: Boolean(wantHold && customerIdForOrder),
             invoiceDate: invoiceDateYmd,
@@ -1079,6 +1167,7 @@ export const PosShell: React.FC<Props> = ({
         clearPosDraft(branchId, salesPointId);
         clear();
         setDiscountInput('0');
+        resetPaymentSplit();
         setStockRefreshToken((n) => n + 1);
         setHeldDrafts(listHeldPosDrafts(branchId, salesPointId));
         setCheckoutCustomerModal(false);
@@ -1086,6 +1175,12 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutSuccess({
           orderNumber: res.order?.orderNumber ?? '—',
           onAccount: Boolean(wantHold && customerIdForOrder),
+          paymentSummary: wantHold
+            ? undefined
+            : formatOrderPayments(
+                payments,
+                payOpts.map((p) => ({ code: p.value, label: p.label })),
+              ),
         });
         setCustomerModalMode('sale');
         setSearchParams(
@@ -1114,11 +1209,16 @@ export const PosShell: React.FC<Props> = ({
       clear,
       invoiceDateYmd,
       lines,
-      paymentCode,
+      payOpts,
+      paymentDetailsByMethod,
+      paymentSplitValid,
+      nonCashAmountInputs,
+      resetPaymentSplit,
       salesPointId,
       salesPointSessionStatus,
       stockBlocked,
       totals.discountAmount,
+      totals.total,
       setSearchParams,
       customerAllowsSale,
       customerId,
@@ -1241,9 +1341,10 @@ export const PosShell: React.FC<Props> = ({
     setHighlightIndex(null);
     setCheckoutError(null);
     setDiscountInput('0');
+    resetPaymentSplit();
     showToast('Order held (draft saved)');
     lookupInputRef.current?.focus();
-  }, [branchId, salesPointId, lines, showToast]);
+  }, [branchId, salesPointId, lines, resetPaymentSplit, showToast]);
 
   const applyPastedBarcode = async () => {
     const v = pasteBarcode.trim();
@@ -1363,7 +1464,7 @@ export const PosShell: React.FC<Props> = ({
                   it.sku ? `SKU ${it.sku}` : null,
                 ].filter(Boolean);
                 return (
-                  <li key={`${it.id}-${idx}`} role="presentation">
+                  <li key={`${it.id}-${it.searchMatch?.variant?.id ?? 'master'}`} role="presentation">
                     <button
                       type="button"
                       id={`pos-lookup-option-${idx}`}
@@ -1528,6 +1629,7 @@ export const PosShell: React.FC<Props> = ({
                     className="pos-summary__discount-field"
                     type="number"
                     min={0}
+                    onFocus={(e) => e.target.select()}
                     step="0.01"
                     value={discountInput}
                     onChange={(e) => setDiscountInput(e.target.value)}
@@ -1541,20 +1643,21 @@ export const PosShell: React.FC<Props> = ({
               </div>
             </div>
 
-            <div className="pos-payment-toggles" role="group" aria-label="Payment method">
-              {payOpts.map((p) => (
-                <button
-                  key={p.value}
-                  type="button"
-                  className={`pos-pay-toggle ${paymentCode === p.value ? 'pos-pay-toggle--active' : ''}`}
-                  onClick={() => setPaymentCode(p.value)}
-                  aria-pressed={paymentCode === p.value}
-                  disabled={holdPaymentForAccount}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            {!holdPaymentForAccount ? (
+              <PosPaymentSplitSection
+                payOpts={payOpts}
+                total={totals.total}
+                disabled={checkoutModalBusy || checkoutCustomerModal}
+                nonCashInputs={nonCashAmountInputs}
+                cashAmount={cashPaymentAmount}
+                detailsByMethod={paymentDetailsByMethod}
+                overAllocated={paymentSplitOverAllocated}
+                onNonCashChange={handleNonCashAmountChange}
+                onOpenDetails={(methodCode, methodLabel) =>
+                  setPaymentDetailsModal({ methodCode, methodLabel })
+                }
+              />
+            ) : null}
 
             <div className="pos-charge-row">
               <div className="pos-charge-row__docs" role="group" aria-label="Documents before payment">
@@ -1608,7 +1711,8 @@ export const PosShell: React.FC<Props> = ({
                     !salesPointId ||
                     stockBlocked ||
                     salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale)
+                    (Boolean(customerId?.trim()) && !customerAllowsSale) ||
+                    !paymentSplitValid
                   }
                 >
                   {checkoutModalBusy ? 'Processing…' : `Charge ₹${totals.total.toFixed(2)}`}
@@ -1803,6 +1907,25 @@ export const PosShell: React.FC<Props> = ({
         />
       </Modal>
 
+      <PosPaymentDetailsModal
+        isOpen={Boolean(paymentDetailsModal)}
+        methodCode={paymentDetailsModal?.methodCode ?? ''}
+        methodLabel={paymentDetailsModal?.methodLabel ?? ''}
+        initial={
+          paymentDetailsModal
+            ? paymentDetailsByMethod[paymentDetailsModal.methodCode]
+            : undefined
+        }
+        onClose={() => setPaymentDetailsModal(null)}
+        onSave={(details) => {
+          if (!paymentDetailsModal) return;
+          setPaymentDetailsByMethod((prev) => ({
+            ...prev,
+            [paymentDetailsModal.methodCode]: details,
+          }));
+        }}
+      />
+
       <Modal
         isOpen={Boolean(checkoutSuccess)}
         onClose={() => {
@@ -1821,6 +1944,11 @@ export const PosShell: React.FC<Props> = ({
             <p className="pos-checkout-success__note">
               Payment deferred — this amount is included in the customer&apos;s outstanding balance until recorded in
               Customers → Payments.
+            </p>
+          ) : checkoutSuccess?.paymentSummary ? (
+            <p className="pos-checkout-success__line">
+              <span className="pos-checkout-success__k">Paid</span>{' '}
+              <span className="pos-checkout-success__v">{checkoutSuccess.paymentSummary}</span>
             </p>
           ) : null}
           <div className="pos-checkout-success__actions">

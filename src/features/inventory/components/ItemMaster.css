@@ -2207,6 +2207,7 @@
   white-space: nowrap;
 }
 
+.variant-meta-inline,
 .variant-code-inline {
   font-size: 11px;
   font-weight: 500;

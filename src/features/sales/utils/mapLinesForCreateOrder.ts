@@ -1,4 +1,5 @@
 import type { SalesQuotationLine } from '@/services/sales.service';
+import { roundPosQuantity } from '@/features/sales/components/pos/posQuantity';
 
 /**
  * POS/order API lines store `lineTotal` as exclusive taxable; customer-facing line amount with GST.
@@ -54,7 +55,11 @@ export function mapOrderLinesForCreateApi(lines: unknown[] | undefined): CreateO
   return lines.map((raw) => {
     const ln = raw as Record<string, unknown>;
     const variantId = idStr(ln.variantId);
-    const quantity = Number(ln.quantity ?? 0);
+    const qtyRaw =
+      ln.enteredQuantity != null && Number.isFinite(Number(ln.enteredQuantity))
+        ? Number(ln.enteredQuantity)
+        : Number(ln.quantity ?? 0);
+    const quantity = roundPosQuantity(qtyRaw);
     const unitPrice = ln.unitPrice != null ? Number(ln.unitPrice) : undefined;
     const out: CreateOrderLinePayload = { variantId, quantity };
     const uom = typeof ln.unitOfMeasure === 'string' ? ln.unitOfMeasure.trim().toLowerCase() : '';

@@ -1,4 +1,5 @@
 import type { PosCartLine } from './usePosCart';
+import { roundPosQuantity } from './posQuantity';
 
 /** GST rates available in the line editor. */
 export const POS_GST_RATE_OPTIONS = [0, 5, 12, 18, 28] as const;
@@ -111,7 +112,7 @@ export function linesForCheckoutPayload(lines: PosCartLine[], defaultGstPercent:
     const hsn = l.hsn?.trim();
     return {
       variantId: l.variantId,
-      quantity: l.quantity,
+      quantity: roundPosQuantity(l.quantity),
       unitOfMeasure: l.unitOfMeasure?.trim().toLowerCase() || l.baseUnit?.trim().toLowerCase(),
       unitPrice: Math.round(eff * 10000) / 10000,
       posListUnitPrice: Math.round(l.unitPrice * 10000) / 10000,

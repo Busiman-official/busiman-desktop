@@ -23,6 +23,11 @@ import {
 } from '@/features/sales/utils/mapLinesForCreateOrder';
 import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
+import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
+import {
+  resolveOrderPaymentSummary,
+  type SalesOrderPaymentLine,
+} from '@/features/sales/utils/orderPayments';
 import './OrderDetailPage.css';
 
 type OrderLine = {
@@ -49,6 +54,8 @@ type OrderDoc = {
   paymentPending?: boolean;
   /** Remaining on-account amount; when missing, treat as full order total. */
   paymentPendingAmount?: number;
+  /** POS split tender (method + amount + optional proof). */
+  payments?: SalesOrderPaymentLine[];
   /** Populated from convert flow; holds quote # after getOrder. */
   sourceQuotationId?: { quoteNumber?: string; status?: string } | string;
   total?: number;
@@ -579,6 +586,14 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const paymentTone =
     paymentPaid ? 'green' : order?.status === 'cancelled' ? 'red' : paymentPendingFlag ? 'amber' : 'red';
 
+  const paymentSummary = useMemo(
+    () =>
+      order
+        ? resolveOrderPaymentSummary(order as OrderDoc)
+        : { status: 'unpaid' as const, summary: '—', primaryMethod: null, payments: [] },
+    [order]
+  );
+
   const lineItems = order?.lines || [];
   const lineCount = lineItems.length;
   const qtySum = lineItems.reduce((a, l) => a + Number(l.quantity ?? 0), 0);
@@ -1069,9 +1084,19 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
               </div>
               <div className="order-detail__card-bd">
                 <div className="order-detail__doc-row">
-                  <span>Method</span>
-                  <span style={{ fontWeight: 600 }}>{paymentPaid ? 'POS / recorded' : '—'}</span>
+                  <span>Status</span>
+                  <span style={{ fontWeight: 600 }}>{paymentLabel}</span>
                 </div>
+                {paymentSummary.payments.length > 0 ? (
+                  <div className="order-detail__payments-block">
+                    <OrderPaymentsBreakdown payments={paymentSummary.payments} />
+                  </div>
+                ) : paymentPaid ? (
+                  <div className="order-detail__doc-row">
+                    <span>Method</span>
+                    <span style={{ fontWeight: 600 }}>{paymentSummary.summary}</span>
+                  </div>
+                ) : null}
                 <div className="order-detail__doc-row">
                   <span>Amount (incl. GST)</span>
                   <span style={{ fontWeight: 600, color: paymentPaid ? '#16a34a' : '#0f172a' }}>{formatInr(total)}</span>
@@ -1086,7 +1111,10 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                         : formatInr(total)}
                   </span>
                 </div>
-                <div className="order-detail__doc-row" style={{ borderBottom: 'none' }}>
+                <div
+                  className="order-detail__doc-row"
+                  style={{ borderBottom: paymentSummary.payments.length ? undefined : 'none' }}
+                >
                   <span>Last update</span>
                   <span className="order-detail__muted">
                     {order.updatedAt ? new Date(order.updatedAt).toLocaleString() : '—'}

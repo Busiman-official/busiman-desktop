@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useGlobalSearch } from './GlobalSearchProvider';
 import { GlobalSearchResult } from './GlobalSearchResult';
+import type { ItemSearchResult } from '@/features/inventory/types/search.types';
 import './GlobalSearchModal.css';
 
 export const GlobalSearchModal: React.FC = () => {
@@ -18,6 +19,7 @@ export const GlobalSearchModal: React.FC = () => {
     selectedIndex,
     setSelectedIndex,
     selectResult,
+    selectSearchResult,
     recentSearches,
     filteredPages,
     flattenedResults,
@@ -31,6 +33,10 @@ export const GlobalSearchModal: React.FC = () => {
   useEffect(() => {
     resultCountRef.current = flattenedResults.length;
   }, [flattenedResults.length]);
+
+  /** Keeps Enter in sync with Arrow keys (handleKeyDown cannot close over stale selectedIndex). */
+  const selectedIndexRef = useRef(selectedIndex);
+  selectedIndexRef.current = selectedIndex;
 
   // Auto-focus input on open
   useEffect(() => {
@@ -142,18 +148,16 @@ export const GlobalSearchModal: React.FC = () => {
             break;
           }
           
-          // Normal Enter key handling
+          // Normal Enter key handling — use ref so index matches latest ArrowDown/ArrowUp (avoid stale closure)
           const currentCount = resultCountRef.current;
           if (currentCount === 0) {
             // No results: do nothing (Enter disabled)
             break;
           }
           
-          // Use current selectedIndex, but validate it's in bounds
-          // If invalid, default to first result
-          const effectiveIndex = (selectedIndex >= 0 && selectedIndex < currentCount) 
-            ? selectedIndex 
-            : 0;
+          const keyboardIdx = selectedIndexRef.current;
+          const effectiveIndex =
+            keyboardIdx >= 0 && keyboardIdx < currentCount ? keyboardIdx : 0;
           
           // Only proceed if we have a valid selection
           if (effectiveIndex >= 0 && effectiveIndex < currentCount) {
@@ -266,12 +270,13 @@ export const GlobalSearchModal: React.FC = () => {
                     <div
                       key={result.type === 'page' ? result.id : result.id}
                       data-result-index={flatIndex}
+                      onMouseEnter={() => setSelectedIndex(flatIndex)}
                     >
                       <GlobalSearchResult
                         result={result}
                         isSelected={selectedIndex === flatIndex}
                         query={query}
-                        onClick={() => selectResult(flatIndex)}
+                        onClick={() => selectSearchResult(result)}
                       />
                     </div>
                   ))}
@@ -323,12 +328,13 @@ export const GlobalSearchModal: React.FC = () => {
                       <div
                         key={result.id}
                         data-result-index={flatIndex}
+                        onMouseEnter={() => setSelectedIndex(flatIndex)}
                       >
                         <GlobalSearchResult
                           result={result}
                           isSelected={selectedIndex === flatIndex}
                           query={query}
-                          onClick={() => selectResult(flatIndex)}
+                          onClick={() => selectSearchResult(result)}
                         />
                       </div>
                     );
@@ -345,12 +351,13 @@ export const GlobalSearchModal: React.FC = () => {
                       <div
                         key={result.id}
                         data-result-index={flatIndex}
+                        onMouseEnter={() => setSelectedIndex(flatIndex)}
                       >
                         <GlobalSearchResult
                           result={result}
                           isSelected={selectedIndex === flatIndex}
                           query={query}
-                          onClick={() => selectResult(flatIndex)}
+                          onClick={() => selectSearchResult(result)}
                         />
                       </div>
                     );
@@ -363,16 +370,18 @@ export const GlobalSearchModal: React.FC = () => {
                   <div className="global-search-group-header">Items</div>
                   {results.items.map((result, index) => {
                     const flatIndex = filteredPages.length + results.serials.length + index;
+                    const itemKey = `${result.id}-${(result as ItemSearchResult).searchMatch?.variant?.id ?? 'm'}-${index}`;
                     return (
                       <div
-                        key={result.id}
+                        key={itemKey}
                         data-result-index={flatIndex}
+                        onMouseEnter={() => setSelectedIndex(flatIndex)}
                       >
                         <GlobalSearchResult
                           result={result}
                           isSelected={selectedIndex === flatIndex}
                           query={query}
-                          onClick={() => selectResult(flatIndex)}
+                          onClick={() => selectSearchResult(result)}
                         />
                       </div>
                     );
@@ -393,12 +402,13 @@ export const GlobalSearchModal: React.FC = () => {
                       <div
                         key={result.id}
                         data-result-index={flatIndex}
+                        onMouseEnter={() => setSelectedIndex(flatIndex)}
                       >
                         <GlobalSearchResult
                           result={result}
                           isSelected={selectedIndex === flatIndex}
                           query={query}
-                          onClick={() => selectResult(flatIndex)}
+                          onClick={() => selectSearchResult(result)}
                         />
                       </div>
                     );
@@ -420,12 +430,13 @@ export const GlobalSearchModal: React.FC = () => {
                       <div
                         key={result.id}
                         data-result-index={flatIndex}
+                        onMouseEnter={() => setSelectedIndex(flatIndex)}
                       >
                         <GlobalSearchResult
                           result={result}
                           isSelected={selectedIndex === flatIndex}
                           query={query}
-                          onClick={() => selectResult(flatIndex)}
+                          onClick={() => selectSearchResult(result)}
                         />
                       </div>
                     );

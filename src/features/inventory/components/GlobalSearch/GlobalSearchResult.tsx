@@ -119,10 +119,16 @@ export const GlobalSearchResult: React.FC<GlobalSearchResultProps> = ({
               <span className="global-search-result-type">{getTypeLabel('item')}</span>
             </div>
             <div className="global-search-result-subtitle">{itemResult.name}</div>
+            {itemResult.searchMatch?.variant ? (
+              <div className="global-search-result-meta">
+                Variant: {itemResult.searchMatch.variant.name}
+                {itemResult.searchMatch.variant.code ? ` · ${itemResult.searchMatch.variant.code}` : ''}
+              </div>
+            ) : null}
             {itemResult.category && (
               <div className="global-search-result-meta">Category: {itemResult.category}</div>
             )}
-            {itemResult.hasVariants && (
+            {itemResult.hasVariants && !itemResult.searchMatch?.variant && (
               <div className="global-search-result-meta">Has Variants</div>
             )}
           </>

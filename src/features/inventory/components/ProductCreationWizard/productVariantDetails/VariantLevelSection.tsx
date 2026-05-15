@@ -59,6 +59,8 @@ export type VariantLevelSectionProps = {
   onPackSizeChange: (value: number | undefined) => void;
   onUnitsPerBoxChange: (value: number | undefined) => void;
   onShelfLifeDaysOverrideChange: (value: number | undefined) => void;
+  /** Wizard-style add variant: HSN in variant fields; optional auto SKU preview only. */
+  showHsnInVariantFields?: boolean;
 };
 
 function VariantLevelSectionInner({
@@ -101,6 +103,7 @@ function VariantLevelSectionInner({
   onPackSizeChange,
   onUnitsPerBoxChange,
   onShelfLifeDaysOverrideChange,
+  showHsnInVariantFields = false,
 }: VariantLevelSectionProps) {
   const handleReorderPrimary = useCallback(
     (next: WizardVariantImage[]) => {
@@ -123,9 +126,26 @@ function VariantLevelSectionInner({
           Variant fields
         </h3>
         <div className="product-variant-details-form-grid">
+          {showHsnInVariantFields ? (
+            <div className="product-variant-details-field">
+              <label htmlFor="pvd-hsn-variant-fields" className="product-variant-details-label">
+                HSN
+              </label>
+              <Input
+                id="pvd-hsn-variant-fields"
+                inputMode="numeric"
+                maxLength={8}
+                value={hsn}
+                onChange={(e) => onHsnChange(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="4, 6, or 8 digits"
+                aria-label="HSN code for this variant"
+              />
+              <span className="product-variant-details-hint">Optional · GST India</span>
+            </div>
+          ) : null}
           <div className="product-variant-details-field">
             <label htmlFor="pvd-variant-name" className="product-variant-details-label">
-              Name
+              Name *
             </label>
             <Input
               id="pvd-variant-name"
@@ -160,10 +180,17 @@ function VariantLevelSectionInner({
             />
           </div>
         </div>
-        <p className="product-variant-details-readonly">
-          <span className="product-variant-details-label">SKU preview</span>
-          <span className="product-variant-details-value product-variant-details-mono">{baseSkuPreview || '—'}</span>
-        </p>
+        {showHsnInVariantFields ? (
+          <p className="product-variant-details-readonly">
+            <span className="product-variant-details-label">Variant code (auto)</span>
+            <span className="product-variant-details-value product-variant-details-mono">{baseSkuPreview || '—'}</span>
+          </p>
+        ) : (
+          <p className="product-variant-details-readonly">
+            <span className="product-variant-details-label">SKU preview</span>
+            <span className="product-variant-details-value product-variant-details-mono">{baseSkuPreview || '—'}</span>
+          </p>
+        )}
       </section>
 
       <section className="product-variant-details-section" aria-labelledby="pvd-pricing-heading">
@@ -216,21 +243,23 @@ function VariantLevelSectionInner({
               placeholder={defaults.tax != null ? String(defaults.tax) : 'tax'}
             />
           </div>
-          <div className="product-variant-details-field">
-            <label htmlFor="pvd-hsn" className="product-variant-details-label">
-              HSN
-            </label>
-            <Input
-              id="pvd-hsn"
-              inputMode="numeric"
-              maxLength={8}
-              value={hsn}
-              onChange={(e) => onHsnChange(e.target.value.replace(/\D/g, '').slice(0, 8))}
-              placeholder="4, 6, or 8 digits"
-              aria-label="HSN code for this variant"
-            />
-            <span className="product-variant-details-hint">GST India — per variant</span>
-          </div>
+          {!showHsnInVariantFields ? (
+            <div className="product-variant-details-field">
+              <label htmlFor="pvd-hsn" className="product-variant-details-label">
+                HSN
+              </label>
+              <Input
+                id="pvd-hsn"
+                inputMode="numeric"
+                maxLength={8}
+                value={hsn}
+                onChange={(e) => onHsnChange(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="4, 6, or 8 digits"
+                aria-label="HSN code for this variant"
+              />
+              <span className="product-variant-details-hint">GST India — per variant</span>
+            </div>
+          ) : null}
         </div>
       </section>
 

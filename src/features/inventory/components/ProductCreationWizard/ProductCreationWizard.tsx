@@ -106,10 +106,10 @@ const defaultIndustryFlags: IndustryFlags = {
   requiresSerialTracking: false,
   hasExpiryDate: false,
   isHighValue: false,
-  industryType: IndustryType.FMCG,
+  industryType: IndustryType.ELECTRONICS,
 };
 
-const DEFAULT_CATEGORY = 'general';
+const DEFAULT_CATEGORY = 'electronics';
 
 export const getInitialFormState = (): WizardFormState => ({
   name: '',
@@ -135,7 +135,7 @@ export const getInitialFormState = (): WizardFormState => ({
   weightUnit: 'kg',
   isMisc: false,
   itemType: ItemType.STOCK,
-  industryType: IndustryType.FMCG,
+  industryType: IndustryType.ELECTRONICS,
   isPerishable: false,
   requiresBatchTracking: false,
   requiresSerialTracking: false,

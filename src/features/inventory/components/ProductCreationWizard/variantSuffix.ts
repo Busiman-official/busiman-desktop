@@ -30,6 +30,19 @@ function slugFromName(name: string): string {
 /**
  * Per-row suffix for `BASE-SUFFIX` variant codes (uppercase, branch-unique check uses full string).
  */
+/** Single new variant on an existing product (Item Master add-variant). */
+export function computeVariantSuffixForName(
+  name: string,
+  existingRows: WizardVariantRow[] = [],
+): string {
+  const rows = [
+    ...existingRows,
+    { id: 'new', value: '', name: name.trim() },
+  ];
+  const suffixes = computeVariantSuffixes(rows);
+  return suffixes[suffixes.length - 1] || 'V1';
+}
+
 export function computeVariantSuffixes(rows: WizardVariantRow[]): string[] {
   const raw = rows.map((row, i) => {
     const ex = normalizeExplicitSuffix(row.value);

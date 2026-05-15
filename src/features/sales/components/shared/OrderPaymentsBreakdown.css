@@ -1,0 +1,128 @@
+.order-payments-breakdown__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.order-payments-breakdown__table th {
+  text-align: left;
+  font-weight: 600;
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.order-payments-breakdown__th-num,
+.order-payments-breakdown__td-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.order-payments-breakdown__table td {
+  padding: 10px 8px 10px 0;
+  vertical-align: top;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.order-payments-breakdown__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.order-payments-breakdown__details {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.order-payments-breakdown__details li + li {
+  margin-top: 2px;
+}
+
+.order-payments-breakdown__muted {
+  color: #94a3b8;
+}
+
+.order-payments-breakdown__proof {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.order-payments-breakdown__proof a {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.order-payments-breakdown__thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.order-payments-breakdown--compact {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order-payments-breakdown__compact-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.order-payments-breakdown__compact-line + .order-payments-breakdown__compact-line {
+  margin-top: 6px;
+}
+
+.order-payments-breakdown__amount {
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.order-pay-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.order-pay-chip--cash {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.order-pay-chip--card {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.order-pay-chip--upi {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.order-pay-chip--bank {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.order-pay-chip--default {
+  background: #f1f5f9;
+  color: #475569;
+}

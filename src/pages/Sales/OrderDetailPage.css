@@ -197,6 +197,12 @@
   color: #334155;
 }
 
+.order-detail__payments-block {
+  padding: 4px 0 12px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 4px;
+}
+
 .order-detail__totals {
   padding: 12px 14px;
   border-top: 1px solid #e2e8f0;

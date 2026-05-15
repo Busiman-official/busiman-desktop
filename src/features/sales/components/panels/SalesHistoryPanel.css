@@ -377,6 +377,26 @@
   background: #eff6ff;
 }
 
+.sales-history-payment-cell {
+  max-width: 200px;
+}
+
+.sales-history-payment-summary {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sales-history-pill--inline {
+  display: inline-flex;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 .sales-history-table tbody tr:hover:not(.sales-history-row--selected) {
   background: #f8fafc;
 }

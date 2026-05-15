@@ -5,8 +5,16 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { searchService } from '../../services/search.service';
-import { SearchResponse, SearchFilters, PageSearchResult } from '../../types/search.types';
+import { SearchResponse, SearchFilters, PageSearchResult, ItemSearchResult } from '../../types/search.types';
 import { filterPagesByQuery } from './inventoryPages';
+import { logger } from '@/shared/utils/logger';
+
+type FlatSearchResult =
+  | PageSearchResult
+  | SearchResponse['serials'][number]
+  | SearchResponse['items'][number]
+  | SearchResponse['movements'][number]
+  | SearchResponse['locations'][number];
 
 interface GlobalSearchContextValue {
   isOpen: boolean;
@@ -21,6 +29,8 @@ interface GlobalSearchContextValue {
   selectedIndex: number;
   setSelectedIndex: (index: number) => void;
   selectResult: (index: number) => void;
+  /** Navigate using the exact result row (avoids index mismatch for duplicate item hits). */
+  selectSearchResult: (result: FlatSearchResult) => void;
   filters: SearchFilters;
   setFilters: (filters: SearchFilters) => void;
   recentSearches: string[];
@@ -72,7 +82,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
         }
       }
     } catch (error) {
-      console.error('Failed to load recent searches:', error);
+      logger.warn('Failed to load global search recent searches', { cause: error });
     }
   }, []);
 
@@ -89,7 +99,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
       setRecentSearches(updated);
       localStorage.setItem('globalSearchRecent', JSON.stringify(updated));
     } catch (error) {
-      console.error('Failed to save recent search:', error);
+      logger.warn('Failed to save global search recent search', { cause: error });
     }
   }, [recentSearches]);
 
@@ -99,7 +109,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     try {
       localStorage.removeItem('globalSearchRecent');
     } catch (error) {
-      console.error('Failed to clear recent searches:', error);
+      logger.warn('Failed to clear global search recent searches', { cause: error });
     }
   }, []);
 
@@ -137,12 +147,16 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
       try {
         const searchResults = await searchService.search(searchQuery, filters, 15);
         setResults(searchResults);
-        // Auto-select first result when results load
-        // selectedIndex will be updated when flattenedResults changes (pages + entity results)
         setSelectedIndex(0);
-      } catch (error: any) {
-        if (error.message !== 'Search canceled') {
-          console.error('Search error:', error);
+      } catch (error: unknown) {
+        const canceled =
+          error instanceof Error &&
+          (error.message === 'Search canceled' || error.name === 'CanceledError');
+        if (!canceled) {
+          logger.error(
+            'Global search request failed',
+            error instanceof Error ? error : undefined,
+          );
         }
         setResults({
           serials: [],
@@ -151,7 +165,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
           locations: [],
           total: 0,
         });
-        setSelectedIndex(-1); // Clear selection on error
+        setSelectedIndex(-1);
       } finally {
         setLoading(false);
       }
@@ -219,19 +233,10 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
   }, []);
 
   // Select result and navigate
-  const selectResult = useCallback(
-    (index: number) => {
-      if (index < 0 || index >= flattenedResults.length) {
-        console.warn(`Invalid result index: ${index} (total: ${flattenedResults.length})`);
-        return;
-      }
-
-      const result = flattenedResults[index];
+  const selectSearchResult = useCallback(
+    (result: FlatSearchResult) => {
       if (!result) return;
 
-      // Page result: navigate to route and close.
-      // When already on the target pathname (e.g. /inventory), use setSearchParams so tab/search
-      // params update reliably; otherwise use navigate (e.g. from dashboard to /inventory?tab=movements).
       if (result.type === 'page') {
         close();
         const route = result.route;
@@ -245,7 +250,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
       }
 
       if (!result.route) {
-        console.warn('Result missing route:', result);
+        logger.warn('Global search result missing route', { type: result.type, id: (result as { id?: string }).id });
         return;
       }
 
@@ -254,12 +259,15 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
       }
 
       if (result.type === 'serial') {
-        const serialResult = result as any;
+        const serialResult = result as SearchResponse['serials'][number];
         close();
         const params = new URLSearchParams();
         params.set('tab', 'items');
         if (serialResult.item?.id) {
           params.set('itemId', serialResult.item.id);
+        }
+        if (serialResult.variant?.id) {
+          params.set('variantId', serialResult.variant.id);
         }
         params.set('serialNumber', serialResult.serialNumber);
         params.set('itemSubTab', 'tracking');
@@ -267,10 +275,44 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
         return;
       }
 
+      if (result.type === 'item') {
+        const itemResult = result as ItemSearchResult;
+        close();
+        const u = new URL(
+          itemResult.route || `/inventory?tab=items&itemId=${encodeURIComponent(itemResult.id)}`,
+          window.location.origin
+        );
+        const vid = itemResult.searchMatch?.variant?.id;
+        if (vid) {
+          u.searchParams.set('variantId', vid);
+          u.searchParams.set('itemSubTab', 'stock');
+        }
+        const pathname = u.pathname;
+        const searchStr = u.searchParams.toString();
+        if (pathname === location.pathname && searchStr) {
+          setSearchParams(new URLSearchParams(searchStr), { replace: true });
+        } else {
+          navigate(searchStr ? { pathname, search: `?${searchStr}` } : pathname);
+        }
+        return;
+      }
+
       close();
       navigate(result.route);
     },
-    [flattenedResults, navigate, close, query, saveRecentSearch, location.pathname, setSearchParams]
+    [navigate, close, query, saveRecentSearch, location.pathname, setSearchParams]
+  );
+
+  const selectResult = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= flattenedResults.length) {
+        return;
+      }
+      const result = flattenedResults[index];
+      if (!result) return;
+      selectSearchResult(result);
+    },
+    [flattenedResults, selectSearchResult]
   );
 
   // Global keyboard shortcut (Ctrl+K / Cmd+K)
@@ -328,6 +370,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     selectedIndex,
     setSelectedIndex,
     selectResult,
+    selectSearchResult,
     filters,
     setFilters,
     recentSearches,

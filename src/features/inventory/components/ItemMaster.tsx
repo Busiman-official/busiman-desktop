@@ -55,6 +55,8 @@ import {
   type ProductVariantDetailsDrawerApplyPayload,
 } from "./ProductCreationWizard/productVariantDetails";
 import { buildVariantUnitOptions } from "./ProductCreationWizard/variantGridUnits";
+import { computeVariantSuffixForName } from "./ProductCreationWizard/variantSuffix";
+import { EditMasterDrawer } from "./EditMasterDrawer";
 import "./ItemMaster.css";
 import "./ProductCreationWizard/ProductCreationWizard.css";
 
@@ -123,6 +125,14 @@ function pickDefaultVariantId(
   const pool = activeFirst.length > 0 ? activeFirst : variantList;
   const def = pool.find((v) => v.isDefault);
   return def?.id ?? pool[0]?.id ?? null;
+}
+
+function variantIdsEqual(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (!a || !b) return false;
+  return String(a) === String(b);
 }
 
 type BulkVariantEditContext = {
@@ -214,18 +224,30 @@ function variantPatchToUpdateRequest(
   return out;
 }
 
+function inventoryVariantsToWizardRows(
+  itemVariants: InventoryVariant[],
+): WizardVariantRow[] {
+  return itemVariants.map((v) => ({
+    id: v.id,
+    value: v.code || "",
+    name: v.name || "",
+    hsn: v.hsn,
+  }));
+}
+
 function variantPatchToCreateRequest(
   itemId: string,
   patch: ProductVariantDetailsDrawerApplyPayload["variantPatch"],
+  existingItemVariants: InventoryVariant[] = [],
 ): CreateVariantRequest {
-  const code = (patch.value ?? "").trim().toUpperCase();
-  if (!code) {
-    throw new Error("Variant SKU (code) is required");
-  }
   const name = (patch.name ?? "").trim();
   if (!name) {
     throw new Error("Variant name is required");
   }
+  const explicitCode = (patch.value ?? "").trim().toUpperCase();
+  const code =
+    explicitCode ||
+    computeVariantSuffixForName(name, inventoryVariantsToWizardRows(existingItemVariants));
   const meta: Record<string, unknown> = {};
   if (patch.supplierSku?.trim()) {
     meta.supplierSku = patch.supplierSku.trim();
@@ -297,6 +319,9 @@ export const ItemMaster: React.FC = () => {
       }
     | null
   >(null);
+
+  const [editMasterDrawerOpen, setEditMasterDrawerOpen] = useState(false);
+  const [editMasterDrawerItem, setEditMasterDrawerItem] = useState<InventoryItem | null>(null);
   const [variantDeleteTarget, setVariantDeleteTarget] = useState<{
     itemId: string;
     variantId: string;
@@ -558,6 +583,8 @@ export const ItemMaster: React.FC = () => {
 
       if (variantId) {
         setSelectedVariantId(variantId);
+      } else {
+        setSelectedVariantId(null);
       }
     } else {
       // If no itemId in URL, clear selection and return to list view
@@ -582,6 +609,14 @@ export const ItemMaster: React.FC = () => {
     }
   }, [searchParams, viewMode]);
 
+  /** Deep links (global search, shared URLs): expand the master row accordion once the item is loaded. */
+  useEffect(() => {
+    const urlItemId = searchParams.get("itemId");
+    if (!urlItemId || viewMode !== "details") return;
+    if (!selectedItem || selectedItem.id !== urlItemId || !selectedItem.hasVariants) return;
+    setExpandedRows(new Set([urlItemId]));
+  }, [searchParams, viewMode, selectedItem]);
+
   // Resolve selected variant from URL / defaults when item variants load; keep URL in sync on Stock tab
   useEffect(() => {
     if (searchParams.get("serialNumber")) return;
@@ -602,20 +637,37 @@ export const ItemMaster: React.FC = () => {
     }
 
     const itemVariants = variants.filter(
-      (v: { itemId?: string }) => v.itemId === selectedItemId,
+      (v: { itemId?: string }) => String(v.itemId) === String(selectedItemId),
     );
-    if (itemVariants.length === 0) return;
 
-    const urlVariant = searchParams.get("variantId");
-    const nextId: string | null =
-      urlVariant && itemVariants.some((v) => v.id === urlVariant)
-        ? urlVariant
-        : selectedVariantId &&
-            itemVariants.some((v) => v.id === selectedVariantId)
+    const urlVariant = searchParams.get("variantId")?.trim() || null;
+    let nextId: string | null = null;
+
+    if (urlVariant) {
+      const urlMatch = itemVariants.find((v: { id: string }) =>
+        variantIdsEqual(v.id, urlVariant),
+      );
+      if (urlMatch) {
+        nextId = urlMatch.id;
+      } else if (itemVariants.length === 0) {
+        // Variants still loading — honor URL (global search / deep link), don't fall back to prior selection
+        if (!variantIdsEqual(selectedVariantId, urlVariant)) {
+          setSelectedVariantId(urlVariant);
+        }
+        return;
+      } else {
+        // Stale or unknown variant in URL
+        nextId = pickDefaultVariantId(itemVariants);
+      }
+    } else if (itemVariants.length > 0) {
+      nextId =
+        selectedVariantId &&
+        itemVariants.some((v: { id: string }) => variantIdsEqual(v.id, selectedVariantId))
           ? selectedVariantId
           : pickDefaultVariantId(itemVariants);
+    }
 
-    if (nextId && nextId !== selectedVariantId) {
+    if (nextId && !variantIdsEqual(nextId, selectedVariantId)) {
       setSelectedVariantId(nextId);
     }
 
@@ -623,12 +675,12 @@ export const ItemMaster: React.FC = () => {
 
     if (itemSubTab === "stock") {
       const urlV = searchParams.get("variantId");
-      if (urlV !== nextId) {
+      if (!variantIdsEqual(urlV, nextId)) {
         setSearchParams(
           (prev) => {
             const p = new URLSearchParams(prev);
             p.set("itemId", selectedItemId);
-            p.set("variantId", nextId);
+            p.set("variantId", nextId!);
             return p;
           },
           { replace: true },
@@ -1090,19 +1142,12 @@ export const ItemMaster: React.FC = () => {
   const loadVariants = async (itemId: string) => {
     try {
       const data = await inventoryService.getVariantsByItem(itemId);
-      logger.info(
-        `[ItemMaster] Loaded ${data.length} variants for item ${itemId}`,
-        { count: data.length, itemId },
-      );
       // Merge variants: keep variants from other items, replace variants for this item
       setVariants((prevVariants) => {
         const otherItemVariants = prevVariants.filter(
           (v) => v.itemId !== itemId,
         );
         const merged = [...otherItemVariants, ...data];
-        logger.info(
-          `[ItemMaster] Merged variants: ${merged.length} total (${data.length} for item ${itemId})`,
-        );
         return merged;
       });
     } catch (err: any) {
@@ -1138,9 +1183,6 @@ export const ItemMaster: React.FC = () => {
       // Always try to load variants when expanding, regardless of hasVariants flag
       // The flag might not be set correctly, but variants could still exist
       const item = items.find((i) => i.id === itemId);
-      logger.info(
-        `[ItemMaster] Expanding row for item ${itemId}, hasVariants: ${item?.hasVariants}`,
-      );
 
       // Always attempt to load variants - if none exist, API will return empty array
       const [variantsOutcome, stockOutcome] = await Promise.allSettled([
@@ -1339,6 +1381,12 @@ export const ItemMaster: React.FC = () => {
       },
       { replace: true },
     );
+  };
+
+  const openEditMasterDrawer = (item: InventoryItem) => {
+    closeListRowMenu();
+    setEditMasterDrawerItem(item);
+    setEditMasterDrawerOpen(true);
   };
 
   const openVariantDetailsFromList = (
@@ -1609,12 +1657,6 @@ export const ItemMaster: React.FC = () => {
                       const itemVariants = variants.filter(
                         (v) => v.itemId === item.id,
                       );
-                      // Debug log when row is expanded
-                      if (isExpanded && item.hasVariants) {
-                        logger.info(
-                          `[ItemMaster] Rendering expanded row for item ${item.id}, variants count: ${itemVariants.length}, total variants in state: ${variants.length}`,
-                        );
-                      }
                       return (
                         <React.Fragment key={item.id}>
                           <tr
@@ -1828,8 +1870,10 @@ export const ItemMaster: React.FC = () => {
                                                   <span className="variant-name-text">
                                                     {variant.name}
                                                   </span>
-                                                    <span className="variant-code-inline">
-                                                      {variant.code}
+                                                    <span className="variant-meta-inline">
+                                                      {variant.hsn?.trim() ||
+                                                        variant.code ||
+                                                        "—"}
                                                     </span>
                                                   </div>
                                                 </td>
@@ -2812,9 +2856,9 @@ export const ItemMaster: React.FC = () => {
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => openItemDetailsFromList(listRowMenu.item)}
+                    onClick={() => openEditMasterDrawer(listRowMenu.item)}
                   >
-                    Open details
+                    Edit Master
                   </button>
                   <button
                     type="button"
@@ -2958,6 +3002,35 @@ export const ItemMaster: React.FC = () => {
             document.body,
           )
         : null}
+
+      <EditMasterDrawer
+        isOpen={editMasterDrawerOpen}
+        item={editMasterDrawerItem}
+        onClose={() => {
+          setEditMasterDrawerOpen(false);
+          setEditMasterDrawerItem(null);
+        }}
+        onSave={async (itemId, payload) => {
+          setError(null);
+          setSuccess(null);
+          try {
+            await inventoryService.updateItem(itemId, payload);
+            setSuccess("Master updated successfully");
+            clearSuccessMessage();
+            await loadItems();
+            if (selectedItemId === itemId) {
+              await loadItemDetails();
+            }
+          } catch (err: unknown) {
+            setError(extractErrorMessage(err, "Failed to update master product"));
+            logger.error(
+              "[ItemMaster] Failed to update master product",
+              err,
+            );
+          }
+        }}
+      />
+
       {addVariantContext || bulkVariantEditContext ? (
         <ProductVariantDetailsDrawer
           key={
@@ -3010,13 +3083,24 @@ export const ItemMaster: React.FC = () => {
           baseSkuPreview={
             addVariantContext ? "" : bulkVariantEditContext!.apiVariant.code
           }
+          existingVariantRows={
+            addVariantContext
+              ? inventoryVariantsToWizardRows(
+                  variants.filter((v) => v.itemId === addVariantContext.item.id),
+                )
+              : undefined
+          }
           onApply={(payload) => {
             if (addVariantContext) {
               const item = addVariantContext.item;
+              const existingForItem = variants.filter(
+                (v) => v.itemId === item.id,
+              );
               try {
                 const req = variantPatchToCreateRequest(
                   item.id,
                   payload.variantPatch,
+                  existingForItem,
                 );
                 void inventoryService
                   .createVariant(req)

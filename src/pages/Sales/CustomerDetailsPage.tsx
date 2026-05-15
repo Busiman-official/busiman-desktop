@@ -21,6 +21,13 @@ import {
   quotationLineGrossInr,
 } from '@/features/sales/utils/mapLinesForCreateOrder';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
+import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
+import {
+  normalizeOrderPayments,
+  paymentMethodChip as orderPaymentMethodChip,
+  resolveOrderPaymentSummary,
+  type SalesOrderPaymentLine,
+} from '@/features/sales/utils/orderPayments';
 import { extractErrorMessage } from '@/utils/error';
 import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import { authStore } from '@/store/authStore';
@@ -62,12 +69,12 @@ function daysSinceLabel(iso: string | null | undefined): { text: string; tone: '
 }
 
 function paymentMethodChip(method: string): { label: string; cls: string } {
-  const m = String(method || '').toLowerCase();
-  if (m === 'cash') return { label: 'Cash', cls: 'cd-chip cd-chip--cash' };
-  if (m === 'upi') return { label: 'UPI', cls: 'cd-chip cd-chip--upi' };
-  if (m === 'card') return { label: 'Card', cls: 'cd-chip cd-chip--card' };
-  if (m.includes('bank')) return { label: 'Bank', cls: 'cd-chip cd-chip--bank' };
-  return { label: method || 'POS', cls: 'cd-chip cd-chip--pos' };
+  const c = orderPaymentMethodChip(method);
+  if (c.cls.includes('--cash')) return { label: c.label, cls: 'cd-chip cd-chip--cash' };
+  if (c.cls.includes('--upi')) return { label: c.label, cls: 'cd-chip cd-chip--upi' };
+  if (c.cls.includes('--card')) return { label: c.label, cls: 'cd-chip cd-chip--card' };
+  if (c.cls.includes('--bank')) return { label: c.label, cls: 'cd-chip cd-chip--bank' };
+  return { label: c.label, cls: 'cd-chip cd-chip--pos' };
 }
 
 function activityDot(type: string): string {
@@ -111,6 +118,7 @@ type CustomerOrderRow = {
   createdAt?: string;
   paymentPending?: boolean;
   paymentPendingAmount?: number;
+  payments?: SalesOrderPaymentLine[];
   lines?: Array<Record<string, unknown>>;
 };
 
@@ -140,6 +148,7 @@ type PaymentOrderGroup = {
   paidRecorded: number;
   refundTotal: number;
   balanceDue: number;
+  posPayments: SalesOrderPaymentLine[];
 };
 
 function isB2bProfile(p: SalesCustomer): boolean {
@@ -393,6 +402,7 @@ export const CustomerDetailsPage: React.FC = () => {
         paidRecorded,
         refundTotal,
         balanceDue,
+        posPayments: normalizeOrderPayments((raw as { payments?: unknown }).payments),
       };
     });
   }, [data]);
@@ -1130,12 +1140,16 @@ export const CustomerDetailsPage: React.FC = () => {
                           const pend = Boolean(o.paymentPending);
                           const badge = orderStatusBadgeProps(st, pend);
                           const lines = o.lines || [];
-                          const payChip = paymentMethodChip('pos');
+                          const payInfo = resolveOrderPaymentSummary(o);
                           const payCell =
                             st === 'completed' && !pend ? (
-                              <span>
-                                Paid <span className={payChip.cls}>{payChip.label}</span>
-                              </span>
+                              payInfo.payments.length > 0 ? (
+                                <span title={payInfo.summary}>
+                                  Paid · {payInfo.summary}
+                                </span>
+                              ) : (
+                                <span>Paid</span>
+                              )
                             ) : st === 'completed' && pend ? (
                               <span>
                                 Owes{' '}
@@ -1418,11 +1432,19 @@ export const CustomerDetailsPage: React.FC = () => {
                             </Button>
                           </div>
                         </div>
+                        {g.posPayments.length > 0 && g.isCompleted ? (
+                          <div className="cd-pos-payments-readonly">
+                            <p className="cd-payment-ledger-sub">POS tender at checkout</p>
+                            <OrderPaymentsBreakdown payments={g.posPayments} compact />
+                          </div>
+                        ) : null}
                         {g.lines.length === 0 ? (
                           <div className="cd-payment-group__empty-lines">
                             {g.isDue
                               ? 'No payment lines yet — balance is unpaid until you record a payment or complete the sale in POS.'
-                              : 'No ledger lines for this order.'}
+                              : g.posPayments.length > 0
+                                ? 'Customer ledger has no separate entries — payment was recorded at POS checkout above.'
+                                : 'No ledger lines for this order.'}
                           </div>
                         ) : (
                           <div className="cd-table-wrap cd-table-wrap--nested">

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Button, Input, Select, Textarea } from '@/shared/components/ui';
 import type { PosCartLine } from './usePosCart';
 import { PosQuantityStepper } from './PosQuantityStepper';
+import { formatPosQuantityDisplay, POS_QTY_MIN } from './posQuantity';
 import {
   POS_GST_RATE_OPTIONS,
   getLineDiscountAmount,
@@ -85,7 +86,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
               <PosQuantityStepper
                 quantity={line.quantity}
                 onCommit={(n) => onUpdate({ quantity: n })}
-                min={1}
+                min={POS_QTY_MIN}
                 max={999_999}
                 buttonClassName="pos-detail-stepper__btn"
                 inputClassName="pos-detail-stepper__val pos-qty-stepper__input"
@@ -205,7 +206,9 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             </div>
             <div className="pos-detail-summary__row">
               <span>Quantity</span>
-              <span>× {line.quantity} {line.unitOfMeasure || line.baseUnit || 'pcs'}</span>
+              <span>
+                × {formatPosQuantityDisplay(line.quantity)} {line.unitOfMeasure || line.baseUnit || 'pcs'}
+              </span>
             </div>
             <div className="pos-detail-summary__row">
               <span>Subtotal</span>

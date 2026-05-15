@@ -2,10 +2,11 @@
  * Right drawer: selected variant details only (wizard step 2).
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { SideDrawer } from '@/shared/components/modals';
-import { Button, Input } from '@/shared/components/ui';
+import { Button } from '@/shared/components/ui';
 import type { WizardVariantRow } from '../variantGridModel';
+import { computeVariantSuffixForName } from '../variantSuffix';
 import { VariantLevelSection } from './VariantLevelSection';
 import { resolveVariantUnit, type VariantUnitOption } from '../variantGridUnits';
 import './productVariantDetailsDrawer.css';
@@ -57,8 +58,10 @@ export type ProductVariantDetailsDrawerApplyPayload = {
 };
 
 export type ProductVariantDetailsDrawerProps = {
-  /** `create` shows SKU/code field and requires code + name before apply. */
+  /** `create` matches wizard: name required, optional HSN, variant code auto-generated. */
   mode?: 'edit' | 'create';
+  /** Existing variants on the item (for unique auto code when adding). */
+  existingVariantRows?: WizardVariantRow[];
   isOpen: boolean;
   onClose: () => void;
   initialVariantRow: WizardVariantRow | null;
@@ -89,8 +92,8 @@ export function ProductVariantDetailsDrawer({
   defaults,
   baseSkuPreview,
   onApply,
+  existingVariantRows = [],
 }: ProductVariantDetailsDrawerProps) {
-  const [variantCode, setVariantCode] = useState(() => (initialVariantRow?.value ?? '').trim());
   const [variantName, setVariantName] = useState(() => initialVariantRow?.name ?? '');
   const [barcode, setBarcode] = useState(() => initialVariantRow?.barcode ?? '');
   const [unitOfMeasure, setUnitOfMeasure] = useState(() =>
@@ -129,15 +132,16 @@ export function ProductVariantDetailsDrawer({
       : selectedVariantLabel
         ? `Variant details - ${selectedVariantLabel}`
         : 'Variant details';
-  const skuPreviewLabel =
-    mode === 'create' ? (variantCode.trim() || '—') : baseSkuPreview || '—';
+  const skuPreviewLabel = useMemo(() => {
+    if (mode !== 'create') return baseSkuPreview || '—';
+    const name = (variantName ?? '').trim();
+    if (!name) return '—';
+    return computeVariantSuffixForName(name, existingVariantRows);
+  }, [mode, baseSkuPreview, variantName, existingVariantRows]);
 
   const hasUnsavedChanges = useCallback((): boolean => {
     if (!initialVariantRow) return false;
     const same = {
-      ...(mode === 'create'
-        ? { value: variantCode.trim().toUpperCase() }
-        : {}),
       name: (variantName ?? '').trim(),
       barcode: String(barcode ?? '').trim(),
       unitOfMeasure: resolveVariantUnit(unitOfMeasure, productDefaultUnit),
@@ -160,9 +164,6 @@ export function ProductVariantDetailsDrawer({
       shelfLifeDaysOverride: normalizeOptionalNumber(shelfLifeDaysOverride),
     };
     const base = {
-      ...(mode === 'create'
-        ? { value: (initialVariantRow.value ?? '').trim().toUpperCase() }
-        : {}),
       name: (initialVariantRow.name ?? '').trim(),
       barcode: String(initialVariantRow.barcode ?? '').trim(),
       unitOfMeasure: resolveVariantUnit(initialVariantRow.unitOfMeasure, productDefaultUnit),
@@ -188,7 +189,6 @@ export function ProductVariantDetailsDrawer({
   }, [
     mode,
     initialVariantRow,
-    variantCode,
     variantName,
     barcode,
     unitOfMeasure,
@@ -213,16 +213,9 @@ export function ProductVariantDetailsDrawer({
   const HSN_PATTERN = /^\d{4}(\d{2}){0,2}$/;
 
   const handleApply = useCallback(() => {
-    if (mode === 'create') {
-      const code = variantCode.trim().toUpperCase();
-      if (!code) {
-        setValidationError('Variant SKU (code) is required.');
-        return;
-      }
-      if (!(variantName ?? '').trim()) {
-        setValidationError('Variant name is required.');
-        return;
-      }
+    if (mode === 'create' && !(variantName ?? '').trim()) {
+      setValidationError('Variant name is required.');
+      return;
     }
     if (minStock != null && maxStock != null && minStock > maxStock) {
       setValidationError('Min stock cannot be greater than max stock.');
@@ -235,9 +228,6 @@ export function ProductVariantDetailsDrawer({
     }
     setValidationError(null);
     const variantPatch: ProductVariantDetailsDrawerApplyPayload['variantPatch'] = {
-      ...(mode === 'create'
-        ? { value: variantCode.trim().toUpperCase() }
-        : {}),
       name: variantName,
       barcode: barcode.trim() || undefined,
       unitOfMeasure: resolveVariantUnit(unitOfMeasure, productDefaultUnit),
@@ -269,7 +259,6 @@ export function ProductVariantDetailsDrawer({
     onClose();
   }, [
     mode,
-    variantCode,
     variantName,
     barcode,
     unitOfMeasure,
@@ -322,35 +311,8 @@ export function ProductVariantDetailsDrawer({
           ) : (
             <>
               {validationError ? <p className="product-variant-details-empty">{validationError}</p> : null}
-              {mode === 'create' ? (
-                <section
-                  className="product-variant-details-section"
-                  aria-labelledby="pvd-var-code-heading"
-                >
-                  <h3
-                    id="pvd-var-code-heading"
-                    className="product-variant-details-section-title"
-                  >
-                    Variant SKU
-                  </h3>
-                  <div className="product-variant-details-form-grid">
-                    <div className="product-variant-details-field product-variant-details-field--full">
-                      <label htmlFor="pvd-variant-code" className="product-variant-details-label">
-                        Code (SKU) *
-                      </label>
-                      <Input
-                        id="pvd-variant-code"
-                        value={variantCode}
-                        onChange={(e) => setVariantCode(e.target.value)}
-                        placeholder="e.g. RED-500ML"
-                        autoComplete="off"
-                        aria-label="Variant SKU code"
-                      />
-                    </div>
-                  </div>
-                </section>
-              ) : null}
               <VariantLevelSection
+                showHsnInVariantFields={mode === 'create'}
                 variantName={variantName}
                 barcode={barcode}
                 unitOfMeasure={unitOfMeasure}
@@ -405,8 +367,7 @@ export function ProductVariantDetailsDrawer({
             onClick={handleApply}
             disabled={
               !initialVariantRow ||
-              (mode === 'create' &&
-                (!variantCode.trim() || !(variantName ?? '').trim()))
+              (mode === 'create' && !(variantName ?? '').trim())
             }
           >
             {mode === 'create' ? 'Create variant' : 'Apply'}

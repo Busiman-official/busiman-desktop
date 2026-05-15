@@ -865,6 +865,16 @@
   margin-left: auto;
 }
 
+.cd-pos-payments-readonly {
+  padding: 10px 14px 12px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+}
+
+.cd-pos-payments-readonly .cd-payment-ledger-sub {
+  margin: 0 0 8px;
+}
+
 .cd-payment-group__empty-lines {
   padding: 12px 14px;
   font-size: 13px;

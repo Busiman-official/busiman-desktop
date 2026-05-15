@@ -16,6 +16,12 @@ import { salesService } from '@/services/sales.service';
 import { mapOrderLinesForCreateApi } from '../../utils/mapLinesForCreateOrder';
 import { docId, entityId, idStr } from '../../utils/ids';
 import { orderSaleTimestampMs } from '@/utils/commercialDates';
+import {
+  orderMatchesPaymentMethodFilter,
+  paymentAmountsByKnownMethod,
+  resolveOrderPaymentSummary,
+  type PaymentMethodFilter,
+} from '../../utils/orderPayments';
 import './SalesHistoryPanel.css';
 
 type StatusFilter = 'all' | 'completed' | 'draft' | 'cancelled';
@@ -208,6 +214,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   /** Specific calendar day (YYYY-MM-DD); empty uses relative Date: preset only. */
   const [saleDateYmd, setSaleDateYmd] = useState('');
   const [amountFilter, setAmountFilter] = useState<AmountFilter>('any');
+  const [paymentFilter, setPaymentFilter] = useState<PaymentMethodFilter>('all');
   const [dateDesc, setDateDesc] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; row: Record<string, unknown> } | null>(null);
@@ -284,6 +291,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       }
       const total = Number(r.total ?? 0);
       if (!matchesAmountFilter(total, amountFilter)) return false;
+      if (!orderMatchesPaymentMethodFilter(r, paymentFilter)) return false;
       if (q) {
         const id = docId(r as { _id?: string; id?: string });
         const num = String((r as { orderNumber?: string }).orderNumber ?? '');
@@ -299,7 +307,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       return dateDesc ? tb - ta : ta - tb;
     });
     return list;
-  }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, dateDesc, customerFallback]);
+  }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter, dateDesc, customerFallback]);
 
   const filteredIds = useMemo(
     () =>
@@ -634,6 +642,11 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
         'Status',
         'Mode',
         'Total',
+        'Payment',
+        'Cash',
+        'Card',
+        'UPI',
+        'Bank',
         'Sale date',
         'Entered (system)',
       ];
@@ -642,6 +655,8 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
         const { name, phone } = customerCell(r, customerFallback);
         const mp = modePill(r);
         const st = statusPill(r);
+        const pay = resolveOrderPaymentSummary(r);
+        const amounts = paymentAmountsByKnownMethod(pay.payments);
         const saleMs = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
         const saleStr = saleMs ? new Date(saleMs).toISOString().slice(0, 10) : '';
         return [
@@ -652,6 +667,11 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           st.label,
           mp.label,
           String(Number(r.total ?? 0)),
+          pay.summary,
+          amounts.cash ? String(amounts.cash) : '',
+          amounts.card ? String(amounts.card) : '',
+          amounts.upi ? String(amounts.upi) : '',
+          amounts.bank ? String(amounts.bank) : '',
           saleStr,
           String((r as { createdAt?: string }).createdAt ?? ''),
         ];
@@ -764,6 +784,15 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     { value: 'any', label: 'Amount: Any' },
     { value: 'high', label: 'High (above ₹5000)' },
     { value: 'low', label: 'Under ₹500' },
+  ];
+  const paymentOpts: SelectOption[] = [
+    { value: 'all', label: 'Payment: All' },
+    { value: 'cash', label: 'Cash' },
+    { value: 'card', label: 'Card' },
+    { value: 'upi', label: 'UPI' },
+    { value: 'bank', label: 'Bank' },
+    { value: 'on_account', label: 'On account' },
+    { value: 'legacy', label: 'Paid (no split)' },
   ];
 
   if (!branchId) {
@@ -903,6 +932,11 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                 options={dateOpts}
               />
               <Select value={amountFilter} onChange={(e) => setAmountFilter(e.target.value as AmountFilter)} options={amountOpts} />
+              <Select
+                value={paymentFilter}
+                onChange={(e) => setPaymentFilter(e.target.value as PaymentMethodFilter)}
+                options={paymentOpts}
+              />
             </div>
             <div className="sales-history-toolbar__spacer" />
             <div className="sales-history-toolbar__right">
@@ -925,12 +959,13 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           <table className="sales-history-table">
             <colgroup>
               <col style={{ width: 36 }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '20%' }} />
-              <col style={{ width: '11%' }} />
               <col style={{ width: '10%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '14%' }} />
               <col style={{ width: '11%' }} />
-              <col style={{ width: '13%' }} />
               <col style={{ width: 44 }} />
             </colgroup>
             <thead>
@@ -951,6 +986,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                 <th>Status</th>
                 <th>Mode</th>
                 <th className="sales-history-th-num">Total</th>
+                <th>Payment</th>
                 <th>Sale date</th>
                 <th aria-label="Actions" />
               </tr>
@@ -1003,6 +1039,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                     : '';
                   const high = total >= 5000;
                   const sel = Boolean(id && selected.has(id));
+                  const payInfo = resolveOrderPaymentSummary(r);
                   return (
                     <tr
                       key={id || `row-${String((r as { orderNumber?: string }).orderNumber)}`}
@@ -1067,6 +1104,19 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                       </td>
                       <td className="sales-history-td-num" style={{ fontWeight: 700 }}>
                         ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="sales-history-payment-cell" title={payInfo.summary}>
+                        {payInfo.status === 'on_account' ? (
+                          <span className="sales-history-pill sales-history-pill--onaccount sales-history-pill--inline">
+                            On account
+                          </span>
+                        ) : payInfo.payments.length > 0 ? (
+                          <span className="sales-history-payment-summary">{payInfo.summary}</span>
+                        ) : payInfo.status === 'legacy_paid' ? (
+                          <span className="sales-history-muted">Paid</span>
+                        ) : (
+                          <span className="sales-history-muted">—</span>
+                        )}
                       </td>
                       <td title={enteredTitle || String(created ?? '')}>{dateStr}</td>
                       <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
