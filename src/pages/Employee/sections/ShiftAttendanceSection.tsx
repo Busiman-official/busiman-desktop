@@ -5,8 +5,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { EmployeeDetails, UpdateEmployeeDetailsRequest, AttendanceMode } from '@/types';
-import { CollapsibleSection } from '@/shared/components/ui';
+import { CollapsibleSection, Button } from '@/shared/components/ui';
+import { Modal } from '@/shared/components/modals';
 import { shiftService } from '@/services/shift.service';
+import { employeeService } from '@/services/employee.service';
 import { Shift, ShiftAssignment, CreateShiftAssignmentRequest } from '@/types/shift';
 import { logger } from '@/shared/utils/logger';
 import './ShiftAttendanceSection.css';
@@ -34,6 +36,11 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
   const [loadingAssignment, setLoadingAssignment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [overrideUserOptions, setOverrideUserOptions] = useState<{ id: string; name: string }[]>([]);
+  const [selectedOverrideUserIds, setSelectedOverrideUserIds] = useState<string[]>([]);
+  const [loadingOverrideUsers, setLoadingOverrideUsers] = useState(false);
+  const [savingOverrideUsers, setSavingOverrideUsers] = useState(false);
 
   useEffect(() => {
     if (isExpanded && canEdit) {
@@ -206,6 +213,68 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
     onUnsavedChange(false);
   };
 
+  const loadOverrideUserOptions = async () => {
+    setLoadingOverrideUsers(true);
+    try {
+      const all = await employeeService.getAllEmployees();
+      setOverrideUserOptions(
+        all
+          .filter((e) => e.isActive !== false && e.id !== employee.id)
+          .map((e) => ({ id: e.id, name: e.name }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (err) {
+      logger.error('[ShiftAttendanceSection] Failed to load employees for override modal', err, {
+        employeeId: employee.id,
+      });
+    } finally {
+      setLoadingOverrideUsers(false);
+    }
+  };
+
+  const openOverrideModal = async (initialIds: string[]) => {
+    setSelectedOverrideUserIds(initialIds);
+    setOverrideModalOpen(true);
+    if (overrideUserOptions.length === 0) {
+      await loadOverrideUserOptions();
+    }
+  };
+
+  const handleManualOverrideToggle = async (checked: boolean) => {
+    if (checked) {
+      await openOverrideModal(employee.manualAttendanceOverrideAllowedUserIds ?? []);
+      return;
+    }
+    await onUpdate({
+      allowManualAttendanceOverride: false,
+      manualAttendanceOverrideAllowedUserIds: [],
+    });
+    onUnsavedChange(false);
+  };
+
+  const toggleOverrideUser = (userId: string) => {
+    setSelectedOverrideUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const saveOverrideUsers = async () => {
+    setSavingOverrideUsers(true);
+    setError(null);
+    try {
+      await onUpdate({
+        allowManualAttendanceOverride: true,
+        manualAttendanceOverrideAllowedUserIds: selectedOverrideUserIds,
+      });
+      onUnsavedChange(false);
+      setOverrideModalOpen(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save manual override settings');
+    } finally {
+      setSavingOverrideUsers(false);
+    }
+  };
+
   // Determine displayed shift info - prefer current assignment, fallback to employee.assignedShift
   const displayShift = currentAssignment?.shiftId 
     ? shifts.find(s => s.id === currentAssignment.shiftId) 
@@ -356,21 +425,37 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
             </div>
           )}
 
-          <div className="form-field toggle-field">
+          <div className="form-field toggle-field manual-override-field">
             <label className="field-label">Allow Manual Attendance Override</label>
             {canEdit ? (
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={employee.allowManualAttendanceOverride || false}
-                  onChange={(e) => handleToggle('allowManualAttendanceOverride', e.target.checked)}
-                  disabled={!canEdit}
-                />
-                <span className="toggle-slider"></span>
-              </label>
+              <div className="manual-override-controls">
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={employee.allowManualAttendanceOverride || false}
+                    onChange={(e) => handleManualOverrideToggle(e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+                {employee.allowManualAttendanceOverride ? (
+                  <button
+                    type="button"
+                    className="manual-override-edit-link"
+                    onClick={() =>
+                      openOverrideModal(employee.manualAttendanceOverrideAllowedUserIds ?? [])
+                    }
+                  >
+                    Edit allowed users (
+                    {employee.manualAttendanceOverrideAllowedUserIds?.length ?? 0})
+                  </button>
+                ) : null}
+              </div>
             ) : (
               <div className="field-value read-only">
-                {employee.allowManualAttendanceOverride ? 'Yes' : 'No'}
+                {employee.allowManualAttendanceOverride
+                  ? `Yes (${employee.manualAttendanceOverrideAllowedUserIds?.length ?? 0} users)`
+                  : 'No'}
               </div>
             )}
           </div>
@@ -413,14 +498,6 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
             )}
           </div>
 
-          <div className="shift-attendance-network-policy">
-            <p className="shift-attendance-network-policy__title">Desktop app — office network verification</p>
-            <p className="shift-attendance-network-policy__lead">
-              By default, check-in and check-out from the desktop app require an approved Wi‑Fi or Ethernet network.
-              Enable these only for roles that legitimately work off-site (field staff, remote trials, etc.).
-            </p>
-          </div>
-
           <div className="form-field toggle-field">
             <label className="field-label">Allow check-in without network verification</label>
             {canEdit ? (
@@ -460,6 +537,46 @@ export const ShiftAttendanceSection: React.FC<ShiftAttendanceSectionProps> = ({
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={overrideModalOpen}
+        onClose={() => setOverrideModalOpen(false)}
+        title="Who can override attendance?"
+        size="md"
+      >
+        <p className="manual-override-modal-hint">
+          Admins can always override. Select additional users allowed to manually update this
+          employee&apos;s attendance.
+        </p>
+        {loadingOverrideUsers ? (
+          <p className="manual-override-modal-loading">Loading employees…</p>
+        ) : (
+          <div className="manual-override-user-list" role="group" aria-label="Allowed users">
+            {overrideUserOptions.length === 0 ? (
+              <p className="manual-override-modal-empty">No other active employees found.</p>
+            ) : (
+              overrideUserOptions.map((opt) => (
+                <label key={opt.id} className="manual-override-user-item">
+                  <input
+                    type="checkbox"
+                    checked={selectedOverrideUserIds.includes(opt.id)}
+                    onChange={() => toggleOverrideUser(opt.id)}
+                  />
+                  <span>{opt.name}</span>
+                </label>
+              ))
+            )}
+          </div>
+        )}
+        <div className="manual-override-modal-actions">
+          <Button variant="secondary" onClick={() => setOverrideModalOpen(false)} disabled={savingOverrideUsers}>
+            Cancel
+          </Button>
+          <Button onClick={saveOverrideUsers} disabled={savingOverrideUsers || loadingOverrideUsers}>
+            {savingOverrideUsers ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      </Modal>
     </CollapsibleSection>
   );
 };

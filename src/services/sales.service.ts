@@ -222,6 +222,22 @@ export const salesService = {
     return extractApiData(response);
   },
 
+  async resolvePricesBatch(
+    variantIds: string[],
+    opts?: { customerId?: string; salesPointId?: string; branchId?: string | null }
+  ): Promise<Record<string, { price: number; currency: string; priceListId: string }>> {
+    const response = await api.post(
+      '/sales/pricing/resolve-batch',
+      {
+        variantIds,
+        ...(opts?.customerId ? { customerId: opts.customerId } : {}),
+        ...(opts?.salesPointId ? { salesPointId: opts.salesPointId } : {}),
+      },
+      { params: branchParams(opts?.branchId) }
+    );
+    return extractApiData(response);
+  },
+
   async listCustomers(
     branchId?: string | null,
     query?: {
@@ -259,11 +275,20 @@ export const salesService = {
     return extractApiData(response);
   },
 
-  async listOrders(branchId?: string | null, status?: string) {
+  async listOrders(branchId?: string | null, status?: string, page = 1, limit = 50) {
     const response = await api.get('/sales/orders', {
-      params: { ...branchParams(branchId), ...(status ? { status } : {}) },
+      params: {
+        ...branchParams(branchId),
+        ...(status ? { status } : {}),
+        page,
+        limit,
+      },
     });
-    return extractApiData(response);
+    const data = extractApiData(response);
+    if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
+      return (data as { items: unknown[] }).items;
+    }
+    return Array.isArray(data) ? data : [];
   },
 
   async listReturns(branchId?: string | null) {
@@ -530,11 +555,25 @@ export const salesService = {
     return extractApiData(response);
   },
 
-  async listHistory(branchId?: string | null, status?: string) {
+  async listHistory(
+    branchId?: string | null,
+    status?: string,
+    page = 1,
+    limit = 50
+  ): Promise<{ items: unknown[]; total: number; page: number; limit: number } | unknown[]> {
     const response = await api.get('/sales/history', {
-      params: { ...branchParams(branchId), ...(status ? { status } : {}) },
+      params: {
+        ...branchParams(branchId),
+        ...(status ? { status } : {}),
+        page,
+        limit,
+      },
     });
-    return extractApiData(response);
+    const data = extractApiData(response);
+    if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
+      return data as { items: unknown[]; total: number; page: number; limit: number };
+    }
+    return Array.isArray(data) ? data : [];
   },
 
   async upsertPriceListItem(

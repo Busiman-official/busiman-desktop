@@ -130,8 +130,8 @@ export const ProductDetailPage: React.FC = () => {
       if (historyFilters.movementType) filters.movementType = historyFilters.movementType as MovementType;
       if (historyFilters.locationId) filters.fromLocationId = historyFilters.locationId;
       
-      const data = await inventoryService.getAllMovements(filters);
-      setMovementHistory(data);
+      const result = await inventoryService.getAllMovements({ ...filters, page: 1, limit: 100 });
+      setMovementHistory(result.items);
     } catch (err: any) {
       logger.error('[ProductDetailPage] Failed to load movement history', err);
       setMovementHistory([]);

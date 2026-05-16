@@ -1,8 +1,9 @@
 .pos-cust-modal {
   display: flex;
   flex-direction: column;
-  max-height: min(78vh, 720px);
+  flex: 1;
   min-height: 0;
+  height: 100%;
 }
 
 .pos-cust-modal__scroll {
@@ -45,13 +46,37 @@
   color: #64748b;
 }
 
+.pos-cust-modal__results {
+  flex-shrink: 0;
+  height: 200px;
+  min-height: 150px;
+  max-height: 150px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.pos-cust-modal__results-empty {
+  margin: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  font-size: 13px;
+  color: #64748b;
+  text-align: center;
+}
+
 .pos-cust-modal__list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  max-height: 220px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   background: #fff;
 }
@@ -301,9 +326,29 @@
   justify-content: flex-end;
 }
 
+.pos-checkout-customer-modal-wrap {
+  height: min(88vh, 840px);
+  max-height: min(88vh, 840px);
+}
+
 .pos-checkout-customer-modal-wrap .modal-content {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .pos-checkout-customer-modal-wrap {
+    height: min(92vh, 840px);
+    max-height: min(92vh, 840px);
+    width: min(96vw, 1200px);
+  }
+
+  .pos-cust-modal__results {
+    height: 160px;
+    min-height: 160px;
+    max-height: 160px;
+  }
 }

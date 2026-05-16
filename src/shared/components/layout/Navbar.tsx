@@ -8,6 +8,7 @@ import { authStore } from '@/store/authStore';
 import { companyStore } from '@/store/companyStore';
 import { useBranchContext } from '@/hooks/useBranchContext';
 import { UserRole } from '@/types';
+import { BusimanLogo } from './BusimanLogo';
 import './Navbar.css';
 
 interface NavItem {
@@ -23,8 +24,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Inventory', path: '/inventory' },
   { label: 'Sales', path: '/sales' },
   { label: 'Purchases', path: '/purchases' },
-  { label: 'Reports', path: '/reports' },
-  { label: 'Reports', path: '/reports/admin', roles: ['admin'] },
   { label: 'Calendar', path: '/calendar' },
   { label: 'Settings', path: '/settings' },
 ];
@@ -111,12 +110,6 @@ export const Navbar: React.FC = () => {
         )
       );
     }
-    if (path === '/reports') {
-      if (user?.role === UserRole.ADMIN) {
-        return location.pathname === '/reports/admin' || location.pathname.startsWith('/reports/admin');
-      }
-      return location.pathname === path || location.pathname.startsWith(path + '/');
-    }
     if (path === '/calendar') {
       return location.pathname === path || location.pathname.startsWith(path + '/');
     }
@@ -138,9 +131,6 @@ export const Navbar: React.FC = () => {
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (item.disabled) return false;
-    if (item.path === '/reports' && user?.role === UserRole.ADMIN) {
-      return false;
-    }
     const isAdmin = user?.role === UserRole.ADMIN;
     if (item.path === '/inventory') {
       return hasModule('inventory') || isAdmin;
@@ -153,9 +143,6 @@ export const Navbar: React.FC = () => {
     }
     if (item.path === '/attendance') {
       return hasModule('attendance') || isAdmin;
-    }
-    if (item.path === '/reports') {
-      return hasModule('reports') || isAdmin;
     }
     if (item.path === '/calendar') {
       return hasModule('calendar') || isAdmin;
@@ -188,11 +175,7 @@ export const Navbar: React.FC = () => {
                 className="navbar-logo-img"
               />
             ) : (
-              <img
-                src="./assets/logo.png"
-                alt="Busiman Logo"
-                className="navbar-logo-img"
-              />
+              <BusimanLogo className="navbar-logo-img" />
             )}
           </button>
         </div>

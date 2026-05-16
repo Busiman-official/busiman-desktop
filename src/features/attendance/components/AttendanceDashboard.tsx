@@ -60,7 +60,8 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
     }
   };
 
-  const formatTime = (isoString: string): string => {
+  const formatTime = (isoString?: string): string => {
+    if (!isoString) return '—';
     const date = new Date(isoString);
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -68,7 +69,8 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
     });
   };
 
-  const formatDuration = (minutes: number): string => {
+  const formatDuration = (minutes?: number): string => {
+    if (minutes == null || minutes <= 0) return '—';
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours}h ${mins}m`;
@@ -93,6 +95,16 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
   if (!dashboardData) {
     return null;
   }
+
+  const checkedIn = dashboardData.rows.filter(
+    (r) => r.status === AttendanceSessionStatus.CHECKED_IN
+  );
+  const checkedOut = dashboardData.rows.filter(
+    (r) => r.status === AttendanceSessionStatus.CHECKED_OUT
+  );
+  const notStarted = dashboardData.rows.filter(
+    (r) => r.status === AttendanceSessionStatus.NOT_STARTED
+  );
 
   return (
     <div className="attendance-dashboard">
@@ -143,13 +155,13 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
         {/* Checked In Section */}
         <div className="dashboard-section">
           <h3 className="section-title checked-in-title">
-            Checked In ({dashboardData.checkedIn.length})
+            Checked In ({dashboardData.summary.checkedInCount})
           </h3>
           <div className="employee-list">
-            {dashboardData.checkedIn.length === 0 ? (
+            {checkedIn.length === 0 ? (
               <div className="empty-state">No employees checked in</div>
             ) : (
-              dashboardData.checkedIn.map((emp) => (
+              checkedIn.map((emp) => (
                 <div key={emp.employeeId} className="employee-item checked-in-item">
                   <div className="employee-info">
                     <div className="employee-name">{emp.employeeName}</div>
@@ -170,13 +182,13 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
         {/* Checked Out Section */}
         <div className="dashboard-section">
           <h3 className="section-title checked-out-title">
-            Checked Out ({dashboardData.checkedOut.length})
+            Checked Out ({dashboardData.summary.checkedOutCount})
           </h3>
           <div className="employee-list">
-            {dashboardData.checkedOut.length === 0 ? (
+            {checkedOut.length === 0 ? (
               <div className="empty-state">No employees checked out</div>
             ) : (
-              dashboardData.checkedOut.map((emp) => (
+              checkedOut.map((emp) => (
                 <div key={emp.employeeId} className="employee-item checked-out-item">
                   <div className="employee-info">
                     <div className="employee-name">{emp.employeeName}</div>
@@ -207,13 +219,13 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
         {/* Not Started Section */}
         <div className="dashboard-section">
           <h3 className="section-title not-started-title">
-            Not Started ({dashboardData.notStarted.length})
+            Not Started ({dashboardData.summary.notStartedCount})
           </h3>
           <div className="employee-list">
-            {dashboardData.notStarted.length === 0 ? (
+            {notStarted.length === 0 ? (
               <div className="empty-state">All employees have started</div>
             ) : (
-              dashboardData.notStarted.map((emp) => (
+              notStarted.map((emp) => (
                 <div key={emp.employeeId} className="employee-item not-started-item">
                   <div className="employee-info">
                     <div className="employee-name">{emp.employeeName}</div>

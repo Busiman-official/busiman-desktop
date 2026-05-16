@@ -8,7 +8,6 @@ import { authStore } from '@/store/authStore';
 import { UserRole } from '@/types';
 import { PersonalSettings } from './sections/PersonalSettings';
 import { AttendanceSettings } from './sections/AttendanceSettings';
-import { ReportsSettings } from './sections/ReportsSettings';
 import { WorkforceSettings } from './sections/WorkforceSettings';
 import { DevicesSettings } from './sections/DevicesSettings';
 import { SystemLogs } from './sections/SystemLogs';
@@ -18,7 +17,6 @@ import './SettingsPage.css';
 type SettingsSection =
   | 'account'
   | 'attendance'
-  | 'reports'
   | 'workforce'
   | 'company'
   | 'devices'
@@ -50,7 +48,6 @@ export const SettingsPage: React.FC = () => {
   const sections = [
     { id: 'account' as const, label: 'Account', icon: '👤' },
     { id: 'attendance' as const, label: 'Attendance', icon: '📅' },
-    { id: 'reports' as const, label: 'Reports', icon: '📊' },
     ...(canManageEmployees ? [{ id: 'workforce' as const, label: 'Workforce', icon: '👥' }] : []),
     ...(user?.role === UserRole.ADMIN
       ? [{ id: 'company' as const, label: 'Company', icon: '🏢' }]
@@ -85,7 +82,6 @@ export const SettingsPage: React.FC = () => {
         <div className="settings-content">
           {activeSection === 'account' && <PersonalSettings />}
           {activeSection === 'attendance' && <AttendanceSettings />}
-          {activeSection === 'reports' && <ReportsSettings />}
           {activeSection === 'workforce' && canManageEmployees && <WorkforceSettings />}
           {activeSection === 'company' && user?.role === UserRole.ADMIN && <CompanySettings />}
           {activeSection === 'devices' && <DevicesSettings />}

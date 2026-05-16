@@ -301,7 +301,8 @@ export const ItemMaster: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, _setItemsPerPage] = useState(50);
+  const [itemsPerPage] = useState(50);
+  const [totalItems, setTotalItems] = useState(0);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dropTargetItemId, setDropTargetItemId] = useState<string | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -787,63 +788,24 @@ export const ItemMaster: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      let data = await inventoryService.getAllItems();
-
-      // Apply sorting
-      if (sortColumn) {
-        data = [...data].sort((a, b) => {
-          let aVal: any;
-          let bVal: any;
-
-          switch (sortColumn) {
-            case "name":
-              aVal = a.name.toLowerCase();
-              bVal = b.name.toLowerCase();
-              break;
-            case "category":
-              aVal = (a.category || "").toLowerCase();
-              bVal = (b.category || "").toLowerCase();
-              break;
-            case "unit":
-              aVal = (a.unitOfMeasure ?? "").toLowerCase();
-              bVal = (b.unitOfMeasure ?? "").toLowerCase();
-              break;
-            case "industry":
-              aVal = rowIndustryType(a).toLowerCase();
-              bVal = rowIndustryType(b).toLowerCase();
-              break;
-            default:
-              return 0;
-          }
-
-          if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
-          if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
-          return 0;
-        });
-      }
-
-      const enriched: InventoryItem[] = await Promise.all(
-        data.map(async (item) => {
-          try {
-            const variants = await inventoryService.getVariantsByItem(item.id);
-            const def = variants.find((v) => v.isDefault) || variants[0];
-            const displaySku = def?.sku || def?.code || item.sku || "—";
-            const variantTracking = {
-              batch: variants.some((v) => v.trackBatchOverride),
-              serial: variants.some((v) => v.trackSerialOverride),
-            };
-            return { ...item, displaySku, variantTracking };
-          } catch {
-            return {
-              ...item,
-              displaySku: item.sku || "—",
-              variantTracking: { batch: false, serial: false },
-            };
-          }
-        }),
-      );
-      setItems(enriched);
-      setCurrentPage(1);
+      const sortBy =
+        sortColumn === "name"
+          ? "name"
+          : sortColumn === "category"
+            ? "category"
+            : sortColumn === "unit"
+              ? "unit"
+              : sortColumn === "industry"
+                ? "industry"
+                : "createdAt";
+      const result = await inventoryService.getItemsPage({
+        page: currentPage,
+        limit: itemsPerPage,
+        sortBy,
+        sortDir: sortDirection,
+      });
+      setItems(result.items);
+      setTotalItems(result.total);
     } catch (err: any) {
       const message = extractErrorMessage(err, "Failed to load items");
       setError(message);
@@ -852,17 +814,17 @@ export const ItemMaster: React.FC = () => {
       setLoading(false);
       loadingItemsRef.current = false;
     }
-  }, [sortColumn, sortDirection]);
+  }, [sortColumn, sortDirection, currentPage, itemsPerPage]);
 
   useEffect(() => {
     if (viewMode === "list") {
-      const loadKey = `${sortColumn}-${sortDirection}`;
+      const loadKey = `${sortColumn}-${sortDirection}-${currentPage}`;
       if (loadKey === lastItemsLoadRef.current) return;
       loadItems();
       lastItemsLoadRef.current = loadKey;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, sortColumn, sortDirection, loadItems]);
+  }, [viewMode, sortColumn, sortDirection, currentPage, loadItems]);
 
   // Define loadStockData before useEffect that uses it
   const loadStockData = useCallback(async (itemId: string) => {
@@ -922,34 +884,27 @@ export const ItemMaster: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await inventoryService.getItemById(selectedItemId);
+      const [data, vs] = await Promise.all([
+        inventoryService.getItemById(selectedItemId),
+        inventoryService.getVariantsByItem(selectedItemId).catch(() => []),
+      ]);
       let merged: InventoryItem = { ...data };
-      try {
-        const vs = await inventoryService.getVariantsByItem(selectedItemId);
-        if (vs.length > 0) {
-          const def = vs.find((v) => v.isDefault) || vs[0];
-          merged = {
-            ...data,
-            displaySku: def?.sku || def?.code || data.sku,
-            variantTracking: {
-              batch: vs.some((v) => v.trackBatchOverride),
-              serial: vs.some((v) => v.trackSerialOverride),
-            },
-          };
-        }
-      } catch {
-        /* ignore */
-      }
-      setSelectedItem(merged);
-
-      // Load variants and variant stock if item has variants
-      if (data.hasVariants) {
-        await Promise.all([
-          loadVariants(selectedItemId),
-          loadVariantStock(selectedItemId),
-        ]);
+      if (vs.length > 0) {
+        const def = vs.find((v) => v.isDefault) || vs[0];
+        merged = {
+          ...data,
+          displaySku: def?.sku || def?.code || data.sku,
+          variantTracking: {
+            batch: vs.some((v) => v.trackBatchOverride),
+            serial: vs.some((v) => v.trackSerialOverride),
+          },
+        };
+        setVariants((prev) => {
+          const rest = prev.filter((v) => v.itemId !== selectedItemId);
+          return [...rest, ...vs];
+        });
+        await loadVariantStock(selectedItemId);
       } else {
-        // Only remove variants for this item, keep variants from other items
         setVariants((prevVariants) =>
           prevVariants.filter((v) => v.itemId !== selectedItemId),
         );
@@ -959,16 +914,21 @@ export const ItemMaster: React.FC = () => {
           return next;
         });
       }
+      setSelectedItem(merged);
 
       const loadTrackingFlags = detailIndustryFlags(merged);
+      const trackingLoads: Promise<void>[] = [];
       if (loadTrackingFlags.requiresBatchTracking) {
-        await loadBatches(selectedItemId);
+        trackingLoads.push(loadBatches(selectedItemId));
       }
       if (loadTrackingFlags.requiresSerialTracking) {
-        await loadSerials(selectedItemId);
+        trackingLoads.push(loadSerials(selectedItemId));
       }
       if (loadTrackingFlags.hasExpiryDate) {
-        await loadExpiryAlerts();
+        trackingLoads.push(loadExpiryAlerts(selectedItemId));
+      }
+      if (trackingLoads.length > 0) {
+        await Promise.all(trackingLoads);
       }
     } catch (err: any) {
       const message = extractErrorMessage(err, "Failed to load item details");
@@ -1084,12 +1044,8 @@ export const ItemMaster: React.FC = () => {
   const loadExpiryAlerts = async (itemId?: string) => {
     setExpiryLoading(true);
     try {
-      const alerts = await inventoryService.getExpiryAlerts(expiryDaysAhead);
-      // Filter by itemId if provided
-      const filteredAlerts = itemId
-        ? alerts.filter((alert) => alert.itemId === itemId)
-        : alerts;
-      setExpiryAlerts(filteredAlerts);
+      const alerts = await inventoryService.getExpiryAlerts(expiryDaysAhead, itemId);
+      setExpiryAlerts(alerts);
     } catch (err: any) {
       logger.error("[ItemMaster] Failed to load expiry alerts", err);
       setExpiryAlerts([]);
@@ -1192,7 +1148,7 @@ export const ItemMaster: React.FC = () => {
       if (variantsOutcome.status === "rejected") {
         logger.error(
           "[ItemMaster] Failed to load variants for expanded row",
-          variantsOutcome.reason,
+          variantsOutcome.reason, 
         );
         setVariants((prevVariants) =>
           prevVariants.filter((v) => v.itemId !== itemId),
@@ -1208,6 +1164,8 @@ export const ItemMaster: React.FC = () => {
   };
 
   const handleSort = (column: string) => {
+    setCurrentPage(1);
+    lastItemsLoadRef.current = "";
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -1215,6 +1173,8 @@ export const ItemMaster: React.FC = () => {
       setSortDirection("asc");
     }
   };
+
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
   const clearSuccessMessage = () => {
     if (successTimeout) {
@@ -1283,8 +1243,8 @@ export const ItemMaster: React.FC = () => {
         filters.movementType = historyFilters.movementType;
       if (historyFilters.locationId)
         filters.fromLocationId = historyFilters.locationId;
-      const data = await inventoryService.getAllMovements(filters);
-      setHistoryData(data);
+      const result = await inventoryService.getAllMovements({ ...filters, page: 1, limit: 100 });
+      setHistoryData(result.items);
     } catch (err: any) {
       logger.error("[ItemMaster] Failed to load history data", err);
       setHistoryData([]);
@@ -1647,12 +1607,7 @@ export const ItemMaster: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {items
-                    .slice(
-                      (currentPage - 1) * itemsPerPage,
-                      currentPage * itemsPerPage,
-                    )
-                    .map((item) => {
+                  {items.map((item) => {
                       const isExpanded = expandedRows.has(item.id);
                       const itemVariants = variants.filter(
                         (v) => v.itemId === item.id,
@@ -1907,6 +1862,42 @@ export const ItemMaster: React.FC = () => {
                     })}
                 </tbody>
               </table>
+            </div>
+            <div className="pagination-controls">
+              <span className="pagination-info">
+                {totalItems === 0
+                  ? "No items"
+                  : `Showing ${(currentPage - 1) * itemsPerPage + 1}–${Math.min(currentPage * itemsPerPage, totalItems)} of ${totalItems}`}
+              </span>
+              <div className="pagination-buttons">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={currentPage <= 1 || loading}
+                  onClick={() => {
+                    lastItemsLoadRef.current = "";
+                    setCurrentPage((p) => Math.max(1, p - 1));
+                  }}
+                >
+                  Previous
+                </Button>
+                <span className="pagination-page-info">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={currentPage >= totalPages || loading}
+                  onClick={() => {
+                    lastItemsLoadRef.current = "";
+                    setCurrentPage((p) => Math.min(totalPages, p + 1));
+                  }}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </>
         )}

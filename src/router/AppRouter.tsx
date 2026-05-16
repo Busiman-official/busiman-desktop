@@ -12,9 +12,17 @@ import { UserRole } from '@/types';
 
 // Lazy load pages for code splitting - reduces initial bundle size
 const LoginPage = lazy(() => import('@/pages/Login/LoginPage').then(module => ({ default: module.LoginPage })));
+const AttendanceLayout = lazy(() =>
+  import('@/features/attendance/components/AttendanceLayout').then((module) => ({
+    default: module.AttendanceLayout,
+  }))
+);
 const AttendancePage = lazy(() => import('@/pages/Attendance/AttendancePage').then(module => ({ default: module.AttendancePage })));
-const ReportsPage = lazy(() => import('@/pages/Reports/ReportsPage').then(module => ({ default: module.ReportsPage })));
-const AdminReportsPage = lazy(() => import('@/pages/Reports/AdminReportsPage').then(module => ({ default: module.AdminReportsPage })));
+const EmployeeAttendanceDetailsPage = lazy(() =>
+  import('@/pages/Attendance/EmployeeAttendanceDetailsPage').then((module) => ({
+    default: module.EmployeeAttendanceDetailsPage,
+  }))
+);
 const CalendarPage = lazy(() => import('@/pages/Calendar/CalendarPage').then(module => ({ default: module.CalendarPage })));
 const InventoryPage = lazy(() => import('@/pages/Inventory/InventoryPage').then(module => ({ default: module.InventoryPage })));
 const SalesPage = lazy(() => import('@/pages/Sales/SalesPage').then(module => ({ default: module.SalesPage })));
@@ -83,26 +91,20 @@ export const AppRouter: React.FC = () => {
                 path="/attendance"
                 element={
                   <RequireBranchModule module="attendance">
-                    <AttendancePage />
+                    <AttendanceLayout />
                   </RequireBranchModule>
                 }
-              />
-              <Route
-                path="/reports"
-                element={
-                  <RequireBranchModule module="reports">
-                    <ReportsPage />
-                  </RequireBranchModule>
-                }
-              />
-              <Route
-                path="/reports/admin"
-                element={
-                  <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-                    <AdminReportsPage />
-                  </ProtectedRoute>
-                }
-              />
+              >
+                <Route index element={<AttendancePage />} />
+                <Route
+                  path="employees/:employeeId"
+                  element={
+                    <ProtectedRoute allowedRoles={[UserRole.HR, UserRole.ADMIN, UserRole.MANAGER]}>
+                      <EmployeeAttendanceDetailsPage />
+                    </ProtectedRoute>
+                  }
+                />
+              </Route>
               <Route
                 path="/calendar"
                 element={

@@ -1,0 +1,15 @@
+.attendance-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.attendance-layout__content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding-top: var(--spacing-md);
+}

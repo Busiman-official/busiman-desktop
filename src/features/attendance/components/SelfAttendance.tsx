@@ -14,9 +14,13 @@ import {
   AttendanceSource,
   AttendanceStatusResponse,
   AttendanceRecord,
+  AttendanceApprovalStatus,
+  RemoteJustification,
 } from '@/types';
 import { NetworkInfo } from '@/types/electron';
 import { logger } from '@/shared/utils/logger';
+import { RemoteAttendanceModal } from './RemoteAttendanceModal';
+import { Button } from '@/shared/components/ui';
 import './SelfAttendance.css';
 
 interface SelfAttendanceProps {
@@ -43,9 +47,21 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     loading: false,
   });
   const isCheckingWifi = React.useRef(false);
+  const [remoteModalOpen, setRemoteModalOpen] = useState(false);
+  const [remoteModalAction, setRemoteModalAction] = useState<'check-in' | 'check-out'>('check-in');
 
   const allowCheckinWithoutWifi = user?.allowCheckinWithoutWifi === true;
   const allowCheckoutWithoutWifi = user?.allowCheckoutWithoutWifi === true;
+
+  const needsRemoteCheckIn = useMemo(() => {
+    if (!window.electronAPI || !allowCheckinWithoutWifi) return false;
+    return networkValidation.isValid !== true;
+  }, [allowCheckinWithoutWifi, networkValidation.isValid]);
+
+  const needsRemoteCheckOut = useMemo(() => {
+    if (!window.electronAPI || !allowCheckoutWithoutWifi) return false;
+    return networkValidation.isValid !== true;
+  }, [allowCheckoutWithoutWifi, networkValidation.isValid]);
 
   const desktopNetworkBlocksCheckIn = useMemo(() => {
     if (!window.electronAPI) return false;
@@ -218,10 +234,10 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     }
   };
 
-  const handleCheckIn = async () => {
+  const submitCheckIn = async (remoteJustification?: RemoteJustification) => {
     if (!canMarkAttendance) return;
 
-    if (!allowCheckinWithoutWifi) {
+    if (!remoteJustification && !allowCheckinWithoutWifi) {
       await checkNetworkStatus();
 
       if (networkValidation.loading) {
@@ -253,6 +269,7 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     try {
       const checkInRequest: any = {
         source: AttendanceSource.DESKTOP,
+        remoteJustification,
       };
 
       if (window.electronAPI && networkValidation.networkInfo) {
@@ -293,11 +310,19 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     }
   };
 
-  const handleCheckOut = async () => {
+  const handleCheckIn = async () => {
+    if (needsRemoteCheckIn) {
+      setRemoteModalAction('check-in');
+      setRemoteModalOpen(true);
+      return;
+    }
+    await submitCheckIn();
+  };
+
+  const submitCheckOut = async (remoteJustification?: RemoteJustification) => {
     if (!canMarkAttendance) return;
 
-    // Re-validate network before check-out (skip when employee is allowed to checkout without WiFi)
-    if (!allowCheckoutWithoutWifi) {
+    if (!remoteJustification && !allowCheckoutWithoutWifi) {
       await checkNetworkStatus();
 
       // Check if network validation is still loading
@@ -332,6 +357,7 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     try {
       const checkOutRequest: any = {
         source: AttendanceSource.DESKTOP,
+        remoteJustification,
       };
 
       // Include network info when available (for audit when bypassing, or required when not bypassing)
@@ -375,6 +401,30 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     }
   };
 
+  const handleCheckOut = async () => {
+    if (needsRemoteCheckOut) {
+      setRemoteModalAction('check-out');
+      setRemoteModalOpen(true);
+      return;
+    }
+    await submitCheckOut();
+  };
+
+  const handleCancelPending = async (leg: 'check_in' | 'check_out') => {
+    if (!todayRecord?.id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await attendanceService.cancelAttendanceApproval(todayRecord.id, leg);
+      setSuccessMessage('Pending request cancelled');
+      await loadStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || 'Failed to cancel request');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatTime = (isoString?: string): string => {
     if (!isoString) return '--';
     const date = new Date(isoString);
@@ -391,12 +441,33 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
     return `${hours}h ${mins}m`;
   };
 
-  const getStatusText = (status?: AttendanceSessionStatus): string => {
-    switch (status) {
+  const getApprovalBadge = (): string | null => {
+    const ci = todayRecord?.checkInApproval?.status;
+    const co = todayRecord?.checkOutApproval?.status;
+    if (ci === AttendanceApprovalStatus.PENDING) return 'Check-in pending approval';
+    if (ci === AttendanceApprovalStatus.REJECTED) {
+      return todayRecord?.checkInApproval?.rejectReason
+        ? `Check-in rejected: ${todayRecord.checkInApproval.rejectReason}`
+        : 'Check-in rejected';
+    }
+    if (co === AttendanceApprovalStatus.PENDING) return 'Check-out pending approval';
+    if (co === AttendanceApprovalStatus.REJECTED) {
+      return todayRecord?.checkOutApproval?.rejectReason
+        ? `Check-out rejected: ${todayRecord.checkOutApproval.rejectReason}`
+        : 'Check-out rejected';
+    }
+    return null;
+  };
+
+  const getStatusText = (sessionStatus?: AttendanceSessionStatus): string => {
+    const badge = getApprovalBadge();
+    if (badge?.includes('pending')) return badge;
+    if (badge?.includes('rejected')) return badge;
+    switch (sessionStatus) {
       case AttendanceSessionStatus.CHECKED_IN:
-        return 'Checked In';
+        return badge || 'Checked In';
       case AttendanceSessionStatus.CHECKED_OUT:
-        return 'Checked Out';
+        return badge || 'Checked Out';
       default:
         return 'Not Checked In';
     }
@@ -514,12 +585,16 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
               <td className="detail-label">Check-out Time</td>
               <td className="detail-value">{formatTime(todayRecord?.checkOutTime)}</td>
             </tr>
-            {todayRecord?.totalDuration !== undefined && (
-              <tr>
-                <td className="detail-label">Total Duration</td>
-                <td className="detail-value">{formatDuration(todayRecord.totalDuration)}</td>
-              </tr>
-            )}
+            <tr>
+              <td className="detail-label">Total Duration</td>
+              <td className="detail-value">
+                {todayRecord?.isDurationOfficial
+                  ? formatDuration(todayRecord.totalDuration)
+                  : todayRecord?.checkOutApproval?.status === AttendanceApprovalStatus.PENDING
+                    ? 'Pending approval'
+                    : formatDuration(todayRecord?.totalDuration)}
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -560,8 +635,43 @@ export const SelfAttendance: React.FC<SelfAttendanceProps> = ({ canMarkAttendanc
           >
             {loading ? 'Processing...' : 'Check Out'}
           </button>
+          {todayRecord?.checkInApproval?.status === AttendanceApprovalStatus.PENDING && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleCancelPending('check_in')}
+              disabled={loading}
+            >
+              Cancel pending check-in
+            </Button>
+          )}
+          {todayRecord?.checkOutApproval?.status === AttendanceApprovalStatus.PENDING && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void handleCancelPending('check_out')}
+              disabled={loading}
+            >
+              Cancel pending check-out
+            </Button>
+          )}
         </div>
       )}
+
+      <RemoteAttendanceModal
+        isOpen={remoteModalOpen}
+        onClose={() => setRemoteModalOpen(false)}
+        action={remoteModalAction}
+        loading={loading}
+        onSubmit={async (justification) => {
+          setRemoteModalOpen(false);
+          if (remoteModalAction === 'check-in') {
+            await submitCheckIn(justification);
+          } else {
+            await submitCheckOut(justification);
+          }
+        }}
+      />
 
       {!canMarkAttendance && (
         <div className="self-attendance-info">

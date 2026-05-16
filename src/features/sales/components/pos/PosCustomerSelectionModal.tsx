@@ -429,31 +429,35 @@ export const PosCustomerSelectionModal: React.FC<PosCustomerSelectionModalProps>
             disabled={busy || savingEdit}
             aria-label="Search customers"
           />
-          {hitsLoading ? <p className="pos-cust-modal__muted">Searching…</p> : null}
-          <ul className="pos-cust-modal__list" aria-label="Customer search results">
-            {displayHits.map((c) => (
-              <li key={c._id}>
-                <button
-                  type="button"
-                  className={
-                    selected?._id === c._id
-                      ? 'pos-cust-modal__row pos-cust-modal__row--selected'
-                      : 'pos-cust-modal__row'
-                  }
-                  disabled={busy || savingEdit}
-                  onClick={() => selectCustomer(c)}
-                >
-                  <span className="pos-cust-modal__row-name">{c.name}</span>
-                  <span className="pos-cust-modal__row-meta">
-                    {[c.phone, c.customerCode].filter(Boolean).join(' · ') || '—'}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {!hitsLoading && displayHits.length === 0 ? (
-            <p className="pos-cust-modal__muted">No matching customers.</p>
-          ) : null}
+          <div className="pos-cust-modal__results" aria-live="polite">
+            {hitsLoading ? (
+              <p className="pos-cust-modal__results-empty">Searching…</p>
+            ) : displayHits.length === 0 ? (
+              <p className="pos-cust-modal__results-empty">No matching customers.</p>
+            ) : (
+              <ul className="pos-cust-modal__list" aria-label="Customer search results">
+                {displayHits.map((c) => (
+                  <li key={c._id}>
+                    <button
+                      type="button"
+                      className={
+                        selected?._id === c._id
+                          ? 'pos-cust-modal__row pos-cust-modal__row--selected'
+                          : 'pos-cust-modal__row'
+                      }
+                      disabled={busy || savingEdit}
+                      onClick={() => selectCustomer(c)}
+                    >
+                      <span className="pos-cust-modal__row-name">{c.name}</span>
+                      <span className="pos-cust-modal__row-meta">
+                        {[c.phone, c.customerCode].filter(Boolean).join(' · ') || '—'}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
 
         {selected && !editing ? (

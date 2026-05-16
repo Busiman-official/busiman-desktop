@@ -1,51 +1,53 @@
 /**
- * Attendance Page
+ * Attendance tab panels — module header lives in AttendanceLayout.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { authStore } from '@/store/authStore';
 import { UserRole } from '@/types';
-import { SelfAttendance } from '@/features/attendance/components/SelfAttendance';
 import { AttendanceList } from '@/features/attendance/components/AttendanceList';
+import { AttendanceMyAttendancePanel } from '@/features/attendance/components/panels/AttendanceMyAttendancePanel';
+import { AttendanceSetupPanel } from '@/features/attendance/components/panels/AttendanceSetupPanel';
+import { AttendanceApprovalsPanel } from '@/features/attendance/components/panels/AttendanceApprovalsPanel';
+import {
+  defaultTabForRole,
+  TAB_MY,
+  TAB_OVERVIEW,
+  TAB_APPROVALS,
+  TAB_SETUP,
+  roleShowsOverview,
+  VALID_TABS,
+  type AttendanceTab,
+} from '@/features/attendance/attendanceTabs';
 import './AttendancePage.css';
 
 export const AttendancePage: React.FC = () => {
   const { user } = authStore();
+  const [searchParams] = useSearchParams();
+
+  const role = user?.role ?? UserRole.EMPLOYEE;
+  const rawTab = searchParams.get('tab') || defaultTabForRole(role);
+  const activeTab: AttendanceTab = VALID_TABS.has(rawTab)
+    ? (rawTab as AttendanceTab)
+    : defaultTabForRole(role);
+
+  const showOverview = useMemo(() => roleShowsOverview(role), [role]);
 
   if (!user) {
     return null;
   }
 
-  // Only employees can mark their own attendance
-  // Admins can view but not mark
-  const canMarkAttendance = 
-    user.role === UserRole.EMPLOYEE ||
-    user.role === UserRole.MANAGER ||
-    user.role === UserRole.HR;
-
-  // Determine if attendance list should be shown
-  // Employee: No list (only self)
-  // Manager: Team members (same department)
-  // HR: All employees and managers
-  // Admin: All HRs, managers, and employees
-  const showAttendanceList = 
-    user.role === UserRole.MANAGER ||
-    user.role === UserRole.HR ||
-    user.role === UserRole.ADMIN;
-
   return (
     <div className="attendance-page">
-      <div className="attendance-page-header">
-        <h1>Attendance</h1>
-        <p className="page-subtitle">Manage your daily attendance</p>
-      </div>
-
-      {/* Self Attendance Section - Always visible */}
-      <SelfAttendance canMarkAttendance={canMarkAttendance} />
-
-      {/* Attendance List Section - Role-based visibility */}
-      {showAttendanceList && (
-        <AttendanceList role={user.role} />
+      {activeTab === TAB_OVERVIEW && showOverview && <AttendanceList role={role} />}
+      {activeTab === TAB_MY && role !== UserRole.ADMIN && <AttendanceMyAttendancePanel />}
+      {activeTab === TAB_APPROVALS &&
+        (role === UserRole.MANAGER || role === UserRole.HR || role === UserRole.ADMIN) && (
+          <AttendanceApprovalsPanel />
+        )}
+      {activeTab === TAB_SETUP && (role === UserRole.HR || role === UserRole.ADMIN) && (
+        <AttendanceSetupPanel />
       )}
     </div>
   );

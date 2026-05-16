@@ -60,7 +60,6 @@ import {
   sumNonCashAmounts,
   type PosPaymentMethodDetails,
 } from './posPaymentSplit';
-import { formatOrderPayments } from '../../utils/orderPayments';
 import { formatPosQuantityDisplay, roundPosQuantity } from './posQuantity';
 import './PosShell.css';
 
@@ -107,18 +106,21 @@ function posSearchMatchBadge(searchMatch: ItemSearchResult['searchMatch']): {
   };
 }
 
+const DEFAULT_PAY_OPTS = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'card', label: 'Card' },
+  { value: 'upi', label: 'UPI' },
+] as const;
+
 function paymentOptionsFromSettings(s: SalesSettingsData | null) {
   if (!s?.paymentMethods?.length) {
-    return [
-      { value: 'cash', label: 'Cash' },
-      { value: 'card', label: 'Card' },
-      { value: 'upi', label: 'UPI' },
-    ];
+    return [...DEFAULT_PAY_OPTS];
   }
-  return [...s.paymentMethods]
+  const enabled = [...s.paymentMethods]
     .filter((p) => p.enabled)
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((p) => ({ value: p.code, label: p.label }));
+  return enabled.length > 0 ? enabled : [...DEFAULT_PAY_OPTS];
 }
 
 const INACTIVE_CUSTOMER_MSG =
@@ -134,7 +136,7 @@ export const PosShell: React.FC<Props> = ({
   invoiceDateYmd,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const resolvePrice = usePriceResolver(branchId);
+  const { resolvePrice, resolvePricesBatch } = usePriceResolver(branchId);
   const lookupInputRef = useRef<HTMLInputElement>(null);
   const lookupWrapRef = useRef<HTMLDivElement>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -164,11 +166,6 @@ export const PosShell: React.FC<Props> = ({
   const [checkoutModalError, setCheckoutModalError] = useState<string | null>(null);
   const [counterCustomerName, setCounterCustomerName] = useState<string | null>(null);
   const [intentCustomerLabel, setIntentCustomerLabel] = useState<string | null>(null);
-  const [checkoutSuccess, setCheckoutSuccess] = useState<{
-    orderNumber: string;
-    onAccount?: boolean;
-    paymentSummary?: string;
-  } | null>(null);
   const [customerModalMode, setCustomerModalMode] = useState<CustomerModalMode>('sale');
   const [quotationDrawerOpen, setQuotationDrawerOpen] = useState(false);
   const [quotationSourceOrder, setQuotationSourceOrder] = useState<Record<string, unknown> | null>(null);
@@ -349,23 +346,30 @@ export const PosShell: React.FC<Props> = ({
       return;
     }
     let cancelled = false;
-    (async () => {
-      const next: Record<string, number> = {};
-      for (const line of lines) {
-        if (line.isNonStock) {
-          continue;
+    const timer = setTimeout(() => {
+      (async () => {
+        const unique = new Map<string, { itemId: string; variantId: string }>();
+        for (const line of lines) {
+          if (line.isNonStock) continue;
+          unique.set(line.variantId, { itemId: line.itemId, variantId: line.variantId });
         }
-        try {
-          const b = await inventoryService.getStockBalance(line.itemId, locationId, undefined, line.variantId);
-          if (!cancelled) next[line.variantId] = b.available;
-        } catch {
-          if (!cancelled) next[line.variantId] = 0;
-        }
-      }
-      if (!cancelled) setAvailableByVariant(next);
-    })();
+        const entries = [...unique.values()];
+        const pairs = await Promise.all(
+          entries.map(async ({ itemId, variantId }) => {
+            try {
+              const b = await inventoryService.getStockBalance(itemId, locationId, undefined, variantId);
+              return [variantId, b.available] as const;
+            } catch {
+              return [variantId, 0] as const;
+            }
+          })
+        );
+        if (!cancelled) setAvailableByVariant(Object.fromEntries(pairs));
+      })();
+    }, 200);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [lines, locationId]);
 
@@ -752,7 +756,21 @@ export const PosShell: React.FC<Props> = ({
       if (!salesPointId) return;
       setCheckoutError(null);
       try {
+        const sm = item.searchMatch;
+        const hintedVariantId =
+          sm?.variant?.id && (sm.kind === 'variant' || sm.kind === 'both')
+            ? sm.variant.id
+            : undefined;
+
         const fullItem = await inventoryService.getItemById(item.id);
+
+        if (hintedVariantId) {
+          const picked = await inventoryService.getVariantById(hintedVariantId);
+          const meta = buildLineMetaFromItemVariant(fullItem, picked);
+          await addLineFromMeta(meta, 1);
+          return;
+        }
+
         const variants = await inventoryService.getVariantsByItem(item.id);
         const useVariants = variants.filter((v) => v.isActive !== false);
         const list = useVariants.length > 0 ? useVariants : variants;
@@ -763,21 +781,6 @@ export const PosShell: React.FC<Props> = ({
         if (list.length === 1) {
           await handleActivateProduct(fullItem, list);
           return;
-        }
-
-        const sm = item.searchMatch;
-        const variantId =
-          sm?.variant?.id && (sm.kind === 'variant' || sm.kind === 'both')
-            ? sm.variant.id
-            : undefined;
-
-        if (variantId) {
-          const picked = list.find((v) => v.id === variantId);
-          if (picked) {
-            const meta = buildLineMetaFromItemVariant(fullItem, picked);
-            await addLineFromMeta(meta, 1);
-            return;
-          }
         }
 
         await handleActivateProduct(fullItem, list, {
@@ -1152,7 +1155,11 @@ export const PosShell: React.FC<Props> = ({
               nonCashAmountInputs,
               paymentDetailsByMethod,
             );
-        const res = await salesService.posCheckout(
+        if (!wantHold && totals.total > 0 && !payments?.length) {
+          setCheckoutModalError('Add a payment amount or enable Cash in Sales settings.');
+          return;
+        }
+        await salesService.posCheckout(
           {
             salesPointId,
             customerId: customerIdForOrder,
@@ -1172,17 +1179,8 @@ export const PosShell: React.FC<Props> = ({
         setHeldDrafts(listHeldPosDrafts(branchId, salesPointId));
         setCheckoutCustomerModal(false);
         setHoldPaymentForAccount(false);
-        setCheckoutSuccess({
-          orderNumber: res.order?.orderNumber ?? '—',
-          onAccount: Boolean(wantHold && customerIdForOrder),
-          paymentSummary: wantHold
-            ? undefined
-            : formatOrderPayments(
-                payments,
-                payOpts.map((p) => ({ code: p.value, label: p.label })),
-              ),
-        });
         setCustomerModalMode('sale');
+        lookupInputRef.current?.focus();
         setSearchParams(
           (prev) => {
             const p = new URLSearchParams(prev);
@@ -1571,6 +1569,7 @@ export const PosShell: React.FC<Props> = ({
             customerId={customerId}
             highlightVariantId={variantPicker?.highlightVariantId ?? null}
             resolvePrice={resolvePrice}
+            resolvePricesBatch={resolvePricesBatch}
             onConfirm={handleVariantPickerConfirm}
           />
 
@@ -1926,44 +1925,6 @@ export const PosShell: React.FC<Props> = ({
         }}
       />
 
-      <Modal
-        isOpen={Boolean(checkoutSuccess)}
-        onClose={() => {
-          setCheckoutSuccess(null);
-          lookupInputRef.current?.focus();
-        }}
-        title="Sale complete"
-        size="sm"
-      >
-        <div className="pos-checkout-success">
-          <p className="pos-checkout-success__line">
-            <span className="pos-checkout-success__k">Order</span>{' '}
-            <span className="pos-checkout-success__v">{checkoutSuccess?.orderNumber}</span>
-          </p>
-          {checkoutSuccess?.onAccount ? (
-            <p className="pos-checkout-success__note">
-              Payment deferred — this amount is included in the customer&apos;s outstanding balance until recorded in
-              Customers → Payments.
-            </p>
-          ) : checkoutSuccess?.paymentSummary ? (
-            <p className="pos-checkout-success__line">
-              <span className="pos-checkout-success__k">Paid</span>{' '}
-              <span className="pos-checkout-success__v">{checkoutSuccess.paymentSummary}</span>
-            </p>
-          ) : null}
-          <div className="pos-checkout-success__actions">
-            <Button
-              variant="primary"
-              onClick={() => {
-                setCheckoutSuccess(null);
-                lookupInputRef.current?.focus();
-              }}
-            >
-              Continue
-            </Button>
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         isOpen={Boolean(checkoutErrorModal)}

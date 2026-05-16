@@ -1,0 +1,19 @@
+.attendance-placeholder-panel {
+  padding: var(--spacing-2xl);
+  background: var(--color-bg-primary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+}
+
+.attendance-placeholder-panel__title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-large);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.attendance-placeholder-panel__text {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}

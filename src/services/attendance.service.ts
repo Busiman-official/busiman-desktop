@@ -10,6 +10,8 @@ import {
   CheckOutRequest,
   AttendanceDashboardData,
   AttendanceSource,
+  PendingApprovalRow,
+  AttendanceApprovalLeg,
 } from '@/types';
 import { NetworkInfo } from '@/types/electron';
 import { getSystemFingerprint } from '@/utils/systemFingerprint';
@@ -146,6 +148,7 @@ class AttendanceService {
    * Get attendance history
    */
   async getHistory(params?: {
+    employeeId?: string;
     startDate?: string;
     endDate?: string;
     status?: string;
@@ -173,6 +176,7 @@ class AttendanceService {
     date?: string;
     department?: string;
     status?: string;
+    search?: string;
     page?: number;
     limit?: number;
   }): Promise<AttendanceDashboardData> {
@@ -255,6 +259,41 @@ class AttendanceService {
       record: extractApiData<AttendanceRecord>(response),
       message: (response.data as any).message || 'Attendance marked successfully',
     };
+  }
+
+  async getPendingApprovals(params?: {
+    page?: number;
+    limit?: number;
+    leg?: AttendanceApprovalLeg;
+    date?: string;
+  }): Promise<{ rows: PendingApprovalRow[]; total: number; page: number; limit: number }> {
+    const response = await api.get('/attendance/approvals/pending', { params });
+    return extractApiData(response);
+  }
+
+  async approveAttendance(attendanceId: string, leg: AttendanceApprovalLeg): Promise<AttendanceRecord> {
+    const response = await api.post(`/attendance/approvals/${attendanceId}/approve`, { leg });
+    return extractApiData<AttendanceRecord>(response);
+  }
+
+  async rejectAttendance(
+    attendanceId: string,
+    leg: AttendanceApprovalLeg,
+    rejectReason: string
+  ): Promise<AttendanceRecord> {
+    const response = await api.post(`/attendance/approvals/${attendanceId}/reject`, {
+      leg,
+      rejectReason,
+    });
+    return extractApiData<AttendanceRecord>(response);
+  }
+
+  async cancelAttendanceApproval(
+    attendanceId: string,
+    leg: AttendanceApprovalLeg
+  ): Promise<AttendanceRecord> {
+    const response = await api.post(`/attendance/approvals/${attendanceId}/cancel`, { leg });
+    return extractApiData<AttendanceRecord>(response);
   }
 }
 

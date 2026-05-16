@@ -31,6 +31,10 @@ export interface PosVariantPickerModalProps {
     variantId: string,
     opts?: { customerId?: string; salesPointId?: string }
   ) => Promise<{ price: number; currency: string }>;
+  resolvePricesBatch?: (
+    variantIds: string[],
+    opts?: { customerId?: string; salesPointId?: string }
+  ) => Promise<Record<string, { price: number; currency: string }>>;
   /** When true, POS allows exceeding on-hand (matches cart / checkout). */
   allowNegativePos?: boolean;
   onConfirm: (lines: PosVariantPickerLine[]) => void;
@@ -96,6 +100,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   customerId,
   highlightVariantId,
   resolvePrice,
+  resolvePricesBatch,
   allowNegativePos = false,
   onConfirm,
 }) => {
@@ -146,35 +151,43 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
       const prices: Record<string, number> = {};
       let cur = 'INR';
 
-      await Promise.all(
-        sortedVariants.map(async (v) => {
-          let avail = 0;
-          if (locationId) {
-            try {
-              const b = await inventoryService.getStockBalance(item.id, locationId, undefined, v.id);
-              avail = b.available;
-            } catch {
-              avail = 0;
-            }
-          }
-          stock[v.id] = avail;
+      const stockResults = locationId
+        ? await Promise.all(
+            sortedVariants.map(async (v) => {
+              try {
+                const b = await inventoryService.getStockBalance(item.id, locationId, undefined, v.id);
+                return [v.id, b.available] as const;
+              } catch {
+                return [v.id, 0] as const;
+              }
+            })
+          )
+        : sortedVariants.map((v) => [v.id, 0] as const);
+      for (const [id, avail] of stockResults) stock[id] = avail;
 
-          if (salesPointId) {
-            try {
-              const pr = await resolvePrice(v.id, {
-                salesPointId,
-                customerId: customerId || undefined,
-              });
-              prices[v.id] = pr.price;
-              cur = pr.currency || cur;
-            } catch {
-              prices[v.id] = 0;
-            }
-          } else {
-            prices[v.id] = 0;
-          }
-        })
-      );
+      if (salesPointId) {
+        const variantIds = sortedVariants.map((v) => v.id);
+        const priceOpts = { salesPointId, customerId: customerId || undefined };
+        const priceMap = resolvePricesBatch
+          ? await resolvePricesBatch(variantIds, priceOpts)
+          : Object.fromEntries(
+              await Promise.all(
+                variantIds.map(async (id) => {
+                  try {
+                    const pr = await resolvePrice(id, priceOpts);
+                    return [id, pr] as const;
+                  } catch {
+                    return [id, { price: 0, currency: 'INR' }] as const;
+                  }
+                })
+              )
+            );
+        for (const v of sortedVariants) {
+          const pr = priceMap[v.id];
+          prices[v.id] = pr?.price ?? 0;
+          if (pr?.currency) cur = pr.currency;
+        }
+      }
 
       if (!cancelled) {
         setStockByVariant(stock);
@@ -187,7 +200,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, item, sortedVariants, locationId, salesPointId, customerId, resolvePrice]);
+  }, [isOpen, item, sortedVariants, locationId, salesPointId, customerId, resolvePrice, resolvePricesBatch]);
 
   const subtitle = useMemo(() => {
     if (!item) return '';

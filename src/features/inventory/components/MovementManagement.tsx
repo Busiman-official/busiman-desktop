@@ -50,18 +50,22 @@ export const MovementManagement: React.FC = () => {
   const [selectedSelection, setSelectedSelection] = useState<MovementSelection | null>(null);
   const [detailsPanelOpen, setDetailsPanelOpen] = useState(false);
   const [editDraftId, setEditDraftId] = useState<string | null>(null);
+  const [listRefreshTrigger, setListRefreshTrigger] = useState(0);
+
+  const bumpListRefresh = useCallback(() => setListRefreshTrigger((n) => n + 1), []);
 
   // Load functions - defined before useEffects to avoid TDZ errors
   const loadMovements = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await inventoryService.getAllMovements({
+      const result = await inventoryService.getAllMovements({
         movementType: filters.movementType || undefined,
         status: filters.status || undefined,
         itemId: filters.itemId || undefined,
+        limit: 200,
       });
-      setMovements(data);
+      setMovements(result.items);
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to load movements');
       setError(message);
@@ -187,17 +191,15 @@ export const MovementManagement: React.FC = () => {
   }, [openCreateWithDraftPrompt]);
 
   useEffect(() => {
-    loadMovements();
-    loadItems();
-    loadLocations();
     loadReasonCodes();
   }, []);
 
   useEffect(() => {
-    if (viewMode === 'list' && movementSubTab === 'transactions') {
-      loadMovements();
+    if (viewMode === 'create' || showFilters) {
+      if (items.length === 0) loadItems();
+      if (locations.length === 0) loadLocations();
     }
-  }, [movementSubTab, filters, viewMode]);
+  }, [viewMode, showFilters]);
 
   // Handle movementId from URL params (for deep linking)
   useEffect(() => {
@@ -273,11 +275,6 @@ export const MovementManagement: React.FC = () => {
     return () => document.removeEventListener('keydown', onKey);
   }, [viewMode, movementSubTab, handleCreateMovement]);
 
-  useEffect(() => {
-    if (viewMode === 'list') {
-      loadMovements();
-    }
-  }, [viewMode, filters]);
 
   useEffect(() => {
     if (selectedMovementId && viewMode === 'details') {
@@ -357,7 +354,7 @@ export const MovementManagement: React.FC = () => {
       setSuccess('Movement created successfully');
       setViewMode('list');
       resetForm();
-      loadMovements();
+      bumpListRefresh();
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to create movement');
       setError(message);
@@ -381,7 +378,7 @@ export const MovementManagement: React.FC = () => {
       setShowApproveDialog(false);
       setApproveAction(null);
       setRejectionReason('');
-      loadMovements();
+      bumpListRefresh();
       if (selectedMovementId === approveAction.id) {
         loadMovementDetails();
       }
@@ -1455,6 +1452,7 @@ export const MovementManagement: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 <MovementList
+                  refreshTrigger={listRefreshTrigger}
                   onSelectMovement={setSelectedSelection}
                   onOpenDetails={(selection, doc) => {
                     if (selection.source === 'document' && doc?.status === MovementStatus.DRAFT) {

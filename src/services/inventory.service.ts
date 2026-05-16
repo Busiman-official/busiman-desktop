@@ -153,9 +153,9 @@ export interface InventoryItem {
   };
   createdAt: string;
   updatedAt: string;
-  /** Client-only: default variant SKU for list views. */
+  /** Default variant SKU for list views (from API). */
   displaySku?: string;
-  /** Client-only: any variant has batch/serial overrides. */
+  /** Any variant has batch/serial overrides (from API on list). */
   variantTracking?: { batch: boolean; serial: boolean };
 }
 
@@ -323,6 +323,19 @@ export interface CatalogVariantRow {
   sellingPrice?: number;
   costPrice?: number;
   stockOnHand?: number;
+}
+
+export interface PaginatedCatalogResponse {
+  rows: CatalogVariantRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export function catalogRows(
+  data: CatalogVariantRow[] | PaginatedCatalogResponse
+): CatalogVariantRow[] {
+  return Array.isArray(data) ? data : data.rows;
 }
 
 export interface CreateInventoryVariantLine {
@@ -546,6 +559,35 @@ export interface UpdateReasonCodeRequest {
 
 class InventoryService {
   // Items
+  async getItemsPage(filters: {
+    page: number;
+    limit: number;
+    branchId?: string | null;
+    isActive?: boolean;
+    category?: string;
+    search?: string;
+    excludeNonStock?: boolean;
+    itemType?: ItemType;
+    sortBy?: 'name' | 'category' | 'unit' | 'industry' | 'createdAt';
+    sortDir?: 'asc' | 'desc';
+  }): Promise<{ items: InventoryItem[]; total: number; page: number; limit: number }> {
+    const params = new URLSearchParams();
+    params.append('page', String(filters.page));
+    params.append('limit', String(filters.limit));
+    if (filters.sortBy) params.append('sortBy', filters.sortBy);
+    if (filters.sortDir) params.append('sortDir', filters.sortDir);
+    if (filters.branchId) params.append('branchId', filters.branchId);
+    if (filters.isActive !== undefined) params.append('isActive', filters.isActive.toString());
+    if (filters.category) params.append('category', filters.category);
+    if (filters.search) params.append('search', filters.search);
+    if (filters.excludeNonStock !== undefined) {
+      params.append('excludeNonStock', filters.excludeNonStock.toString());
+    }
+    if (filters.itemType) params.append('itemType', filters.itemType);
+    const response = await api.get(`/inventory/items?${params.toString()}`);
+    return extractApiData(response);
+  }
+
   async getAllItems(filters?: {
     branchId?: string | null;
     isActive?: boolean;
@@ -645,7 +687,10 @@ class InventoryService {
     itemType?: ItemType;
     isMisc?: boolean;
     includeInactiveVariants?: boolean;
-  }): Promise<CatalogVariantRow[]> {
+    page?: number;
+    limit?: number;
+    productLimit?: number;
+  }): Promise<CatalogVariantRow[] | PaginatedCatalogResponse> {
     const q = new URLSearchParams();
     if (params?.search) q.append('search', params.search);
     if (params?.category) q.append('category', params.category);
@@ -656,8 +701,11 @@ class InventoryService {
     if (params?.isMisc === true) q.append('isMisc', 'true');
     if (params?.isMisc === false) q.append('isMisc', 'false');
     if (params?.includeInactiveVariants) q.append('includeInactiveVariants', 'true');
+    if (params?.page !== undefined) q.append('page', String(params.page));
+    if (params?.limit !== undefined) q.append('limit', String(params.limit));
+    if (params?.productLimit !== undefined) q.append('productLimit', String(params.productLimit));
     const response = await api.get(`/inventory/catalog?${q.toString()}`);
-    return extractApiData<CatalogVariantRow[]>(response);
+    return extractApiData<CatalogVariantRow[] | PaginatedCatalogResponse>(response);
   }
 
   async updateItem(id: string, data: UpdateInventoryItemRequest): Promise<InventoryItem> {
@@ -769,16 +817,20 @@ class InventoryService {
     return extractApiData<StockMovementResponse>(response);
   }
 
-  async getAllMovements(filters?: {
-    itemId?: string;
-    fromLocationId?: string;
-    toLocationId?: string;
-    locationId?: string; // Matches either fromLocationId or toLocationId
-    movementType?: MovementType;
-    status?: MovementStatus;
-    dateFrom?: string;
-    dateTo?: string;
-  }): Promise<StockMovementResponse[]> {
+  async getAllMovements(
+    filters?: {
+      itemId?: string;
+      fromLocationId?: string;
+      toLocationId?: string;
+      locationId?: string;
+      movementType?: MovementType;
+      status?: MovementStatus;
+      dateFrom?: string;
+      dateTo?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<PaginatedListResult<StockMovementResponse>> {
     const params = new URLSearchParams();
     if (filters?.itemId) params.append('itemId', filters.itemId);
     if (filters?.fromLocationId) params.append('fromLocationId', filters.fromLocationId);
@@ -788,8 +840,14 @@ class InventoryService {
     if (filters?.status) params.append('status', filters.status);
     if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom);
     if (filters?.dateTo) params.append('dateTo', filters.dateTo);
+    params.set('page', String(filters?.page ?? 1));
+    params.set('limit', String(filters?.limit ?? 50));
     const response = await api.get(`/inventory/movements?${params.toString()}`);
-    return extractApiData<StockMovementResponse[]>(response);
+    const data = extractApiData<PaginatedListResult<StockMovementResponse> | StockMovementResponse[]>(response);
+    if (Array.isArray(data)) {
+      return { items: data, total: data.length, page: 1, limit: data.length };
+    }
+    return data;
   }
 
   async getMovementById(id: string): Promise<StockMovementResponse> {
@@ -830,7 +888,9 @@ class InventoryService {
     dateFrom?: string;
     dateTo?: string;
     myPendingApprovals?: boolean;
-  }): Promise<MovementDocumentResponse[]> {
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedListResult<MovementDocumentResponse>> {
     const params = new URLSearchParams();
     if (filters?.movementType) params.append('movementType', filters.movementType);
     if (filters?.status) params.append('status', filters.status);
@@ -838,8 +898,16 @@ class InventoryService {
     if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom);
     if (filters?.dateTo) params.append('dateTo', filters.dateTo);
     if (filters?.myPendingApprovals) params.append('myPendingApprovals', 'true');
+    params.set('page', String(filters?.page ?? 1));
+    params.set('limit', String(filters?.limit ?? 50));
     const response = await api.get(`/inventory/movements/documents?${params.toString()}`);
-    return extractApiData<MovementDocumentResponse[]>(response);
+    const data = extractApiData<PaginatedListResult<MovementDocumentResponse> | MovementDocumentResponse[]>(
+      response
+    );
+    if (Array.isArray(data)) {
+      return { items: data, total: data.length, page: 1, limit: data.length };
+    }
+    return data;
   }
 
   // Drafts
@@ -1003,14 +1071,24 @@ class InventoryService {
     return extractApiData<SerialResponse>(response);
   }
 
-  async getSerialsByItem(itemId: string, locationId?: string, status?: string, variantId?: string): Promise<SerialResponse[]> {
+  async getSerialsByItem(
+    itemId: string,
+    locationId?: string,
+    status?: string,
+    variantId?: string,
+    page = 1,
+    limit = 100
+  ): Promise<SerialResponse[]> {
     const params = new URLSearchParams();
     if (locationId) params.append('locationId', locationId);
     if (status) params.append('status', status);
     if (variantId) params.append('variantId', variantId);
-    const query = params.toString() ? `?${params.toString()}` : '';
-    const response = await api.get(`/inventory/serials/item/${itemId}${query}`);
-    return extractApiData<SerialResponse[]>(response);
+    params.set('page', String(page));
+    params.set('limit', String(limit));
+    const response = await api.get(`/inventory/serials/item/${itemId}?${params.toString()}`);
+    const data = extractApiData<SerialResponse[] | PaginatedListResult<SerialResponse>>(response);
+    if (Array.isArray(data)) return data;
+    return data.items;
   }
 
   async updateSerialStatus(serialNumber: string, status: string): Promise<SerialResponse> {
@@ -1045,10 +1123,15 @@ class InventoryService {
   }
 
   // Expiry
-  async getExpiryAlerts(daysAhead?: number): Promise<ExpiryAlert[]> {
-    const params = daysAhead ? `?daysAhead=${daysAhead}` : '';
-    const response = await api.get(`/inventory/expiry/alerts${params}`);
-    return extractApiData<ExpiryAlert[]>(response);
+  async getExpiryAlerts(daysAhead?: number, itemId?: string): Promise<ExpiryAlert[]> {
+    const params = new URLSearchParams();
+    if (daysAhead != null) params.set('daysAhead', String(daysAhead));
+    if (itemId) params.set('itemId', itemId);
+    params.set('limit', '200');
+    const response = await api.get(`/inventory/expiry/alerts?${params.toString()}`);
+    const data = extractApiData<ExpiryAlert[] | PaginatedListResult<ExpiryAlert>>(response);
+    if (Array.isArray(data)) return data;
+    return data.items;
   }
 
   async checkExpiryStatus(batchNumber: string, itemId: string): Promise<{ status: string }> {
@@ -1821,6 +1904,13 @@ export interface MovementLineResponse {
   updatedAt: string;
 }
 
+export interface PaginatedListResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export interface MovementDocumentResponse {
   id: string;
   movementNumber: string;
@@ -1840,6 +1930,8 @@ export interface MovementDocumentResponse {
   lines: MovementLineResponse[];
   totalLines: number;
   totalQuantity: number;
+  previewVariant?: { id: string; code: string; name: string };
+  multipleVariants?: boolean;
   createdAt: string;
   updatedAt: string;
 }

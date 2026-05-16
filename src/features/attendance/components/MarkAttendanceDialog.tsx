@@ -14,24 +14,56 @@ import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import './MarkAttendanceDialog.css';
 
+export interface MarkAttendanceDialogDefaults {
+  /** YYYY-MM-DD */
+  date: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+}
+
 interface MarkAttendanceDialogProps {
   isOpen: boolean;
   onClose: () => void;
   employeeId: string;
   employeeName: string;
   currentStatus: AttendanceSessionStatus;
+  defaults?: MarkAttendanceDialogDefaults | null;
   onSuccess: () => void;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 
 // Helper function to format current date/time for datetime-local input
 const getCurrentDateTimeLocal = (): string => {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+};
+
+const dateWithCurrentClock = (dateYmd: string): string => {
+  const now = new Date();
+  return `${dateYmd}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+};
+
+/** Use row calendar date + clock from ISO — avoids UTC shifting the day in datetime-local. */
+const isoTimeOnDate = (iso: string, dateYmd: string): string => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return dateWithCurrentClock(dateYmd);
+  return `${dateYmd}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+const resolveDialogTimes = (defaults?: MarkAttendanceDialogDefaults | null) => {
+  const now = getCurrentDateTimeLocal();
+  if (!defaults?.date) {
+    return { checkIn: now, checkOut: now };
+  }
+  const dateOnly = dateWithCurrentClock(defaults.date);
+  const checkIn = defaults.checkInTime
+    ? isoTimeOnDate(defaults.checkInTime, defaults.date)
+    : dateOnly;
+  const checkOut = defaults.checkOutTime
+    ? isoTimeOnDate(defaults.checkOutTime, defaults.date)
+    : dateOnly;
+  return { checkIn, checkOut };
 };
 
 export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
@@ -40,6 +72,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
   employeeId,
   employeeName,
   currentStatus,
+  defaults = null,
   onSuccess,
 }) => {
   const [action, setAction] = useState<'check-in' | 'check-out'>(
@@ -63,15 +96,20 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { user } = authStore();
+  const isAdmin = user?.role === UserRole.ADMIN;
 
   useEffect(() => {
     if (isOpen) {
-      // Set default time to current date and time
-      const currentDateTime = getCurrentDateTimeLocal();
-      setCheckInTime(currentDateTime);
-      setCheckOutTime(currentDateTime);
+      setAction(
+        currentStatus === AttendanceSessionStatus.CHECKED_IN ? 'check-out' : 'check-in'
+      );
+      const { checkIn, checkOut } = resolveDialogTimes(defaults);
+      setCheckInTime(checkIn);
+      setCheckOutTime(checkOut);
       
-      checkNetworkStatus();
+      if (!isAdmin) {
+        checkNetworkStatus();
+      }
       // Try to get location if available
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -95,7 +133,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
       setCheckOutTime('');
       setError(null);
     }
-  }, [isOpen, currentStatus]);
+  }, [isOpen, currentStatus, defaults]);
 
   const checkNetworkStatus = async () => {
     if (!window.electronAPI) {
@@ -176,9 +214,9 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
     setError(null);
 
     try {
-      // Require network validation to pass
-      if (!networkValidation.isValid) {
-        setError('Network validation must pass before marking attendance.');
+      // Non-admin users must pass network validation (or provide override reason handled by backend)
+      if (!isAdmin && !networkValidation.isValid && !overrideReason.trim()) {
+        setError('Network validation must pass or provide an override reason.');
         setLoading(false);
         return;
       }
@@ -320,6 +358,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
             </div>
           )}
 
+          {!isAdmin && (
           <div className="form-group">
             <label>Network Status</label>
             {networkValidation.loading ? (
@@ -373,6 +412,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
               Refresh
             </button>
           </div>
+          )}
 
           {location && (
             <div className="form-group">
@@ -388,7 +428,7 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
             </div>
           )}
 
-          {!networkValidation.isValid && (
+          {!isAdmin && !networkValidation.isValid && (
             <div className="form-group">
               <label>
                 Override Reason <span className="required">*</span>
@@ -415,8 +455,8 @@ export const MarkAttendanceDialog: React.FC<MarkAttendanceDialogProps> = ({
               type="submit" 
               disabled={
                 loading || 
-                networkValidation.loading ||
-                !networkValidation.isValid
+                (!isAdmin && networkValidation.loading) ||
+                (!isAdmin && !networkValidation.isValid && !overrideReason.trim())
               }
             >
               {loading ? 'Marking...' : `Mark ${action === 'check-in' ? 'Check In' : 'Check Out'}`}

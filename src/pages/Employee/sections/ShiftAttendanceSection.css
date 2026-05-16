@@ -38,7 +38,67 @@
   gap: var(--spacing-xs);
 }
 
-.form-field.toggle-field {
+.form-field.manual-override-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.manual-override-edit-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--font-size-small, 12px);
+  color: var(--color-primary, #2563eb);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.manual-override-edit-link:hover {
+  color: var(--color-primary-dark, #1d4ed8);
+}
+
+.manual-override-modal-hint {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-small, 13px);
+  color: var(--color-text-secondary, #64748b);
+}
+
+.manual-override-user-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 8px;
+}
+
+.manual-override-user-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-small, 13px);
+  cursor: pointer;
+}
+
+.manual-override-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.manual-override-modal-loading,
+.manual-override-modal-empty {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-small, 13px);
+  color: var(--color-text-secondary, #64748b);
+}
+
+.toggle-field {
   flex-direction: row;
   justify-content: space-between;
   align-items: center;

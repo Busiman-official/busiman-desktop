@@ -1,0 +1,291 @@
+.employee-attendance-details {
+  margin: 0 auto;
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xl);
+}
+
+.ead-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.ead-header__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.ead-back {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  padding: 0;
+}
+
+.ead-back:hover {
+  text-decoration: underline;
+}
+
+.ead-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.ead-profile-link {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  text-decoration: none;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  background: var(--color-bg-primary);
+}
+
+.ead-profile-link:hover {
+  background: var(--color-bg-secondary);
+}
+
+.ead-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  background: var(--color-bg-primary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+}
+
+.ead-hero__avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--font-weight-semibold);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.ead-hero__info {
+  flex: 1;
+  min-width: 200px;
+}
+
+.ead-hero__name {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 22px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ead-hero__meta {
+  margin: 0 0 var(--spacing-xs);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.ead-hero__contact {
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.ead-status {
+  display: inline-block;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ead-status--in {
+  background: #e3fcef;
+  color: #006644;
+  border: 1px solid #abf5d1;
+}
+
+.ead-status--out {
+  background: #deebff;
+  color: #0747a6;
+  border: 1px solid #b3d4ff;
+}
+
+.ead-status--none {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+button.ead-status--clickable {
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+button.ead-status--clickable:hover {
+  transform: scale(1.04);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+button.ead-status--clickable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.ead-stat-card__value--status .ead-status {
+  font-size: var(--font-size-base);
+}
+
+.ead-section {
+  background: var(--color-bg-primary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-xl);
+}
+
+.ead-section--settings {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.ead-section__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ead-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.ead-today-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-lg);
+}
+
+.ead-stat-card {
+  padding: var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border-radius: var(--border-radius);
+  border: var(--border-width) solid var(--color-border-light);
+}
+
+.ead-stat-card__label {
+  display: block;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.ead-stat-card__value {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.ead-shift-hint {
+  margin: var(--spacing-md) 0 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.ead-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.ead-history-filters__sep {
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.ead-history-summary {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.ead-empty,
+.ead-muted {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+
+.ead-history-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.ead-table-wrap {
+  overflow-x: auto;
+}
+
+.ead-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-base);
+}
+
+.ead-table thead {
+  background: var(--color-bg-tertiary);
+}
+
+.ead-table th {
+  text-align: left;
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.ead-table td {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: var(--border-width) solid var(--color-border-light);
+  color: var(--color-text-primary);
+}
+
+.ead-table tbody tr:hover {
+  background: var(--color-bg-secondary);
+}

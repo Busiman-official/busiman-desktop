@@ -39,7 +39,7 @@
   padding: 0;
   cursor: pointer;
   transition: opacity var(--transition-fast);
-  height: 28px;
+  height: 33px;
 }
 
 .navbar-logo:hover {
@@ -49,8 +49,8 @@
 .navbar-logo-img {
   height: 100%;
   width: auto;
-  object-fit: contain;
   display: block;
+  flex-shrink: 0;
 }
 
 .navbar-logo:focus {

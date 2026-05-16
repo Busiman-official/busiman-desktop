@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Input, Select, Textarea } from '@/shared/components/ui';
 import {
   inventoryService,
+  catalogRows,
   type CatalogVariantRow,
   type Location,
   LocationType,
@@ -190,9 +191,15 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
     }
     let cancelled = false;
     inventoryService
-      .getCatalog({ search: q, branchId: branchId || undefined, isActive: true })
-      .then((rows) => {
-        if (!cancelled) setSuggestions(rows.slice(0, 8));
+      .getCatalog({
+        search: q,
+        branchId: branchId || undefined,
+        isActive: true,
+        page: 1,
+        limit: 8,
+      })
+      .then((data) => {
+        if (!cancelled) setSuggestions(catalogRows(data));
       })
       .catch(() => {
         if (!cancelled) setSuggestions([]);
@@ -380,11 +387,15 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
             discountPercent: discP,
           });
         } else if (sku) {
-          const rows = await inventoryService.getCatalog({
-            search: sku,
-            branchId: branchId || undefined,
-            isActive: true,
-          });
+          const rows = catalogRows(
+            await inventoryService.getCatalog({
+              search: sku,
+              branchId: branchId || undefined,
+              isActive: true,
+              page: 1,
+              limit: 20,
+            })
+          );
           const match = rows.find((x) => x.sku.toLowerCase() === sku.toLowerCase()) || rows[0];
           if (!match) {
             errors.push(`Row ${r + 1}: no catalog match for SKU "${sku}"`);

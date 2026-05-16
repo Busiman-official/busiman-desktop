@@ -1,0 +1,52 @@
+.remote-attendance-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.remote-attendance-modal-intro {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary, #555);
+  line-height: 1.45;
+}
+
+.remote-attendance-modal-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.remote-attendance-modal-label .required {
+  color: #c0392b;
+}
+
+.remote-attendance-modal-textarea,
+.remote-attendance-modal-input {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+}
+
+.remote-attendance-modal-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+  align-self: flex-end;
+}
+
+.remote-attendance-modal-error {
+  color: #c0392b;
+  font-size: 0.875rem;
+}
+
+.remote-attendance-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}

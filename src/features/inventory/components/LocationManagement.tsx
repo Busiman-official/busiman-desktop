@@ -179,8 +179,8 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       
       setLocations(data);
       
-      // Load capacity usage for all locations in parallel (for List mode)
-      if (workspaceMode === 'list') {
+      // Load capacity for list mode (cap fan-out for large location trees)
+      if (workspaceMode === 'list' && data.length <= 40) {
         const capacityPromises = data.map(async (loc) => {
           try {
             const usage = await inventoryService.getLocationCapacityUsage(loc.id);
@@ -221,17 +221,17 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       setLocations(data);
       setLoadedChildren(prev => ({ ...prev, root: data }));
       
-      // Load child counts for roots
-      const counts: Record<string, number> = {};
-      for (const loc of data) {
-        try {
-          const countResult = await inventoryService.getLocationChildCount(loc.id);
-          counts[loc.id] = countResult.count;
-        } catch (err) {
-          counts[loc.id] = 0;
-        }
-      }
-      setChildCounts(counts);
+      const countPairs = await Promise.all(
+        data.map(async (loc) => {
+          try {
+            const countResult = await inventoryService.getLocationChildCount(loc.id);
+            return [loc.id, countResult.count] as const;
+          } catch {
+            return [loc.id, 0] as const;
+          }
+        })
+      );
+      setChildCounts(Object.fromEntries(countPairs));
     } catch (err: any) {
       const message = extractErrorMessage(err, 'Failed to load root locations');
       setError(message);
@@ -254,17 +254,17 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
       const children = await inventoryService.getAllLocations({ parentLocationId: parentId });
       setLoadedChildren(prev => ({ ...prev, [parentId]: children }));
       
-      // Load child counts
-      const counts: Record<string, number> = {};
-      for (const child of children) {
-        try {
-          const countResult = await inventoryService.getLocationChildCount(child.id);
-          counts[child.id] = countResult.count;
-        } catch (err) {
-          counts[child.id] = 0;
-        }
-      }
-      setChildCounts(prev => ({ ...prev, ...counts }));
+      const countPairs = await Promise.all(
+        children.map(async (child) => {
+          try {
+            const countResult = await inventoryService.getLocationChildCount(child.id);
+            return [child.id, countResult.count] as const;
+          } catch {
+            return [child.id, 0] as const;
+          }
+        })
+      );
+      setChildCounts((prev) => ({ ...prev, ...Object.fromEntries(countPairs) }));
     } catch (err: any) {
       logger.error('[LocationManagement] Failed to load children', err);
       // Remove from ref on error so it can be retried
@@ -375,8 +375,8 @@ export const LocationManagement: React.FC<LocationManagementProps> = ({ location
         filters.itemId = movementFilters.productId;
       }
       
-      const movements = await inventoryService.getAllMovements(filters);
-      setMovementHistory(movements);
+      const result = await inventoryService.getAllMovements({ ...filters, page: 1, limit: 100 });
+      setMovementHistory(result.items);
     } catch (err: any) {
       logger.error('[LocationManagement] Failed to load movement history', err);
     } finally {

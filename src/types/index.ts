@@ -127,6 +127,44 @@ export enum AttendanceSource {
   DESKTOP = 'desktop',
 }
 
+export enum AttendanceApprovalStatus {
+  NONE = 'none',
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  CANCELLED = 'cancelled',
+}
+
+export enum AttendanceMarkingFrom {
+  HOME = 'HOME',
+  CLIENT_SITE = 'CLIENT_SITE',
+  TRAVEL = 'TRAVEL',
+  OTHER = 'OTHER',
+}
+
+export type AttendanceApprovalLeg = 'check_in' | 'check_out';
+
+export interface RemoteJustification {
+  remoteNote: string;
+  markingFrom: AttendanceMarkingFrom;
+  markingFromOther?: string;
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    address?: string;
+  };
+}
+
+export interface RemoteApprovalLegResponse {
+  status: AttendanceApprovalStatus;
+  networkVerified: boolean;
+  remoteNote?: string;
+  markingFrom?: AttendanceMarkingFrom;
+  markingFromOther?: string;
+  submittedAt?: string;
+  rejectReason?: string;
+}
+
 // Attendance interfaces
 export interface AttendanceRecord {
   id: string;
@@ -139,6 +177,10 @@ export interface AttendanceRecord {
   totalDuration?: number;
   createdAt: string;
   updatedAt: string;
+  checkInApproval?: RemoteApprovalLegResponse;
+  checkOutApproval?: RemoteApprovalLegResponse;
+  isOfficiallyPresent?: boolean;
+  isDurationOfficial?: boolean;
 }
 
 export interface AttendanceStatusResponse {
@@ -146,7 +188,9 @@ export interface AttendanceStatusResponse {
   today?: AttendanceRecord;
   canCheckIn: boolean;
   canCheckOut: boolean;
-  allowMultipleCheckIns?: boolean; // Whether multiple check-ins per day are allowed for the shift
+  allowMultipleCheckIns?: boolean;
+  pendingCheckIn?: boolean;
+  pendingCheckOut?: boolean;
 }
 
 export interface CheckInRequest {
@@ -164,6 +208,7 @@ export interface CheckInRequest {
     macAddress: string;
   };
   systemFingerprint?: string;
+  remoteJustification?: RemoteJustification;
 }
 
 export interface CheckOutRequest {
@@ -181,39 +226,54 @@ export interface CheckOutRequest {
     macAddress: string;
   };
   systemFingerprint?: string;
-  checkOutTime?: string; // ISO string - optional, for recovery check-outs at specific time
+  checkOutTime?: string;
+  remoteJustification?: RemoteJustification;
+}
+
+export interface PendingApprovalRow {
+  attendanceId: string;
+  employeeId: string;
+  employeeName: string;
+  department?: string;
+  date: string;
+  leg: AttendanceApprovalLeg;
+  checkInTime?: string;
+  checkOutTime?: string;
+  remoteNote?: string;
+  markingFrom?: AttendanceMarkingFrom;
+  markingFromOther?: string;
+  submittedAt?: string;
+  status: AttendanceSessionStatus;
+}
+
+export interface AttendanceDashboardRow {
+  employeeId: string;
+  employeeName: string;
+  department?: string;
+  role?: string;
+  status: AttendanceSessionStatus;
+  checkInTime?: string;
+  checkOutTime?: string;
+  totalDuration?: number;
+  allowManualAttendanceOverride?: boolean;
+  manualAttendanceOverrideAllowedUserIds?: string[];
+  checkInApprovalStatus?: AttendanceApprovalStatus;
+  checkOutApprovalStatus?: AttendanceApprovalStatus;
+  isOfficiallyPresent?: boolean;
 }
 
 export interface AttendanceDashboardData {
-  checkedIn: Array<{
-    employeeId: string;
-    employeeName: string;
-    department?: string;
-    role?: string;
-    checkInTime: string;
-    status: AttendanceSessionStatus;
-  }>;
-  checkedOut: Array<{
-    employeeId: string;
-    employeeName: string;
-    department?: string;
-    role?: string;
-    checkInTime: string;
-    checkOutTime: string;
-    totalDuration: number;
-    status: AttendanceSessionStatus;
-  }>;
-  notStarted: Array<{
-    employeeId: string;
-    employeeName: string;
-    department?: string;
-    role?: string;
-  }>;
+  rows: AttendanceDashboardRow[];
+  total: number;
+  page: number;
+  limit: number;
+  departments: string[];
   summary: {
     totalEmployees: number;
     checkedInCount: number;
     checkedOutCount: number;
     notStartedCount: number;
+    pendingCount?: number;
   };
 }
 
@@ -314,6 +374,7 @@ export interface EmployeeDetails {
   shiftEffectiveTo?: string;
   attendanceMode?: AttendanceMode;
   allowManualAttendanceOverride?: boolean;
+  manualAttendanceOverrideAllowedUserIds?: string[];
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
   allowCheckoutWithoutWifi?: boolean;
@@ -369,6 +430,7 @@ export interface UpdateEmployeeDetailsRequest {
   shiftEffectiveTo?: string;
   attendanceMode?: AttendanceMode;
   allowManualAttendanceOverride?: boolean;
+  manualAttendanceOverrideAllowedUserIds?: string[];
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
   allowCheckoutWithoutWifi?: boolean;

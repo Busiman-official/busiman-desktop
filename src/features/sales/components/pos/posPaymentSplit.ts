@@ -98,8 +98,9 @@ export function buildCheckoutPayments(
   nonCashInputs: Record<string, string>,
   detailsByMethod: Record<string, PosPaymentMethodDetails | undefined>,
 ): PosCheckoutPaymentLine[] {
+  const orderTotal = roundMoney(total);
   const nonCash = nonCashAmountsFromInputs(payOpts, nonCashInputs);
-  const cashAmount = computeCashRemainder(total, nonCash);
+  const cashAmount = computeCashRemainder(orderTotal, nonCash);
   const lines: PosCheckoutPaymentLine[] = [];
   for (const p of payOpts) {
     const amount = isCashMethodCode(p.value) ? cashAmount : nonCash[p.value] ?? 0;
@@ -108,6 +109,17 @@ export function buildCheckoutPayments(
     lines.push({
       methodCode: p.value,
       amount,
+      ...(details && Object.keys(details).length > 0 ? { details } : {}),
+    });
+  }
+  // No cash method in settings (or all lines zero): implicit full tender on primary method.
+  if (!lines.length && orderTotal > 0) {
+    const fallback =
+      payOpts.find((p) => isCashMethodCode(p.value)) ?? payOpts[0] ?? { value: 'cash', label: 'Cash' };
+    const details = detailsByMethod[fallback.value];
+    lines.push({
+      methodCode: fallback.value,
+      amount: orderTotal,
       ...(details && Object.keys(details).length > 0 ? { details } : {}),
     });
   }

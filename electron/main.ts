@@ -67,14 +67,14 @@ function getIconPath(): string | undefined {
   // Try multiple possible locations
   const possiblePaths = [
     // Development paths
-    path.join(__dirname, '../../public/assets/logo.png'),
-    path.join(process.cwd(), 'public/assets/logo.png'),
+    path.join(__dirname, '../../public/assets/logo.ico'),
+    path.join(process.cwd(), 'public/assets/logo.ico'),
     // Production paths
-    path.join(__dirname, '../assets/logo.png'),
-    path.join(__dirname, '../../assets/logo.png'),
+    path.join(__dirname, '../assets/logo.ico'),
+    path.join(__dirname, '../../assets/logo.ico'),
     // Packaged app paths
-    path.join(process.resourcesPath, 'assets/logo.png'),
-    path.join(app.getAppPath(), 'assets/logo.png'),
+    path.join(process.resourcesPath, 'assets/logo.ico'),
+    path.join(app.getAppPath(), 'assets/logo.ico'),
   ];
 
   // Find the first path that exists

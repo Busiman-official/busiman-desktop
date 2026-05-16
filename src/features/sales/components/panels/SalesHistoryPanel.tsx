@@ -221,16 +221,28 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const historyPageSize = 50;
+
   const load = useCallback(() => {
     if (!branchId) return;
     setLoading(true);
     setError(null);
     salesService
-      .listHistory(branchId)
-      .then((d) => setRows(Array.isArray(d) ? d : []))
+      .listHistory(branchId, undefined, historyPage, historyPageSize)
+      .then((d) => {
+        if (d && typeof d === 'object' && !Array.isArray(d) && 'items' in d) {
+          setRows((d as { items: Record<string, unknown>[] }).items);
+          setHistoryTotal((d as { total: number }).total ?? 0);
+        } else {
+          setRows(Array.isArray(d) ? d : []);
+          setHistoryTotal(Array.isArray(d) ? d.length : 0);
+        }
+      })
       .catch((e: Error) => setError(e.message || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [branchId]);
+  }, [branchId, historyPage]);
 
   useEffect(() => {
     load();
@@ -248,33 +260,6 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     }
     return m;
   }, [customers]);
-
-  const stats = useMemo(() => {
-    const now = new Date();
-    const t0 = startOfDay(now).getTime();
-    let totalOrders = rows.length;
-    let revenueToday = 0;
-    let sumCompleted = 0;
-    let nCompleted = 0;
-    let pendingCount = 0;
-    let pendingUnpaid = 0;
-    for (const r of rows) {
-      const st = String(r.status || '');
-      const total = Number(r.total ?? 0);
-      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
-      if (st === 'completed') {
-        sumCompleted += total;
-        nCompleted += 1;
-        if (ts >= t0) revenueToday += total;
-      }
-      if (isDraftBucketStatus(st)) {
-        pendingCount += 1;
-        pendingUnpaid += total;
-      }
-    }
-    const avgOrder = nCompleted > 0 ? sumCompleted / nCompleted : 0;
-    return { totalOrders, revenueToday, avgOrder, pendingCount, pendingUnpaid };
-  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = deferredSearch.trim().toLowerCase();
@@ -308,6 +293,48 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     });
     return list;
   }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter, dateDesc, customerFallback]);
+
+  const hasActiveFilters = useMemo(
+    () =>
+      deferredSearch.trim() !== '' ||
+      statusFilter !== 'all' ||
+      modeFilter !== 'all' ||
+      dateFilter !== 'any' ||
+      saleDateYmd.trim() !== '' ||
+      amountFilter !== 'any' ||
+      paymentFilter !== 'all',
+    [deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter]
+  );
+
+  const stats = useMemo(() => {
+    const t0 = startOfDay(new Date()).getTime();
+    const revenueTodayOnly =
+      !hasActiveFilters ||
+      (dateFilter === 'today' && !saleDateYmd.trim() && statusFilter === 'completed');
+    let totalOrders = 0;
+    let revenueSum = 0;
+    let sumCompleted = 0;
+    let nCompleted = 0;
+    let pendingCount = 0;
+    let pendingUnpaid = 0;
+    for (const r of filtered) {
+      totalOrders += 1;
+      const st = String(r.status || '');
+      const total = Number(r.total ?? 0);
+      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
+      if (st === 'completed') {
+        sumCompleted += total;
+        nCompleted += 1;
+        if (!revenueTodayOnly || ts >= t0) revenueSum += total;
+      }
+      if (isDraftBucketStatus(st)) {
+        pendingCount += 1;
+        pendingUnpaid += total;
+      }
+    }
+    const avgOrder = nCompleted > 0 ? sumCompleted / nCompleted : 0;
+    return { totalOrders, revenueSum, avgOrder, pendingCount, pendingUnpaid, revenueTodayOnly };
+  }, [filtered, hasActiveFilters, dateFilter, saleDateYmd, statusFilter]);
 
   const filteredIds = useMemo(
     () =>
@@ -814,22 +841,33 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           <button type="button" className="sales-history-stat sales-history-stat--blue" onClick={statCardHandlers.total}>
             <div className="sales-history-stat__label">Total orders</div>
             <div className="sales-history-stat__value">{stats.totalOrders}</div>
-            <div className="sales-history-stat__ctx">In this branch (loaded list)</div>
+            <div className="sales-history-stat__ctx">
+              {hasActiveFilters ? 'Matching current filters' : 'In this branch (loaded list)'}
+            </div>
           </button>
           <button type="button" className="sales-history-stat sales-history-stat--green" onClick={statCardHandlers.revenue}>
-            <div className="sales-history-stat__label">Revenue today</div>
-            <div className="sales-history-stat__value">₹{stats.revenueToday.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-            <div className="sales-history-stat__ctx">Completed orders · today (by sale date)</div>
+            <div className="sales-history-stat__label">
+              {stats.revenueTodayOnly ? 'Revenue today' : 'Revenue'}
+            </div>
+            <div className="sales-history-stat__value">₹{stats.revenueSum.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+            <div className="sales-history-stat__ctx">
+              {stats.revenueTodayOnly
+                ? 'Completed orders · today (by sale date)'
+                : 'Completed orders in current view'}
+            </div>
           </button>
           <button type="button" className="sales-history-stat" onClick={statCardHandlers.avg}>
             <div className="sales-history-stat__label">Average order value</div>
             <div className="sales-history-stat__value">₹{stats.avgOrder.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-            <div className="sales-history-stat__ctx">Among completed orders</div>
+            <div className="sales-history-stat__ctx">
+              {hasActiveFilters ? 'Among completed · filtered' : 'Among completed orders'}
+            </div>
           </button>
           <button type="button" className="sales-history-stat sales-history-stat--amber" onClick={statCardHandlers.pending}>
             <div className="sales-history-stat__label">Pending / draft</div>
             <div className="sales-history-stat__value">{stats.pendingCount}</div>
             <div className="sales-history-stat__ctx">
+              {hasActiveFilters ? 'In current view · ' : ''}
               Unpaid proxy ₹{stats.pendingUnpaid.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
           </button>
@@ -1212,3 +1250,4 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     </div>
   );
 });
+

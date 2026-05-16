@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   inventoryService,
+  catalogRows,
+  ItemType,
+  type CatalogVariantRow,
   type InventoryItem,
   type InventoryVariant,
 } from '@/services/inventory.service';
@@ -47,6 +50,57 @@ type GridRowMulti = {
 
 type GridRow = GridRowSingle | GridRowMulti;
 
+function catalogRowToVariant(row: CatalogVariantRow): InventoryVariant {
+  return {
+    id: row.variantId,
+    itemId: row.productId,
+    sku: row.sku,
+    code: row.sku,
+    name: row.variantName,
+    isDefault: row.isDefault,
+    isActive: row.variantIsActive,
+    sellingPriceOverride: row.sellingPrice,
+    costPriceOverride: row.costPrice,
+    createdAt: '',
+    updatedAt: '',
+  };
+}
+
+function catalogRowsToItem(rows: CatalogVariantRow[]): InventoryItem {
+  const r = rows[0];
+  return {
+    id: r.productId,
+    name: r.productName,
+    category: r.category,
+    hasVariants: rows.length > 1,
+    isActive: r.isActive,
+    isMisc: false,
+    itemType: ItemType.STOCK,
+    branchId: '',
+    createdBy: { id: '', name: '', email: '' },
+    updatedBy: { id: '', name: '', email: '' },
+    createdAt: '',
+    updatedAt: '',
+  };
+}
+
+/** Preserve catalog row order (matches server item sort, then variant sort). */
+function groupCatalogByProduct(rows: CatalogVariantRow[]): {
+  productIds: string[];
+  byProduct: Map<string, CatalogVariantRow[]>;
+} {
+  const productIds: string[] = [];
+  const byProduct = new Map<string, CatalogVariantRow[]>();
+  for (const row of rows) {
+    if (!byProduct.has(row.productId)) {
+      productIds.push(row.productId);
+      byProduct.set(row.productId, []);
+    }
+    byProduct.get(row.productId)!.push(row);
+  }
+  return { productIds, byProduct };
+}
+
 /** Sum available qty per item for the POS location (one HTTP call vs N× getStockByItem). */
 async function stockTotalsByItemForLocation(locationId: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
@@ -77,7 +131,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
   onInStockOnlyChange: _onInStockOnlyChange,
   onActivateProduct,
 }) => {
-  const resolvePrice = usePriceResolver(branchId);
+  const { resolvePricesBatch } = usePriceResolver(branchId);
   const [rows, setRows] = useState<GridRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,11 +142,6 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     rowsRef.current = rows;
   }, [rows]);
 
-  const variantsCacheRef = useRef<Map<string, InventoryVariant[]>>(new Map());
-  useEffect(() => {
-    variantsCacheRef.current.clear();
-  }, [branchId, salesPointId, categoryChip, inStockOnly]);
-
   const refreshTokenRef = useRef(refreshToken);
   refreshTokenRef.current = refreshToken;
 
@@ -101,20 +150,42 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
   const gridStructureKey = `${branchId}|${salesPointId}|${categoryChip}|${inStockOnly}`;
   const prevStructureKeyRef = useRef<string | null>(null);
 
-  const getVariantsCached = async (itemId: string): Promise<InventoryVariant[]> => {
-    const cache = variantsCacheRef.current;
-    const hit = cache.get(itemId);
-    if (hit) return hit;
-    const variants = await inventoryService.getVariantsByItem(itemId);
-    cache.set(itemId, variants);
-    return variants;
-  };
-
   const applyInStockFilter = useCallback((list: GridRow[]): GridRow[] => {
     let out = list;
     if (inStockOnly) out = out.filter((r) => r.stock > 0);
     return out.slice(0, 32);
   }, [inStockOnly]);
+
+  const priceOpts = useCallback(
+    () => ({
+      salesPointId: salesPointId!,
+      customerId: customerId || undefined,
+    }),
+    [salesPointId, customerId]
+  );
+
+  const applyPricesToRows = useCallback(
+    async (draft: GridRow[], stockMap: Map<string, number>): Promise<GridRow[]> => {
+      const variantIds = draft.flatMap((row) =>
+        row.kind === 'single' ? [row.variant.id] : row.variants.map((v) => v.id)
+      );
+      const priceMap = await resolvePricesBatch(variantIds, priceOpts());
+      return draft.map((row): GridRow => {
+        const stock = stockMap.get(row.item.id) ?? 0;
+        if (row.kind === 'single') {
+          return { ...row, stock, price: priceMap[row.variant.id]?.price ?? row.price };
+        }
+        const nums = row.variants.map((v) => priceMap[v.id]?.price ?? 0);
+        return {
+          ...row,
+          stock,
+          minPrice: Math.min(...nums),
+          maxPrice: Math.max(...nums),
+        };
+      });
+    },
+    [priceOpts, resolvePricesBatch]
+  );
 
   const softRefresh = useCallback(async () => {
     if (!salesPointId) return;
@@ -124,35 +195,12 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     setRefreshing(true);
     try {
       const stockMap = locationId ? await stockTotalsByItemForLocation(locationId) : new Map();
-      const updated = await Promise.all(
-        prev.map(async (row): Promise<GridRow> => {
-          const stock = stockMap.get(row.item.id) ?? 0;
-          if (row.kind === 'single') {
-            const pr = await resolvePrice(row.variant.id, {
-              salesPointId,
-              customerId: customerId || undefined,
-            });
-            return { ...row, stock, price: pr.price };
-          }
-          const priceResults = await Promise.all(
-            row.variants.map((v) =>
-              resolvePrice(v.id, { salesPointId, customerId: customerId || undefined })
-            )
-          );
-          const nums = priceResults.map((p) => p.price);
-          return {
-            ...row,
-            stock,
-            minPrice: Math.min(...nums),
-            maxPrice: Math.max(...nums),
-          };
-        })
-      );
+      const updated = await applyPricesToRows(prev, stockMap);
       setRows(applyInStockFilter(updated));
     } finally {
       setRefreshing(false);
     }
-  }, [applyInStockFilter, customerId, locationId, resolvePrice, salesPointId]);
+  }, [applyInStockFilter, applyPricesToRows, locationId, salesPointId]);
 
   const loadFullGrid = useCallback(async () => {
     if (!salesPointId) {
@@ -175,67 +223,58 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     else setRefreshing(true);
 
     try {
-      const [items, stockMap] = await Promise.all([
-        inventoryService.getAllItems({
+      const [catalogData, stockMap] = await Promise.all([
+        inventoryService.getCatalog({
           branchId,
           isActive: true,
           excludeNonStock: true,
+          productLimit: 48,
           ...(categoryChip ? { category: categoryChip } : {}),
         }),
         locationId ? stockTotalsByItemForLocation(locationId) : Promise.resolve(new Map<string, number>()),
       ]);
 
-      const stockProducts = items.filter((item) => item.isMisc !== true);
-      const slice = stockProducts.slice(0, 40);
+      const catalog = catalogRows(catalogData);
+      const { productIds, byProduct } = groupCatalogByProduct(catalog);
+      const slice = productIds;
 
-      const built = await Promise.all(
-        slice.map(async (item): Promise<GridRow | null> => {
-          try {
-            const variants = await getVariantsCached(item.id);
-            const useVariants = variants.filter((v) => v.isActive !== false);
-            const list = useVariants.length > 0 ? useVariants : variants;
-            if (list.length === 0) return null;
+      const draft: GridRow[] = [];
+      for (const productId of slice) {
+        const catRows = byProduct.get(productId);
+        if (!catRows?.length) continue;
 
-            const stock = stockMap.get(item.id) ?? 0;
+        const variants = catRows.map(catalogRowToVariant);
+        const useVariants = variants.filter((v) => v.isActive !== false);
+        const list = useVariants.length > 0 ? useVariants : variants;
+        if (list.length === 0) continue;
 
-            if (list.length === 1) {
-              const v = list[0];
-              const pr = await resolvePrice(v.id, {
-                salesPointId,
-                customerId: customerId || undefined,
-              });
-              return {
-                kind: 'single',
-                item,
-                variant: v,
-                price: pr.price,
-                stock,
-                label: `${item.name} - ${v.name}`,
-              };
-            }
+        const item = catalogRowsToItem(catRows);
+        const stock = stockMap.get(productId) ?? 0;
 
-            const priceResults = await Promise.all(
-              list.map((v) =>
-                resolvePrice(v.id, { salesPointId, customerId: customerId || undefined })
-              )
-            );
-            const nums = priceResults.map((p) => p.price);
-            return {
-              kind: 'multi',
-              item,
-              variants: list,
-              minPrice: Math.min(...nums),
-              maxPrice: Math.max(...nums),
-              stock,
-            };
-          } catch {
-            return null;
-          }
-        })
-      );
+        if (list.length === 1) {
+          const v = list[0];
+          draft.push({
+            kind: 'single',
+            item,
+            variant: v,
+            price: 0,
+            stock,
+            label: `${item.name} - ${v.name}`,
+          });
+        } else {
+          draft.push({
+            kind: 'multi',
+            item,
+            variants: list,
+            minPrice: 0,
+            maxPrice: 0,
+            stock,
+          });
+        }
+      }
 
-      let list = built.filter((x): x is GridRow => x !== null);
-      setRows(applyInStockFilter(list));
+      const priced = await applyPricesToRows(draft, stockMap);
+      setRows(applyInStockFilter(priced));
     } catch {
       setRows([]);
     } finally {
@@ -243,7 +282,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
       else setRefreshing(false);
       lastHandledRefreshRef.current = refreshTokenRef.current;
     }
-  }, [applyInStockFilter, branchId, categoryChip, customerId, gridStructureKey, locationId, resolvePrice, salesPointId]);
+  }, [applyInStockFilter, applyPricesToRows, branchId, categoryChip, customerId, gridStructureKey, locationId, salesPointId]);
 
   useEffect(() => {
     void loadFullGrid();

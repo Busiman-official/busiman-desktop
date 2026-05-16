@@ -1,27 +1,5 @@
-/**
- * Attendance Page Styles - Minimal, compact design
- */
+/** Attendance tab panel root (scroll handled by AttendanceLayout). */
 
 .attendance-page {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.attendance-page-header {
-  margin-bottom: var(--spacing-lg);
-  padding-bottom: var(--spacing-md);
-  border-bottom: var(--border-width) solid var(--color-border-light);
-}
-
-.attendance-page-header h1 {
-  margin: 0 0 var(--spacing-xs) 0;
-  font-size: var(--font-size-large);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.page-subtitle {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-base);
+  width: 100%;
 }

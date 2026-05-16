@@ -1,0 +1,76 @@
+.attendance-approvals-panel {
+  padding: 1rem 0;
+}
+
+.attendance-approvals-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.attendance-approvals-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.attendance-approvals-refreshing {
+  font-size: 0.875rem;
+  color: var(--text-secondary, #666);
+}
+
+.attendance-approvals-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.attendance-approvals-empty {
+  color: var(--text-secondary, #666);
+  padding: 2rem;
+  text-align: center;
+}
+
+.attendance-approvals-error {
+  color: #c0392b;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.attendance-approvals-table-wrap {
+  overflow-x: auto;
+}
+
+.attendance-approvals-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.attendance-approvals-table th,
+.attendance-approvals-table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #eee);
+}
+
+.attendance-approvals-emp {
+  font-weight: 500;
+}
+
+.attendance-approvals-dept {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted, #888);
+}
+
+.attendance-approvals-note {
+  max-width: 220px;
+  white-space: pre-wrap;
+}
+
+.attendance-approvals-actions {
+  display: flex;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
