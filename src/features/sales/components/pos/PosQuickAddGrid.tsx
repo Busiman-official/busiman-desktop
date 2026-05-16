@@ -169,13 +169,23 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
       const variantIds = draft.flatMap((row) =>
         row.kind === 'single' ? [row.variant.id] : row.variants.map((v) => v.id)
       );
-      const priceMap = await resolvePricesBatch(variantIds, priceOpts());
+      let priceMap: Record<string, { price: number; currency: string; priceListId: string }> = {};
+      if (variantIds.length > 0) {
+        try {
+          priceMap = await resolvePricesBatch(variantIds, priceOpts());
+        } catch {
+          /* show grid with catalog fallback prices */
+        }
+      }
       return draft.map((row): GridRow => {
         const stock = stockMap.get(row.item.id) ?? 0;
         if (row.kind === 'single') {
-          return { ...row, stock, price: priceMap[row.variant.id]?.price ?? row.price };
+          const fallback = row.variant.sellingPriceOverride ?? row.price;
+          return { ...row, stock, price: priceMap[row.variant.id]?.price ?? fallback };
         }
-        const nums = row.variants.map((v) => priceMap[v.id]?.price ?? 0);
+        const nums = row.variants.map(
+          (v) => priceMap[v.id]?.price ?? v.sellingPriceOverride ?? 0
+        );
         return {
           ...row,
           stock,
@@ -276,7 +286,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
       const priced = await applyPricesToRows(draft, stockMap);
       setRows(applyInStockFilter(priced));
     } catch {
-      setRows([]);
+      /* catalog/stock failed — keep prior rows if any */
     } finally {
       if (blocking) setLoading(false);
       else setRefreshing(false);

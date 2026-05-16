@@ -226,16 +226,25 @@ export const salesService = {
     variantIds: string[],
     opts?: { customerId?: string; salesPointId?: string; branchId?: string | null }
   ): Promise<Record<string, { price: number; currency: string; priceListId: string }>> {
-    const response = await api.post(
-      '/sales/pricing/resolve-batch',
-      {
-        variantIds,
-        ...(opts?.customerId ? { customerId: opts.customerId } : {}),
-        ...(opts?.salesPointId ? { salesPointId: opts.salesPointId } : {}),
-      },
-      { params: branchParams(opts?.branchId) }
-    );
-    return extractApiData(response);
+    const unique = [...new Set(variantIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (unique.length === 0) return {};
+
+    const merged: Record<string, { price: number; currency: string; priceListId: string }> = {};
+    const batchSize = 120;
+    for (let i = 0; i < unique.length; i += batchSize) {
+      const chunk = unique.slice(i, i + batchSize);
+      const response = await api.post(
+        '/sales/pricing/resolve-batch',
+        {
+          variantIds: chunk,
+          ...(opts?.customerId ? { customerId: opts.customerId } : {}),
+          ...(opts?.salesPointId ? { salesPointId: opts.salesPointId } : {}),
+        },
+        { params: branchParams(opts?.branchId) }
+      );
+      Object.assign(merged, extractApiData(response));
+    }
+    return merged;
   },
 
   async listCustomers(
