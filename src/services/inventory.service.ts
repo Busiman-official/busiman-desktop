@@ -317,6 +317,9 @@ export interface CatalogVariantRow {
   productName: string;
   category?: string;
   industryType?: IndustryType;
+  productType?: ProductType;
+  isMisc?: boolean;
+  itemType?: ItemType;
   isActive: boolean;
   variantIsActive: boolean;
   isDefault: boolean;

@@ -1381,7 +1381,9 @@ export const CustomerDetailsPage: React.FC = () => {
                             )}
                             {g.isDue ? (
                               g.paymentPending && g.status === 'completed' ? (
-                                <Badge variant="warning">On account</Badge>
+                                <Badge variant="warning">
+                                  {g.posPayments.length > 0 ? 'Partially paid' : 'On account'}
+                                </Badge>
                               ) : (
                                 <Badge variant="warning">Due</Badge>
                               )
@@ -1432,9 +1434,9 @@ export const CustomerDetailsPage: React.FC = () => {
                             </Button>
                           </div>
                         </div>
-                        {g.posPayments.length > 0 && g.isCompleted ? (
+                        {g.posPayments.length > 0 ? (
                           <div className="cd-pos-payments-readonly">
-                            <p className="cd-payment-ledger-sub">POS tender at checkout</p>
+                            <p className="cd-payment-ledger-sub">Collected at checkout / settlement</p>
                             <OrderPaymentsBreakdown payments={g.posPayments} compact />
                           </div>
                         ) : null}
@@ -2057,14 +2059,26 @@ export const CustomerDetailsPage: React.FC = () => {
                 const st = String(ord?.status || '');
                 const pend = Boolean(ord?.paymentPending);
                 if (st === 'completed' && pend) {
+                  const amt = parseFloat(payAmount) || 0;
+                  if (amt <= 0) {
+                    window.alert('Enter a payment amount greater than zero.');
+                    return;
+                  }
                   setPayRecording(true);
                   setError(null);
                   try {
-                    await salesService.patchOrder(oid, { paymentPending: false }, branchId);
+                    const updated = await salesService.collectOrderPayment(
+                      oid,
+                      { amount: amt, methodCode: payMethod },
+                      branchId
+                    );
                     await load();
                     setPayModalOpen(false);
+                    const stillDue = Boolean((updated as { paymentPending?: boolean })?.paymentPending);
                     window.alert(
-                      `Payment recorded — ${formatInr(parseFloat(payAmount) || 0)} via ${payMethod}. Order removed from outstanding balance.`
+                      stillDue
+                        ? `Payment recorded — ${formatInr(amt)} via ${payMethod}. Balance still due on this order.`
+                        : `Payment recorded — ${formatInr(amt)} via ${payMethod}. Order fully settled.`
                     );
                   } catch (e: unknown) {
                     setError(extractErrorMessage(e, 'Could not record payment'));

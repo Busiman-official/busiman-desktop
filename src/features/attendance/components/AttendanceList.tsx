@@ -7,7 +7,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { attendanceService } from '@/services/attendance.service';
-import { socketService } from '@/services/socket.service';
+import { useAttendanceSocket } from '@/features/attendance/hooks/useAttendanceSocket';
 import { authStore } from '@/store/authStore';
 import {
   AttendanceDashboardData,
@@ -108,21 +108,17 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
   }, [selectedDate, departmentFilter, statusFilter, deferredSearch]);
 
   useEffect(() => {
-    loadAttendanceList();
-
-    socketService.connect();
-    socketService.onAttendanceUpdate(() => {
-      loadAttendanceList();
-    });
-    socketService.onDashboardRefresh(() => {
-      loadAttendanceList();
-    });
-
-    return () => {
-      socketService.offAttendanceUpdate();
-      socketService.offDashboardRefresh();
-    };
+    void loadAttendanceList();
   }, [loadAttendanceList]);
+
+  useAttendanceSocket({
+    onStatus: () => {
+      void loadAttendanceList();
+    },
+    onDashboardRefresh: () => {
+      void loadAttendanceList();
+    },
+  });
 
   const formatTime = (isoString: string): string => {
     const date = new Date(isoString);

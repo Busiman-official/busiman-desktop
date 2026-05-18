@@ -13,9 +13,15 @@ type Props = {
   disabled: boolean;
   nonCashInputs: Record<string, string>;
   cashAmount: number;
+  onAccountInput: string;
+  onAccountAmount: number;
+  onAccountNeedsCustomer: boolean;
+  paidNow: number;
+  unallocated: number;
   detailsByMethod: Record<string, PosPaymentMethodDetails | undefined>;
   overAllocated: boolean;
   onNonCashChange: (methodCode: string, raw: string) => void;
+  onOnAccountChange: (raw: string) => void;
   onOpenDetails: (methodCode: string, label: string) => void;
 };
 
@@ -44,12 +50,21 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
   disabled,
   nonCashInputs,
   cashAmount,
+  onAccountInput,
+  onAccountAmount,
+  onAccountNeedsCustomer,
+  paidNow,
+  unallocated,
   detailsByMethod,
   overAllocated,
   onNonCashChange,
+  onOnAccountChange,
   onOpenDetails,
 }) => {
   if (payOpts.length === 0) return null;
+
+  const showSummary =
+    total > 0 && (paidNow > 0 || onAccountAmount > 0 || Math.abs(unallocated) > 0.0001);
 
   return (
     <div className="pos-payment-split" role="group" aria-label="Payment split">
@@ -58,9 +73,7 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
           const isCash = isCashMethodCode(p.value);
           const showDetails = supportsPaymentDetailsModal(p.value);
           const hasDetails = paymentDetailsFilled(detailsByMethod[p.value]);
-          const displayAmount = isCash
-            ? cashAmount
-            : (nonCashInputs[p.value] ?? "");
+          const displayAmount = isCash ? cashAmount : (nonCashInputs[p.value] ?? "");
 
           return (
             <div
@@ -75,20 +88,13 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
                 .join(" ")}
             >
               <span className="pos-payment-split__label">{p.label}</span>
-
               <div className="pos-payment-split__amount">
                 <input
                   type="number"
                   className="pos-payment-split__input no-spinner"
                   min={0}
                   step="0.01"
-                  value={
-                    isCash
-                      ? total > 0
-                        ? cashAmount.toFixed(2)
-                        : "0"
-                      : displayAmount
-                  }
+                  value={isCash ? (total > 0 ? cashAmount.toFixed(2) : "0") : displayAmount}
                   readOnly={isCash}
                   disabled={disabled}
                   onChange={(e) => onNonCashChange(p.value, e.target.value)}
@@ -103,11 +109,7 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
                   onClick={() => onOpenDetails(p.value, p.label)}
                   disabled={disabled}
                   aria-label={`${p.label} payment details`}
-                  title={
-                    hasDetails
-                      ? `${p.label} details saved`
-                      : `Add ${p.label} details`
-                  }
+                  title={hasDetails ? `${p.label} details saved` : `Add ${p.label} details`}
                 >
                   <DocumentIcon />
                 </button>
@@ -115,12 +117,37 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
             </div>
           );
         })}
+        <div
+          className={[
+            "pos-payment-split__cell",
+            "pos-payment-split__cell--onaccount",
+            onAccountAmount > 0 ? "pos-payment-split__cell--onaccount-active" : "",
+            onAccountNeedsCustomer && onAccountAmount > 0 ? "pos-payment-split__cell--onaccount-warn" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title={
+            onAccountNeedsCustomer
+              ? "Enter amount here; select a customer at checkout to put it on account"
+              : "Pending balance — deducted from cash above"
+          }
+        >
+          <span className="pos-payment-split__label">On account</span>
+          <div className="pos-payment-split__amount">
+            <input
+              type="number"
+              className="pos-payment-split__input no-spinner"
+              min={0}
+              step="0.01"
+              value={onAccountInput}
+              disabled={disabled}
+              onChange={(e) => onOnAccountChange(e.target.value)}
+              aria-label="On account pending amount"
+            />
+          </div>
+        </div>
       </div>
-      {overAllocated ? (
-        <p className="pos-payment-split__error" role="alert">
-          Split exceeds total — reduce card, UPI, or bank.
-        </p>
-      ) : null}
+      
     </div>
   );
 };

@@ -7,8 +7,11 @@ import { Outlet, useMatch, useNavigate, useSearchParams } from 'react-router-dom
 import { authStore } from '@/store/authStore';
 import { UserRole } from '@/types';
 import { SalesModuleHeader } from '@/features/sales/components/SalesModuleHeader';
+import { IndicatorRipple } from '@/features/sales/components/indicator_ripple';
+import { usePendingApprovalsCount } from '../hooks/usePendingApprovalsCount';
 import {
   defaultTabForRole,
+  TAB_APPROVALS,
   TAB_OVERVIEW,
   tabsForRole,
   VALID_TABS,
@@ -29,6 +32,28 @@ export const AttendanceLayout: React.FC = () => {
 
   const role = user?.role ?? UserRole.EMPLOYEE;
   const visibleTabs = useMemo(() => tabsForRole(role), [role]);
+  const canApprove =
+    role === UserRole.MANAGER || role === UserRole.HR || role === UserRole.ADMIN;
+  const { hasPending } = usePendingApprovalsCount(canApprove);
+
+  const headerTabs = useMemo(() => {
+    if (!hasPending) return visibleTabs;
+    return visibleTabs.map((tab) => {
+      if (tab.id !== TAB_APPROVALS) return tab;
+      return {
+        ...tab,
+        label: (
+          <span className="sales-module-header__tab-label">
+            {tab.label}
+            <IndicatorRipple
+              className="sales-module-header__tab-indicator"
+              title="Pending attendance approvals"
+            />
+          </span>
+        ),
+      };
+    });
+  }, [visibleTabs, hasPending]);
 
   const rawTab = searchParams.get('tab') || defaultTabForRole(role);
   const activeTab: AttendanceTab =
@@ -83,7 +108,7 @@ export const AttendanceLayout: React.FC = () => {
   return (
     <div className="attendance-layout">
       <SalesModuleHeader
-        tabs={visibleTabs}
+        tabs={headerTabs}
         activeTab={activeTab}
         onTabChange={onTabChange}
         tabActiveOverride={tabActiveOverride}

@@ -3,9 +3,9 @@
  * Shows real-time attendance data for HR/Manager/Admin
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { attendanceService } from '@/services/attendance.service';
-import { socketService } from '@/services/socket.service';
+import { useAttendanceSocket } from '@/features/attendance/hooks/useAttendanceSocket';
 import { AttendanceDashboardData, AttendanceSessionStatus } from '@/types';
 import './AttendanceDashboard.css';
 
@@ -22,28 +22,7 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
   );
   const [selectedDepartment, setSelectedDepartment] = useState<string>('');
 
-  useEffect(() => {
-    loadDashboard();
-    
-    // Connect to Socket.IO
-    socketService.connect();
-
-    // Subscribe to real-time updates
-    socketService.onAttendanceUpdate(() => {
-      loadDashboard();
-    });
-
-    socketService.onDashboardRefresh(() => {
-      loadDashboard();
-    });
-
-    return () => {
-      socketService.offAttendanceUpdate();
-      socketService.offDashboardRefresh();
-    };
-  }, [selectedDate, selectedDepartment]);
-
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -58,7 +37,20 @@ export const AttendanceDashboard: React.FC<AttendanceDashboardProps> = ({ role }
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedDate, selectedDepartment, role]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  useAttendanceSocket({
+    onStatus: () => {
+      void loadDashboard();
+    },
+    onDashboardRefresh: () => {
+      void loadDashboard();
+    },
+  });
 
   const formatTime = (isoString?: string): string => {
     if (!isoString) return '—';

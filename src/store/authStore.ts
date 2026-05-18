@@ -9,6 +9,7 @@ import { authService } from '@/services/auth.service';
 import { logger } from '@/shared/utils/logger';
 import { branchContextStore } from './branchContextStore';
 import { isTransientNetworkError } from '@/utils/authHttpErrors';
+import { socketService } from '@/services/socket.service';
 
 interface AuthStore extends AuthState {
   login: (user: User, accessToken: string, refreshToken: string, sessionId?: string) => void;
@@ -39,6 +40,8 @@ export const authStore = create<AuthStore>()(
           isAuthenticated: true,
           isInitializing: false,
         });
+
+        socketService.reconnect();
 
         // Trigger auto check-in on login success
         if (window.electronAPI?.triggerAutoCheckInOnLogin) {
@@ -77,6 +80,8 @@ export const authStore = create<AuthStore>()(
             isAuthenticated: true,
             isInitializing: false,
           });
+
+          socketService.reconnect();
 
           // Trigger auto check-in after successful auth initialization
           if (window.electronAPI?.triggerAutoCheckInOnAuthInit) {
@@ -125,6 +130,8 @@ export const authStore = create<AuthStore>()(
             refreshToken: tokenData.refreshToken,
             isAuthenticated: true,
           });
+
+          socketService.reconnect();
         } catch (error: unknown) {
           if (isTransientNetworkError(error)) return;
           set({
@@ -146,7 +153,9 @@ export const authStore = create<AuthStore>()(
             refreshToken: null,
             isAuthenticated: false,
           });
-          
+
+          socketService.disconnect();
+
           // Clear branch context
           branchContextStore.getState().clearContext();
           

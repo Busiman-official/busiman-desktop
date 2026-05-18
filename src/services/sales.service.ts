@@ -513,11 +513,13 @@ export const salesService = {
         posGstInclusive?: boolean;
       }>;
       paymentMethodCode?: string;
-      /** Split tender; required when holdPayment is false. Amounts must sum to order total. */
+      /** Split tender (real methods only). Collected + onAccountAmount must equal order total. */
       payments?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine[];
       createInvoice?: boolean;
       discountAmount?: number;
-      /** Defer payment: adds order total to customer outstanding (requires customerId). */
+      /** Amount on customer outstanding balance (requires customerId when > 0). */
+      onAccountAmount?: number;
+      /** @deprecated Use onAccountAmount */
       holdPayment?: boolean;
       /** YYYY-MM-DD business sale / invoice date. */
       invoiceDate?: string;
@@ -544,6 +546,21 @@ export const salesService = {
     branchId?: string | null
   ) {
     const response = await api.patch(`/sales/orders/${orderId}`, body, { params: branchParams(branchId) });
+    return extractApiData(response);
+  },
+
+  async collectOrderPayment(
+    orderId: string,
+    body: {
+      amount: number;
+      methodCode: string;
+      details?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine['details'];
+    },
+    branchId?: string | null
+  ) {
+    const response = await api.post(`/sales/orders/${orderId}/collect-payment`, body, {
+      params: branchParams(branchId),
+    });
     return extractApiData(response);
   },
 

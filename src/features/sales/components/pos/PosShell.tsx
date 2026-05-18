@@ -50,13 +50,17 @@ import { PosPaymentSplitSection } from './PosPaymentSplitSection';
 import { PosPaymentDetailsModal } from './PosPaymentDetailsModal';
 import {
   buildCheckoutPayments,
+  checkoutUnallocated,
   computeCashRemainder,
   emptyNonCashAmounts,
-  isSplitPaymentBalanced,
+  getOnAccountAmountInput,
+  isCheckoutBalanced,
+  isCheckoutOverAllocated,
   maxNonCashForMethod,
   nonCashAmountsFromInputs,
   parsePaymentAmountInput,
   roundMoney,
+  sumCollectedTender,
   sumNonCashAmounts,
   type PosPaymentMethodDetails,
 } from './posPaymentSplit';
@@ -156,8 +160,7 @@ export const PosShell: React.FC<Props> = ({
     methodCode: string;
     methodLabel: string;
   } | null>(null);
-  /** When set, POS checkout records the sale on the customer's outstanding balance (pay later). */
-  const [holdPaymentForAccount, setHoldPaymentForAccount] = useState(false);
+  const [onAccountInput, setOnAccountInput] = useState('');
   const [toast, setToast] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutErrorModal, setCheckoutErrorModal] = useState<string | null>(null);
@@ -422,26 +425,41 @@ export const PosShell: React.FC<Props> = ({
     [payOpts, nonCashAmountInputs],
   );
 
+  const onAccountAmount = useMemo(() => getOnAccountAmountInput(onAccountInput), [onAccountInput]);
+
+  /** No counter customer yet — on-account still editable; customer required at checkout. */
+  const onAccountNeedsCustomer = !customerId?.trim();
+
   const cashPaymentAmount = useMemo(
-    () => computeCashRemainder(totals.total, nonCashAmounts),
-    [totals.total, nonCashAmounts],
+    () => computeCashRemainder(totals.total, nonCashAmounts, onAccountAmount),
+    [totals.total, nonCashAmounts, onAccountAmount],
+  );
+
+  const paidNowAmount = useMemo(
+    () => sumCollectedTender(totals.total, nonCashAmounts, onAccountAmount),
+    [totals.total, nonCashAmounts, onAccountAmount],
+  );
+
+  const paymentUnallocated = useMemo(
+    () => checkoutUnallocated(totals.total, nonCashAmounts, onAccountAmount),
+    [totals.total, nonCashAmounts, onAccountAmount],
   );
 
   const paymentSplitOverAllocated = useMemo(
-    () => sumNonCashAmounts(nonCashAmounts) > roundMoney(totals.total) + 0.0001,
-    [nonCashAmounts, totals.total],
+    () => isCheckoutOverAllocated(totals.total, nonCashAmounts, onAccountAmount),
+    [totals.total, nonCashAmounts, onAccountAmount],
   );
 
-  const paymentSplitValid = useMemo(
-    () =>
-      totals.total >= 0 &&
-      !paymentSplitOverAllocated &&
-      isSplitPaymentBalanced(totals.total, nonCashAmounts),
-    [totals.total, nonCashAmounts, paymentSplitOverAllocated],
-  );
+  /** Split equals total (cash reflects on-account deduction). Customer checked at checkout. */
+  const paymentSplitBalanced = useMemo(() => {
+    if (totals.total < 0) return false;
+    if (paymentSplitOverAllocated) return false;
+    return isCheckoutBalanced(totals.total, nonCashAmounts, onAccountAmount);
+  }, [totals.total, nonCashAmounts, onAccountAmount, paymentSplitOverAllocated]);
 
   const resetPaymentSplit = useCallback(() => {
     setNonCashAmountInputs(emptyNonCashAmounts(payOpts));
+    setOnAccountInput('');
     setPaymentDetailsByMethod({});
     setPaymentDetailsModal(null);
   }, [payOpts]);
@@ -450,15 +468,36 @@ export const PosShell: React.FC<Props> = ({
     (methodCode: string, raw: string) => {
       setNonCashAmountInputs((prev) => {
         const current = nonCashAmountsFromInputs(payOpts, prev);
-        const maxAllowed = maxNonCashForMethod(totals.total, methodCode, current);
+        const maxAllowed = maxNonCashForMethod(totals.total, methodCode, current, onAccountAmount);
         let nextVal = parsePaymentAmountInput(raw);
         if (nextVal > maxAllowed) nextVal = maxAllowed;
         const display = raw.trim() === '' ? '' : String(nextVal);
         return { ...prev, [methodCode]: display };
       });
     },
-    [payOpts, totals.total],
+    [payOpts, totals.total, onAccountAmount],
   );
+
+  const handleOnAccountChange = useCallback(
+    (raw: string) => {
+      if (raw.trim() === '') {
+        setOnAccountInput('');
+        return;
+      }
+      const current = nonCashAmountsFromInputs(payOpts, nonCashAmountInputs);
+      const maxOa = roundMoney(Math.max(0, totals.total - sumNonCashAmounts(current)));
+      let nextVal = parsePaymentAmountInput(raw);
+      if (nextVal > maxOa) nextVal = maxOa;
+      setOnAccountInput(String(nextVal));
+    },
+    [payOpts, nonCashAmountInputs, totals.total],
+  );
+
+  const fillRemainderOnAccount = useCallback(() => {
+    const collected = sumCollectedTender(totals.total, nonCashAmounts, 0);
+    const remainder = roundMoney(Math.max(0, totals.total - collected));
+    setOnAccountInput(remainder > 0 ? String(remainder) : '');
+  }, [totals.total, nonCashAmounts]);
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -699,8 +738,14 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutError('No variants for this item.');
         return;
       }
+      let fullItem = item;
+      try {
+        fullItem = await inventoryService.getItemById(item.id);
+      } catch {
+        /* use catalog stub when fetch fails */
+      }
       if (variants.length === 1) {
-        const meta = buildLineMetaFromItemVariant(item, variants[0]);
+        const meta = buildLineMetaFromItemVariant(fullItem, variants[0]);
         await addLineFromMeta(meta, 1);
         return;
       }
@@ -715,7 +760,7 @@ export const PosShell: React.FC<Props> = ({
         (lastMergedVariantId && variants.some((x) => x.id === lastMergedVariantId)
           ? lastMergedVariantId
           : defaultV.id);
-      setVariantPicker({ item, variants, highlightVariantId: hi });
+      setVariantPicker({ item: fullItem, variants, highlightVariantId: hi });
     },
     [addLineFromMeta, lastMergedVariantId, salesPointId]
   );
@@ -1096,13 +1141,13 @@ export const PosShell: React.FC<Props> = ({
     [branchId, clear, resetPaymentSplit, salesPointId]
   );
 
-  useEffect(() => {
-    if (!customerId?.trim()) setHoldPaymentForAccount(false);
-    if (customerId?.trim() && !customerAllowsSale) setHoldPaymentForAccount(false);
-  }, [customerId, customerAllowsSale]);
-
   const completeSale = useCallback(
-    async (opts?: { customerId?: string; createCustomer?: PosNewCustomerPayload; holdPayment?: boolean }) => {
+    async (opts?: {
+      customerId?: string;
+      createCustomer?: PosNewCustomerPayload;
+      /** Override on-account amount for this checkout (e.g. Pay later shortcut). */
+      onAccountAmountOverride?: number;
+    }) => {
       if (!branchId || !salesPointId || lines.length === 0) return;
       if (salesPointSessionStatus !== 'open') {
         setCheckoutCustomerModal(false);
@@ -1141,22 +1186,38 @@ export const PosShell: React.FC<Props> = ({
           );
           customerIdForOrder = c._id;
         }
-        const wantHold =
-          opts?.holdPayment !== undefined ? opts.holdPayment : holdPaymentForAccount;
-        if (!wantHold && !paymentSplitValid) {
-          setCheckoutModalError('Payment amounts must equal the bill total.');
+        const onAccountRaw =
+          opts?.onAccountAmountOverride != null
+            ? roundMoney(opts.onAccountAmountOverride)
+            : onAccountAmount;
+        const onAccount = onAccountRaw;
+        const nc = nonCashAmountsFromInputs(payOpts, nonCashAmountInputs);
+        const balanced = isCheckoutBalanced(totals.total, nc, onAccount);
+        const overAlloc = isCheckoutOverAllocated(totals.total, nc, onAccount);
+        if (overAlloc || !balanced) {
+          if (onAccount > 0 && !customerIdForOrder) {
+            setCheckoutModalError('Select a customer to put an amount on account.');
+          } else {
+            setCheckoutModalError('Payment split and on account must equal the bill total.');
+          }
           return;
         }
-        const payments = wantHold
-          ? undefined
-          : buildCheckoutPayments(
-              payOpts,
-              totals.total,
-              nonCashAmountInputs,
-              paymentDetailsByMethod,
-            );
-        if (!wantHold && totals.total > 0 && !payments?.length) {
+        const payments =
+          totals.total <= 0 && onAccount <= 0
+            ? undefined
+            : buildCheckoutPayments(
+                payOpts,
+                totals.total,
+                nonCashAmountInputs,
+                paymentDetailsByMethod,
+                onAccountRaw,
+              );
+        if (totals.total > 0 && onAccount <= 0 && !payments?.length) {
           setCheckoutModalError('Add a payment amount or enable Cash in Sales settings.');
+          return;
+        }
+        if (onAccount > 0 && !customerIdForOrder) {
+          setCheckoutModalError('Customer is required for on-account amount.');
           return;
         }
         await salesService.posCheckout(
@@ -1166,7 +1227,7 @@ export const PosShell: React.FC<Props> = ({
             lines: linesForCheckoutPayload(lines, branchTaxPercent),
             payments,
             discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
-            holdPayment: Boolean(wantHold && customerIdForOrder),
+            onAccountAmount: onAccount > 0 ? onAccount : undefined,
             invoiceDate: invoiceDateYmd,
           },
           branchId
@@ -1178,7 +1239,6 @@ export const PosShell: React.FC<Props> = ({
         setStockRefreshToken((n) => n + 1);
         setHeldDrafts(listHeldPosDrafts(branchId, salesPointId));
         setCheckoutCustomerModal(false);
-        setHoldPaymentForAccount(false);
         setCustomerModalMode('sale');
         lookupInputRef.current?.focus();
         setSearchParams(
@@ -1209,7 +1269,7 @@ export const PosShell: React.FC<Props> = ({
       lines,
       payOpts,
       paymentDetailsByMethod,
-      paymentSplitValid,
+      paymentSplitBalanced,
       nonCashAmountInputs,
       resetPaymentSplit,
       salesPointId,
@@ -1220,7 +1280,8 @@ export const PosShell: React.FC<Props> = ({
       setSearchParams,
       customerAllowsSale,
       customerId,
-      holdPaymentForAccount,
+      onAccountAmount,
+      onAccountNeedsCustomer,
     ]
   );
 
@@ -1237,7 +1298,7 @@ export const PosShell: React.FC<Props> = ({
   }, [setSearchParams]);
 
   const openCheckoutModal = useCallback(
-    (opts?: { holdPayment?: boolean }) => {
+    (opts?: { fillRemainderOnAccount?: boolean }) => {
       if (!branchId || !salesPointId || lines.length === 0) return;
       if (salesPointSessionStatus !== 'open') {
         setCheckoutError(null);
@@ -1252,11 +1313,27 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutError(INACTIVE_CUSTOMER_MSG);
         return;
       }
-      const resolvedHold = opts?.holdPayment !== undefined ? opts.holdPayment : holdPaymentForAccount;
-      if (opts?.holdPayment !== undefined) setHoldPaymentForAccount(resolvedHold);
+      let remainderOnAccount = 0;
+      if (opts?.fillRemainderOnAccount) {
+        remainderOnAccount = roundMoney(
+          Math.max(0, totals.total - sumCollectedTender(totals.total, nonCashAmounts, 0)),
+        );
+        fillRemainderOnAccount();
+      }
       const intent = searchParams.get('posOrderForCustomer') === '1';
-      if (intent && customerId?.trim()) {
-        void completeSale({ customerId, holdPayment: resolvedHold });
+      const canAutoCheckout =
+        isCheckoutBalanced(totals.total, nonCashAmounts, remainderOnAccount) &&
+        !isCheckoutOverAllocated(totals.total, nonCashAmounts, remainderOnAccount) &&
+        (remainderOnAccount <= 0 || Boolean(customerId?.trim()));
+      if (intent && customerId?.trim() && canAutoCheckout) {
+        void completeSale({
+          customerId,
+          onAccountAmountOverride: opts?.fillRemainderOnAccount ? remainderOnAccount : undefined,
+        });
+        return;
+      }
+      if (opts?.fillRemainderOnAccount && customerId?.trim() && canAutoCheckout) {
+        void completeSale({ customerId, onAccountAmountOverride: remainderOnAccount });
         return;
       }
       setCustomerModalMode('sale');
@@ -1269,27 +1346,29 @@ export const PosShell: React.FC<Props> = ({
       completeSale,
       customerAllowsSale,
       customerId,
+      fillRemainderOnAccount,
       lines.length,
+      nonCashAmounts,
       salesPointId,
+      totals.total,
       salesPointSessionStatus,
       searchParams,
       stockBlocked,
-      holdPaymentForAccount,
     ]
   );
 
   const onCustomerModalConfirmExisting = useCallback(
     (id: string) => {
       if (customerModalMode === 'quotation') void createDraftOrderForQuotation(id);
-      else void completeSale({ customerId: id, holdPayment: holdPaymentForAccount });
+      else void completeSale({ customerId: id });
     },
-    [completeSale, createDraftOrderForQuotation, customerModalMode, holdPaymentForAccount]
+    [completeSale, createDraftOrderForQuotation, customerModalMode]
   );
 
   const onCustomerModalConfirmNew = useCallback(
     (payload: PosNewCustomerPayload) => {
       if (customerModalMode === 'sale') {
-        void completeSale({ createCustomer: payload, holdPayment: holdPaymentForAccount });
+        void completeSale({ createCustomer: payload });
         return;
       }
       void (async () => {
@@ -1318,7 +1397,7 @@ export const PosShell: React.FC<Props> = ({
         }
       })();
     },
-    [branchId, completeSale, createDraftOrderForQuotation, customerModalMode, holdPaymentForAccount]
+    [branchId, completeSale, createDraftOrderForQuotation, customerModalMode]
   );
 
   const holdOrder = useCallback(() => {
@@ -1642,21 +1721,25 @@ export const PosShell: React.FC<Props> = ({
               </div>
             </div>
 
-            {!holdPaymentForAccount ? (
-              <PosPaymentSplitSection
-                payOpts={payOpts}
-                total={totals.total}
-                disabled={checkoutModalBusy || checkoutCustomerModal}
-                nonCashInputs={nonCashAmountInputs}
-                cashAmount={cashPaymentAmount}
-                detailsByMethod={paymentDetailsByMethod}
-                overAllocated={paymentSplitOverAllocated}
-                onNonCashChange={handleNonCashAmountChange}
-                onOpenDetails={(methodCode, methodLabel) =>
-                  setPaymentDetailsModal({ methodCode, methodLabel })
-                }
-              />
-            ) : null}
+            <PosPaymentSplitSection
+              payOpts={payOpts}
+              total={totals.total}
+              disabled={checkoutModalBusy || checkoutCustomerModal}
+              nonCashInputs={nonCashAmountInputs}
+              cashAmount={cashPaymentAmount}
+              onAccountInput={onAccountInput}
+              onAccountAmount={onAccountAmount}
+              onAccountNeedsCustomer={onAccountNeedsCustomer}
+              paidNow={paidNowAmount}
+              unallocated={paymentUnallocated}
+              detailsByMethod={paymentDetailsByMethod}
+              overAllocated={paymentSplitOverAllocated}
+              onNonCashChange={handleNonCashAmountChange}
+              onOnAccountChange={handleOnAccountChange}
+              onOpenDetails={(methodCode, methodLabel) =>
+                setPaymentDetailsModal({ methodCode, methodLabel })
+              }
+            />
 
             <div className="pos-charge-row">
               <div className="pos-charge-row__docs" role="group" aria-label="Documents before payment">
@@ -1711,7 +1794,7 @@ export const PosShell: React.FC<Props> = ({
                     stockBlocked ||
                     salesPointSessionStatus !== 'open' ||
                     (Boolean(customerId?.trim()) && !customerAllowsSale) ||
-                    !paymentSplitValid
+                    !paymentSplitBalanced
                   }
                 >
                   {checkoutModalBusy ? 'Processing…' : `Charge ₹${totals.total.toFixed(2)}`}
@@ -1720,7 +1803,7 @@ export const PosShell: React.FC<Props> = ({
                   type="button"
                   variant="secondary"
                   className="pos-pay-later-btn"
-                  onClick={() => openCheckoutModal({ holdPayment: true })}
+                  onClick={() => openCheckoutModal({ fillRemainderOnAccount: true })}
                   disabled={
                     checkoutModalBusy ||
                     checkoutCustomerModal ||
@@ -1728,9 +1811,10 @@ export const PosShell: React.FC<Props> = ({
                     !salesPointId ||
                     stockBlocked ||
                     salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale)
+                    (Boolean(customerId?.trim()) && !customerAllowsSale) ||
+                    totals.total <= 0
                   }
-                  title="Add this sale to the customer’s outstanding balance (choose customer at checkout)"
+                  title="Put the remaining balance on the customer’s account (requires customer)"
                 >
                   Pay later
                 </Button>
@@ -1893,7 +1977,7 @@ export const PosShell: React.FC<Props> = ({
           error={checkoutModalError}
           counterCustomerId={customerId}
           counterCustomerName={counterCustomerName}
-          hideWalkIn={holdPaymentForAccount}
+          hideWalkIn={onAccountAmount > 0}
           onClose={closeCheckoutCustomerModal}
           onConfirmExisting={onCustomerModalConfirmExisting}
           onConfirmNew={onCustomerModalConfirmNew}
@@ -1901,7 +1985,7 @@ export const PosShell: React.FC<Props> = ({
           onUseCounterCustomer={(id) =>
             void (customerModalMode === 'quotation'
               ? createDraftOrderForQuotation(id)
-              : completeSale({ customerId: id, holdPayment: holdPaymentForAccount }))
+              : completeSale({ customerId: id }))
           }
         />
       </Modal>

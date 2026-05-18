@@ -1,4 +1,9 @@
-import { inventoryService, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
+import {
+  inventoryService,
+  ItemType,
+  type InventoryItem,
+  type InventoryVariant,
+} from '@/services/inventory.service';
 import { resolveInventoryBehavior } from '@/features/inventory/constants/productCatalog';
 
 export interface PosResolvedLineMeta {
@@ -60,8 +65,9 @@ export function posLineStockFlagsFromItem(item: InventoryItem): {
     itemType: item.itemType,
   });
   return {
-    isNonStock: behavior.ledgerOnly,
-    allowNegativeStock: behavior.allowNegativeCandidate,
+    isNonStock: behavior.ledgerOnly || item.itemType === ItemType.MISC_NON_STOCK,
+    allowNegativeStock:
+      behavior.allowNegativeCandidate || item.itemType === ItemType.MISC_INVENTORY,
   };
 }
 

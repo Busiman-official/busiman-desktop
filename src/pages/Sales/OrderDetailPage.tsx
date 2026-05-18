@@ -25,6 +25,7 @@ import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
 import {
+  orderCollectedAmount,
   resolveOrderPaymentSummary,
   type SalesOrderPaymentLine,
 } from '@/features/sales/utils/orderPayments';
@@ -575,11 +576,14 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
       })()
       : 0;
   const paymentPaid = order?.status === 'completed' && !paymentPendingFlag;
+  const collectedAtSale = order ? orderCollectedAmount(order as OrderDoc) : 0;
   const paymentLabel =
     order?.status === 'cancelled'
       ? 'Cancelled'
       : order?.status === 'completed' && paymentPendingFlag
-        ? 'On account'
+        ? collectedAtSale > 0
+          ? 'Partially paid'
+          : 'On account'
         : paymentPaid
           ? 'Paid'
           : 'Unpaid';
@@ -755,8 +759,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
             fontSize: 13,
           }}
         >
-          <strong>Payment pending</strong> — {formatInr(amountOwingOnAccount)} still on account for this order (order total{' '}
-          {formatInr(total)}). Record payment in Customers → Payments.
+          <strong>Payment pending</strong>
+          {collectedAtSale > 0
+            ? ` — ${formatInr(collectedAtSale)} received · ${formatInr(amountOwingOnAccount)} still on account (order total ${formatInr(total)}).`
+            : ` — ${formatInr(amountOwingOnAccount)} on account for this order (order total ${formatInr(total)}).`}
+          {' '}Record payment in Customers → Payments.
         </div>
       ) : null}
       {/* <div className="order-detail__summary">

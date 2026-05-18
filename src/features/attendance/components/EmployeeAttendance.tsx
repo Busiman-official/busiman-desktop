@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { authStore } from '@/store/authStore';
 import { attendanceService } from '@/services/attendance.service';
 import { wifiService } from '@/services/wifi.service';
-import { socketService } from '@/services/socket.service';
+import { useAttendanceSocket } from '@/features/attendance/hooks/useAttendanceSocket';
 import {
   AttendanceSessionStatus,
   AttendanceSource,
@@ -54,23 +54,18 @@ export const EmployeeAttendance: React.FC = () => {
     return networkValidation.isValid === false;
   }, [allowCheckoutWithoutWifi, networkValidation.isValid]);
 
-  // Load initial status
   useEffect(() => {
     loadStatus();
     checkNetworkStatus();
-    
-    // Connect to Socket.IO
-    socketService.connect();
-
-    // Subscribe to real-time updates
-    socketService.onAttendanceUpdate(() => {
-      loadStatus(); // Refresh status
-    });
-
-    return () => {
-      socketService.offAttendanceUpdate();
-    };
   }, []);
+
+  useAttendanceSocket({
+    enabled: !!user?.id,
+    employeeIdFilter: user?.id,
+    onStatus: () => {
+      void loadStatus();
+    },
+  });
 
   // Check network status when window gains focus (user switches back to app)
   useEffect(() => {

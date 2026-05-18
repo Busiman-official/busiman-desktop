@@ -3,6 +3,7 @@ import {
   inventoryService,
   catalogRows,
   ItemType,
+  ProductType,
   type CatalogVariantRow,
   type InventoryItem,
   type InventoryVariant,
@@ -18,6 +19,11 @@ interface PosMiscSliderProps {
     options?: { highlightVariantId?: string }
   ) => void | Promise<void>;
 }
+
+type MiscVariantChip = {
+  item: InventoryItem;
+  variant: InventoryVariant;
+};
 
 function catalogRowToVariant(row: CatalogVariantRow): InventoryVariant {
   return {
@@ -35,16 +41,16 @@ function catalogRowToVariant(row: CatalogVariantRow): InventoryVariant {
   };
 }
 
-function catalogRowsToItem(rows: CatalogVariantRow[]): InventoryItem {
-  const r = rows[0];
+function catalogRowToItem(row: CatalogVariantRow): InventoryItem {
   return {
-    id: r.productId,
-    name: r.productName,
-    category: r.category,
-    hasVariants: rows.length > 1,
-    isActive: r.isActive,
-    isMisc: true,
-    itemType: ItemType.STOCK,
+    id: row.productId,
+    name: row.productName,
+    category: row.category,
+    hasVariants: true,
+    isActive: row.isActive,
+    productType: row.productType ?? ProductType.STOCK_ITEM,
+    isMisc: row.isMisc ?? true,
+    itemType: row.itemType ?? ItemType.MISC_INVENTORY,
     branchId: '',
     createdBy: { id: '', name: '', email: '' },
     updatedBy: { id: '', name: '', email: '' },
@@ -53,26 +59,14 @@ function catalogRowsToItem(rows: CatalogVariantRow[]): InventoryItem {
   };
 }
 
-function groupMiscCatalog(rows: CatalogVariantRow[]): {
-  items: InventoryItem[];
-  variantsByProductId: Map<string, InventoryVariant[]>;
-} {
-  const productIds: string[] = [];
-  const byProduct = new Map<string, CatalogVariantRow[]>();
-  for (const row of rows) {
-    if (!byProduct.has(row.productId)) {
-      productIds.push(row.productId);
-      byProduct.set(row.productId, []);
-    }
-    byProduct.get(row.productId)!.push(row);
-  }
-  const variantsByProductId = new Map<string, InventoryVariant[]>();
-  const items = productIds.map((productId) => {
-    const catRows = byProduct.get(productId)!;
-    variantsByProductId.set(productId, catRows.map(catalogRowToVariant));
-    return catalogRowsToItem(catRows);
-  });
-  return { items, variantsByProductId };
+function miscCatalogToChips(rows: CatalogVariantRow[]): MiscVariantChip[] {
+  return rows
+    .filter((r) => r.variantIsActive !== false)
+    .map((row) => ({
+      item: catalogRowToItem(row),
+      variant: catalogRowToVariant(row),
+    }))
+    .sort((a, b) => a.variant.name.localeCompare(b.variant.name));
 }
 
 export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
@@ -81,17 +75,15 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
   disabled,
   onActivateProduct,
 }) => {
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const variantsByProductRef = useRef<Map<string, InventoryVariant[]>>(new Map());
+  const [chips, setChips] = useState<MiscVariantChip[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [activeVariantId, setActiveVariantId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({ left: false, right: false });
 
   const load = useCallback(async () => {
     if (!salesPointId || !branchId) {
-      setItems([]);
-      variantsByProductRef.current = new Map();
+      setChips([]);
       return;
     }
     setLoading(true);
@@ -102,12 +94,9 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
         isMisc: true,
         productLimit: 80,
       });
-      const { items: miscItems, variantsByProductId } = groupMiscCatalog(catalogRows(catalogData));
-      variantsByProductRef.current = variantsByProductId;
-      setItems(miscItems);
+      setChips(miscCatalogToChips(catalogRows(catalogData)));
     } catch {
-      setItems([]);
-      variantsByProductRef.current = new Map();
+      setChips([]);
     } finally {
       setLoading(false);
     }
@@ -132,29 +121,22 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
       el.removeEventListener('scroll', update as EventListener);
       window.removeEventListener('resize', update);
     };
-  }, [items.length, loading, salesPointId, branchId]);
+  }, [chips.length, loading, salesPointId, branchId]);
 
   const handlePick = useCallback(
-    async (item: InventoryItem) => {
+    async (chip: MiscVariantChip) => {
       if (!salesPointId || disabled) return;
-      setActiveItemId(item.id);
+      setActiveVariantId(chip.variant.id);
       try {
-        let variants = variantsByProductRef.current.get(item.id);
-        if (!variants?.length) {
-          variants = await inventoryService.getVariantsByItem(item.id);
-        }
-        const activeVariants = variants.filter((variant) => variant.isActive !== false);
-        const list = activeVariants.length > 0 ? activeVariants : variants;
-        if (list.length === 0) return;
-        await onActivateProduct(item, list);
+        await onActivateProduct(chip.item, [chip.variant]);
       } finally {
-        setActiveItemId(null);
+        setActiveVariantId(null);
       }
     },
     [disabled, onActivateProduct, salesPointId]
   );
 
-  if (!salesPointId || !branchId || (!loading && items.length === 0)) {
+  if (!salesPointId || !branchId || (!loading && chips.length === 0)) {
     return null;
   }
 
@@ -176,16 +158,17 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
               Loading MISC items...
             </button>
           ) : (
-            items.map((item) => (
+            chips.map((chip) => (
               <button
-                key={item.id}
+                key={chip.variant.id}
                 type="button"
-                className={`pos-chip${activeItemId === item.id ? ' pos-chip--busy' : ''}`}
-                disabled={disabled || activeItemId === item.id}
+                className={`pos-chip${activeVariantId === chip.variant.id ? ' pos-chip--busy' : ''}`}
+                disabled={disabled || activeVariantId === chip.variant.id}
                 role="listitem"
-                onClick={() => void handlePick(item)}
+                title={chip.item.name}
+                onClick={() => void handlePick(chip)}
               >
-                {item.name}
+                {chip.variant.name}
               </button>
             ))
           )}

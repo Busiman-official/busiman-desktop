@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { attendanceService } from '@/services/attendance.service';
-import { socketService } from '@/services/socket.service';
+import { useAttendanceSocket } from '@/features/attendance/hooks/useAttendanceSocket';
 import { employeeDetailsService } from '@/services/employee.service';
 import {
   AttendanceRecord,
@@ -173,30 +173,18 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
     loadAll();
   }, [loadAll]);
 
-  useEffect(() => {
-    if (!employeeId) return;
-
-    socketService.connect();
-    const onAttendanceChange = (payload: {
-      data: { employeeId: string; date?: string };
-    }) => {
-      if (payload.data.employeeId !== employeeId) return;
+  useAttendanceSocket({
+    enabled: !!employeeId,
+    employeeIdFilter: employeeId,
+    onStatus: () => {
       void loadToday();
       void loadHistory();
-    };
-    const onDashboardRefresh = () => {
+    },
+    onDashboardRefresh: () => {
       void loadToday();
       void loadHistory();
-    };
-
-    socketService.onAttendanceUpdate(onAttendanceChange);
-    socketService.onDashboardRefresh(onDashboardRefresh);
-
-    return () => {
-      socketService.offAttendanceUpdate();
-      socketService.offDashboardRefresh();
-    };
-  }, [employeeId, loadToday, loadHistory]);
+    },
+  });
 
   useEffect(() => {
     if (!loading && employeeId) {

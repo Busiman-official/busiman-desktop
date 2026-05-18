@@ -17,7 +17,9 @@ import { mapOrderLinesForCreateApi } from '../../utils/mapLinesForCreateOrder';
 import { docId, entityId, idStr } from '../../utils/ids';
 import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import {
+  normalizeOrderPayments,
   orderMatchesPaymentMethodFilter,
+  orderRecognizedRevenue,
   paymentAmountsByKnownMethod,
   resolveOrderPaymentSummary,
   type PaymentMethodFilter,
@@ -133,7 +135,10 @@ function isPendingPaymentRow(row: Record<string, unknown>): boolean {
 function statusPill(row: Record<string, unknown>): { label: string; cls: string } {
   const status = String(row.status || '');
   if (status === 'completed' && row?.paymentPending) {
-    return { label: 'On account', cls: 'sales-history-pill--onaccount' };
+    const hasTender = normalizeOrderPayments((row as { payments?: unknown }).payments).length > 0;
+    return hasTender
+      ? { label: 'Partially paid', cls: 'sales-history-pill--onaccount' }
+      : { label: 'On account', cls: 'sales-history-pill--onaccount' };
   }
   if (status === 'completed') return { label: 'Completed', cls: 'sales-history-pill--completed' };
   if (status === 'cancelled') return { label: 'Cancelled', cls: 'sales-history-pill--cancelled' };
@@ -323,9 +328,12 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
       const total = Number(r.total ?? 0);
       const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
       if (st === 'completed') {
-        sumCompleted += total;
-        nCompleted += 1;
-        if (!revenueTodayOnly || ts >= t0) revenueSum += total;
+        const rev = orderRecognizedRevenue(r as Record<string, unknown>);
+        if (rev > 0) {
+          sumCompleted += rev;
+          nCompleted += 1;
+          if (!revenueTodayOnly || ts >= t0) revenueSum += rev;
+        }
       }
       if (isDraftBucketStatus(st)) {
         pendingCount += 1;
@@ -852,15 +860,15 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
             <div className="sales-history-stat__value">₹{stats.revenueSum.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
             <div className="sales-history-stat__ctx">
               {stats.revenueTodayOnly
-                ? 'Completed orders · today (by sale date)'
-                : 'Completed orders in current view'}
+                ? 'Collected revenue · today (by sale date)'
+                : 'Collected revenue in current view'}
             </div>
           </button>
           <button type="button" className="sales-history-stat" onClick={statCardHandlers.avg}>
             <div className="sales-history-stat__label">Average order value</div>
             <div className="sales-history-stat__value">₹{stats.avgOrder.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
             <div className="sales-history-stat__ctx">
-              {hasActiveFilters ? 'Among completed · filtered' : 'Among completed orders'}
+              {hasActiveFilters ? 'Among fully paid · filtered' : 'Among fully paid completed'}
             </div>
           </button>
           <button type="button" className="sales-history-stat sales-history-stat--amber" onClick={statCardHandlers.pending}>
@@ -1144,9 +1152,9 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                         ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="sales-history-payment-cell" title={payInfo.summary}>
-                        {payInfo.status === 'on_account' ? (
-                          <span className="sales-history-pill sales-history-pill--onaccount sales-history-pill--inline">
-                            On account
+                        {payInfo.status === 'on_account' || payInfo.status === 'partially_paid' ? (
+                          <span className="sales-history-payment-summary" title={payInfo.summary}>
+                            {payInfo.summary}
                           </span>
                         ) : payInfo.payments.length > 0 ? (
                           <span className="sales-history-payment-summary">{payInfo.summary}</span>

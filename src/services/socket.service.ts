@@ -5,16 +5,16 @@
 import { io, Socket } from 'socket.io-client';
 import { config } from '@/config';
 import { authStore } from '@/store/authStore';
-import { AttendanceSessionStatus } from '@/types';
+import {
+  AttendanceSocketEnvelope,
+  DashboardRefreshEnvelope,
+} from '@/features/attendance/types/attendance-socket';
 
 class SocketService {
   private socket: Socket | null = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
 
-  /**
-   * Connect to Socket.IO server
-   */
   connect(): void {
     if (this.socket?.connected) {
       return;
@@ -25,13 +25,10 @@ class SocketService {
       return;
     }
 
-    // Extract base URL from API config (remove /api/v1)
     const baseURL = config.api.baseURL.replace('/api/v1', '');
 
     this.socket = io(baseURL, {
-      auth: {
-        token,
-      },
+      auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
@@ -43,14 +40,13 @@ class SocketService {
     });
 
     this.socket.on('disconnect', () => {
-      // Handle disconnect
+      // no-op
     });
 
     this.socket.on('connect_error', () => {
       this.reconnectAttempts++;
     });
 
-    // Handle reconnect
     this.socket.on('reconnect', () => {
       const currentToken = authStore.getState().accessToken;
       if (!currentToken) {
@@ -59,9 +55,6 @@ class SocketService {
     });
   }
 
-  /**
-   * Disconnect from Socket.IO server
-   */
   disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();
@@ -69,79 +62,46 @@ class SocketService {
     }
   }
 
-  /**
-   * Reconnect with a new token (useful after token refresh)
-   */
   reconnect(): void {
     this.disconnect();
     this.connect();
   }
 
-  /**
-   * Subscribe to attendance updates
-   */
-  onAttendanceUpdate(
-    callback: (data: {
-      type: string;
-      data: {
-        employeeId: string;
-        employeeName: string;
-        department?: string;
-        status: AttendanceSessionStatus;
-        checkInTime?: string;
-        checkOutTime?: string;
-        date: string;
-      };
-      timestamp: string;
-    }) => void
-  ): void {
-    if (!this.socket) {
-      return;
-    }
-
+  onAttendanceUpdate(callback: (data: AttendanceSocketEnvelope) => void): void {
+    if (!this.socket) return;
     this.socket.on('attendance:update', callback);
     this.socket.on('attendance:status', callback);
   }
 
-  /**
-   * Subscribe to dashboard refresh events
-   */
-  onDashboardRefresh(
-    callback: (data: { type: string; date: string; timestamp: string }) => void
-  ): void {
-    if (!this.socket) {
-      return;
-    }
-
+  onDashboardRefresh(callback: (data: DashboardRefreshEnvelope) => void): void {
+    if (!this.socket) return;
     this.socket.on('attendance:dashboard:refresh', callback);
   }
 
-  /**
-   * Unsubscribe from attendance updates
-   */
-  offAttendanceUpdate(): void {
-    if (this.socket) {
-      this.socket.off('attendance:update');
-      this.socket.off('attendance:status');
-    }
+  onApprovalPending(callback: (data: AttendanceSocketEnvelope) => void): void {
+    if (!this.socket) return;
+    this.socket.on('attendance:approval:pending', callback);
   }
 
-  /**
-   * Unsubscribe from dashboard refresh
-   */
-  offDashboardRefresh(): void {
-    if (this.socket) {
-      this.socket.off('attendance:dashboard:refresh');
-    }
+  offAttendanceUpdate(callback: (data: AttendanceSocketEnvelope) => void): void {
+    if (!this.socket) return;
+    this.socket.off('attendance:update', callback);
+    this.socket.off('attendance:status', callback);
   }
 
-  /**
-   * Check if connected
-   */
+  offDashboardRefresh(callback: (data: DashboardRefreshEnvelope) => void): void {
+    if (!this.socket) return;
+    this.socket.off('attendance:dashboard:refresh', callback);
+  }
+
+  offApprovalPending(callback: (data: AttendanceSocketEnvelope) => void): void {
+    if (!this.socket) return;
+    this.socket.off('attendance:approval:pending', callback);
+  }
+
   isConnected(): boolean {
     return this.socket?.connected || false;
   }
 }
 
 export const socketService = new SocketService();
-

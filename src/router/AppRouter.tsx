@@ -8,6 +8,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-d
 import { ProtectedRoute, DashboardRedirect, RequireBranchModule } from '@/shared/components/routing';
 import { NavigationFocusHandler } from '@/shared/components/routing/NavigationFocusHandler';
 import { AppLayout } from '@/shared/components/layout';
+import { GlobalSearchProvider, GlobalSearchModal } from '@/features/inventory/components/GlobalSearch';
 import { UserRole } from '@/types';
 
 // Lazy load pages for code splitting - reduces initial bundle size
@@ -75,10 +76,12 @@ const LogsViewerHandler: React.FC = () => {
 export const AppRouter: React.FC = () => {
   return (
     <HashRouter>
-      <LogsViewerHandler />
-      <NavigationFocusHandler />
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
+      <GlobalSearchProvider>
+        <LogsViewerHandler />
+        <NavigationFocusHandler />
+        <GlobalSearchModal />
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
 
@@ -201,8 +204,9 @@ export const AppRouter: React.FC = () => {
 
           {/* Catch all - redirect to login */}
           <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </Suspense>
+          </Routes>
+        </Suspense>
+      </GlobalSearchProvider>
     </HashRouter>
   );
 };

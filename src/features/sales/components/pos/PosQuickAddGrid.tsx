@@ -3,10 +3,12 @@ import {
   inventoryService,
   catalogRows,
   ItemType,
+  ProductType,
   type CatalogVariantRow,
   type InventoryItem,
   type InventoryVariant,
 } from '@/services/inventory.service';
+import { posLineStockFlagsFromItem } from './resolveScan';
 import { usePriceResolver } from '../../hooks/usePriceResolver';
 import './PosQuickAddGrid.css';
 
@@ -74,8 +76,9 @@ function catalogRowsToItem(rows: CatalogVariantRow[]): InventoryItem {
     category: r.category,
     hasVariants: rows.length > 1,
     isActive: r.isActive,
-    isMisc: false,
-    itemType: ItemType.STOCK,
+    productType: r.productType ?? ProductType.STOCK_ITEM,
+    isMisc: r.isMisc ?? false,
+    itemType: r.itemType ?? ItemType.STOCK,
     branchId: '',
     createdBy: { id: '', name: '', email: '' },
     updatedBy: { id: '', name: '', email: '' },
@@ -152,7 +155,12 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
 
   const applyInStockFilter = useCallback((list: GridRow[]): GridRow[] => {
     let out = list;
-    if (inStockOnly) out = out.filter((r) => r.stock > 0);
+    if (inStockOnly) {
+      out = out.filter((r) => {
+        const flags = posLineStockFlagsFromItem(r.item);
+        return flags.isNonStock || flags.allowNegativeStock || r.stock > 0;
+      });
+    }
     return out.slice(0, 32);
   }, [inStockOnly]);
 
@@ -360,7 +368,10 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
                   ) : null}
                 </div>
                 <span className="pos-product-card__price">{priceLabel}</span>
-                <span className="pos-product-card__stock">Stock: {locationId ? row.stock : '—'}</span>
+                <span className="pos-product-card__stock">
+                  Stock:{' '}
+                  {!locationId || posLineStockFlagsFromItem(row.item).isNonStock ? '—' : row.stock}
+                </span>
               </button>
             );
           })

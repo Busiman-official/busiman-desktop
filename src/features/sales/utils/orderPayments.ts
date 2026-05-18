@@ -29,11 +29,41 @@ export type PaymentMethodLabelSource = Array<{ code: string; label: string }> | 
 
 export type OrderPaymentDisplayStatus =
   | 'on_account'
+  | 'partially_paid'
   | 'unpaid'
   | 'cancelled'
   | 'split'
   | 'single'
   | 'legacy_paid';
+
+export function orderCollectedAmount(order: { payments?: SalesOrderPaymentLine[] | unknown }): number {
+  const payments = normalizeOrderPayments(order.payments);
+  return Math.round(payments.reduce((s, p) => s + p.amount, 0) * 100) / 100;
+}
+
+export function orderOnAccountAmount(order: {
+  paymentPending?: boolean;
+  paymentPendingAmount?: number;
+  total?: number;
+}): number {
+  if (!order.paymentPending) return 0;
+  const pa = order.paymentPendingAmount;
+  if (pa != null && Number.isFinite(Number(pa))) return Math.round(Number(pa) * 100) / 100;
+  return Math.round(Number(order.total || 0) * 100) / 100;
+}
+
+/** Revenue recognized: collected tender if still on account, else full order total when settled. */
+export function orderRecognizedRevenue(order: {
+  status?: string;
+  paymentPending?: boolean;
+  paymentPendingAmount?: number;
+  total?: number;
+  payments?: SalesOrderPaymentLine[] | unknown;
+}): number {
+  if (String(order.status || '') !== 'completed') return 0;
+  if (order.paymentPending) return orderCollectedAmount(order);
+  return Math.round(Number(order.total || 0) * 100) / 100;
+}
 
 const KNOWN_METHOD_CODES = ['cash', 'card', 'upi', 'bank'] as const;
 export type KnownPaymentMethodCode = (typeof KNOWN_METHOD_CODES)[number];
@@ -118,6 +148,7 @@ export function resolveOrderPaymentSummary(
   order: {
     status?: string;
     paymentPending?: boolean;
+    paymentPendingAmount?: number;
     payments?: SalesOrderPaymentLine[] | unknown;
     total?: number;
   },
@@ -131,12 +162,22 @@ export function resolveOrderPaymentSummary(
   const st = String(order.status || '');
   const pend = Boolean(order.paymentPending);
   const payments = normalizeOrderPayments(order.payments);
+  const onAccount = orderOnAccountAmount(order);
 
   if (st === 'cancelled') {
     return { status: 'cancelled', summary: 'Cancelled', primaryMethod: null, payments };
   }
   if (st === 'completed' && pend) {
-    return { status: 'on_account', summary: 'On account', primaryMethod: null, payments };
+    const tender = formatOrderPayments(payments, methods);
+    const summary = payments.length
+      ? `${tender} · On account ${formatInrAmount(onAccount)}`
+      : `On account ${formatInrAmount(onAccount)}`;
+    return {
+      status: payments.length ? 'partially_paid' : 'on_account',
+      summary,
+      primaryMethod: getPrimaryPaymentMethod(payments),
+      payments,
+    };
   }
   if (st !== 'completed') {
     return { status: 'unpaid', summary: '—', primaryMethod: null, payments };

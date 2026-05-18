@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { attendanceService } from '@/services/attendance.service';
-import { socketService } from '@/services/socket.service';
+import { useAttendanceSocket } from '@/features/attendance/hooks/useAttendanceSocket';
 import { PendingApprovalRow, AttendanceApprovalLeg, AttendanceMarkingFrom } from '@/types';
 import { ConfirmDialog } from '@/shared/components/modals';
 import { Button } from '@/shared/components/ui';
@@ -61,19 +61,17 @@ export const AttendanceApprovalsPanel: React.FC = () => {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    socketService.connect();
-    const refresh = () => {
+  useAttendanceSocket({
+    onStatus: () => {
       void load({ silent: true });
-    };
-    socketService.onAttendanceUpdate(refresh);
-    socketService.onDashboardRefresh(refresh);
-
-    return () => {
-      socketService.offAttendanceUpdate();
-      socketService.offDashboardRefresh();
-    };
-  }, [load]);
+    },
+    onDashboardRefresh: () => {
+      void load({ silent: true });
+    },
+    onApprovalPending: () => {
+      void load({ silent: true });
+    },
+  });
 
   const removeRow = useCallback((row: PendingApprovalRow) => {
     const key = rowKey(row);
