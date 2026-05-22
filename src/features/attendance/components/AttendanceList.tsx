@@ -24,6 +24,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import { ModuleHeaderOutlineButton } from '@/shared/components/module-header/ModuleHeaderButton';
 import { logger } from '@/shared/utils/logger';
 import { canManualOverrideAttendance } from '@/features/attendance/utils/canManualOverrideAttendance';
+import { canMarkAttendanceForOthers } from '@/features/attendance/utils/attendanceAccess';
 import { localDateISO } from '@/features/attendance/utils/calendarDate';
 import './AttendanceList.css';
 
@@ -58,10 +59,7 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
     status: AttendanceSessionStatus;
   } | null>(null);
 
-  const canMarkForOthers =
-    role === UserRole.ADMIN ||
-    role === UserRole.HR ||
-    role === UserRole.MANAGER;
+  const canMarkForOthers = canMarkAttendanceForOthers(role, user?.branchDepartments);
 
   const loadAttendanceList = useCallback(async () => {
     setLoading(true);
@@ -71,10 +69,7 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
       const q = deferredSearch.trim();
       const data = await attendanceService.getDashboard({
         date: selectedDate,
-        department:
-          role === UserRole.MANAGER
-            ? user?.department
-            : departmentFilter || undefined,
+        department: role === UserRole.MANAGER ? undefined : departmentFilter || undefined,
         status: statusFilter || undefined,
         search: q || undefined,
         page,
@@ -223,10 +218,7 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
     try {
       const data = await attendanceService.getDashboard({
         date: selectedDate,
-        department:
-          role === UserRole.MANAGER
-            ? user?.department
-            : departmentFilter || undefined,
+        department: role === UserRole.MANAGER ? undefined : departmentFilter || undefined,
         status: statusFilter || undefined,
         search: deferredSearch.trim() || undefined,
         page: 1,

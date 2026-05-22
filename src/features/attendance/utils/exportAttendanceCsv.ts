@@ -11,6 +11,12 @@ type ExportRow = {
   totalDuration?: number;
   checkInApprovalStatus?: AttendanceApprovalStatus;
   checkOutApprovalStatus?: AttendanceApprovalStatus;
+  checkInRemoteNote?: string;
+  checkOutRemoteNote?: string;
+  checkInMarkingFrom?: string;
+  checkOutMarkingFrom?: string;
+  checkInRejectReason?: string;
+  checkOutRejectReason?: string;
 };
 
 function escapeCsvCell(value: string): string {
@@ -33,6 +39,12 @@ export function downloadAttendanceCsvFromRows(
     'Status',
     'Check-in approval',
     'Check-out approval',
+    'Check-in remote reason',
+    'Check-out remote reason',
+    'Check-in marking from',
+    'Check-out marking from',
+    'Check-in reject reason',
+    'Check-out reject reason',
     'Check-in',
     'Check-out',
     'Duration (minutes)',
@@ -50,6 +62,12 @@ export function downloadAttendanceCsvFromRows(
         escapeCsvCell(r.status),
         escapeCsvCell(r.checkInApprovalStatus || ''),
         escapeCsvCell(r.checkOutApprovalStatus || ''),
+        escapeCsvCell(r.checkInRemoteNote || ''),
+        escapeCsvCell(r.checkOutRemoteNote || ''),
+        escapeCsvCell(r.checkInMarkingFrom || ''),
+        escapeCsvCell(r.checkOutMarkingFrom || ''),
+        escapeCsvCell(r.checkInRejectReason || ''),
+        escapeCsvCell(r.checkOutRejectReason || ''),
         escapeCsvCell(r.checkInTime ? new Date(r.checkInTime).toLocaleString() : ''),
         escapeCsvCell(r.checkOutTime ? new Date(r.checkOutTime).toLocaleString() : ''),
         escapeCsvCell(r.totalDuration != null ? String(r.totalDuration) : ''),
@@ -86,24 +104,43 @@ export function historyRecordToExportRow(
   record: {
     employeeId?: string;
     employeeName?: string;
+    department?: string;
+    role?: string;
     status: AttendanceSessionStatus;
     checkInTime: string;
     checkOutTime?: string;
     totalDuration?: number;
-    checkInApproval?: { status?: AttendanceApprovalStatus; rejectReason?: string };
-    checkOutApproval?: { status?: AttendanceApprovalStatus; rejectReason?: string };
+    checkInApproval?: {
+      status?: AttendanceApprovalStatus;
+      remoteNote?: string;
+      markingFrom?: string;
+      rejectReason?: string;
+    };
+    checkOutApproval?: {
+      status?: AttendanceApprovalStatus;
+      remoteNote?: string;
+      markingFrom?: string;
+      rejectReason?: string;
+    };
   },
   dateLabel: string
-): ExportRow & { rejectReason?: string } {
+): ExportRow {
   return {
     employeeId: record.employeeId || '',
     employeeName: record.employeeName || '',
+    department: record.department,
+    role: record.role,
     status: record.status,
     checkInTime: record.checkInTime,
     checkOutTime: record.checkOutTime,
     totalDuration: record.totalDuration,
     checkInApprovalStatus: record.checkInApproval?.status,
     checkOutApprovalStatus: record.checkOutApproval?.status,
-    department: dateLabel,
+    checkInRemoteNote: record.checkInApproval?.remoteNote?.trim() ?? '',
+    checkOutRemoteNote: record.checkOutApproval?.remoteNote?.trim() ?? '',
+    checkInMarkingFrom: record.checkInApproval?.markingFrom ?? '',
+    checkOutMarkingFrom: record.checkOutApproval?.markingFrom ?? '',
+    checkInRejectReason: record.checkInApproval?.rejectReason?.trim() ?? '',
+    checkOutRejectReason: record.checkOutApproval?.rejectReason?.trim() ?? '',
   };
 }

@@ -13,7 +13,7 @@ import {
   normalizePosGstRatePercent,
   getLineTotalWithGst,
 } from './posLineMath';
-import { extractErrorMessage } from '@/utils/error';
+import { extractErrorMessage, isPosCheckoutBlockingError } from '@/utils/error';
 import { Modal } from '@/shared/components/modals/Modal';
 import {
   clearPosDraft,
@@ -1251,7 +1251,7 @@ export const PosShell: React.FC<Props> = ({
         );
       } catch (err: unknown) {
         const msg = extractErrorMessage(err, 'Checkout failed');
-        if (/session is closed/i.test(msg) || /counter session is closed/i.test(msg)) {
+        if (isPosCheckoutBlockingError(err)) {
           setCheckoutCustomerModal(false);
           setCheckoutErrorModal(msg);
         } else {

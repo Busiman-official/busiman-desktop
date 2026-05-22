@@ -583,16 +583,34 @@ export const salesService = {
 
   async listHistory(
     branchId?: string | null,
-    status?: string,
-    page = 1,
-    limit = 50
+    opts?: {
+      status?: string;
+      page?: number;
+      limit?: number;
+      mode?: string;
+      dateFilter?: string;
+      saleDate?: string;
+      amountFilter?: string;
+      paymentFilter?: string;
+      search?: string;
+      sortDesc?: boolean;
+    }
   ): Promise<{ items: unknown[]; total: number; page: number; limit: number } | unknown[]> {
+    const page = opts?.page ?? 1;
+    const limit = opts?.limit ?? 50;
     const response = await api.get('/sales/history', {
       params: {
         ...branchParams(branchId),
-        ...(status ? { status } : {}),
+        ...(opts?.status && opts.status !== 'all' ? { status: opts.status } : {}),
         page,
         limit,
+        ...(opts?.mode && opts.mode !== 'all' ? { mode: opts.mode } : {}),
+        ...(opts?.dateFilter && opts.dateFilter !== 'any' ? { dateFilter: opts.dateFilter } : {}),
+        ...(opts?.saleDate ? { saleDate: opts.saleDate } : {}),
+        ...(opts?.amountFilter && opts.amountFilter !== 'any' ? { amountFilter: opts.amountFilter } : {}),
+        ...(opts?.paymentFilter && opts.paymentFilter !== 'all' ? { paymentFilter: opts.paymentFilter } : {}),
+        ...(opts?.search?.trim() ? { search: opts.search.trim() } : {}),
+        sortDesc: opts?.sortDesc === false ? '0' : '1',
       },
     });
     const data = extractApiData(response);
@@ -600,6 +618,47 @@ export const salesService = {
       return data as { items: unknown[]; total: number; page: number; limit: number };
     }
     return Array.isArray(data) ? data : [];
+  },
+
+  async getHistoryStats(
+    branchId?: string | null,
+    opts?: {
+      mode?: string;
+      dateFilter?: string;
+      saleDate?: string;
+      amountFilter?: string;
+      paymentFilter?: string;
+      search?: string;
+      status?: string;
+    }
+  ): Promise<{
+    totalOrders: number;
+    revenueSum: number;
+    avgOrder: number;
+    pendingCount: number;
+    pendingUnpaid: number;
+    revenueTodayOnly: boolean;
+  }> {
+    const response = await api.get('/sales/history/stats', {
+      params: {
+        ...branchParams(branchId),
+        status: opts?.status ?? 'all',
+        mode: opts?.mode ?? 'all',
+        dateFilter: opts?.dateFilter ?? 'any',
+        ...(opts?.saleDate ? { saleDate: opts.saleDate } : {}),
+        amountFilter: opts?.amountFilter ?? 'any',
+        paymentFilter: opts?.paymentFilter ?? 'all',
+        ...(opts?.search?.trim() ? { search: opts.search.trim() } : {}),
+      },
+    });
+    return extractApiData(response) as {
+      totalOrders: number;
+      revenueSum: number;
+      avgOrder: number;
+      pendingCount: number;
+      pendingUnpaid: number;
+      revenueTodayOnly: boolean;
+    };
   },
 
   async upsertPriceListItem(
