@@ -1,6 +1,6 @@
 {
   "name": "busiman-desktop",
-  "version": "1.19.3",
+  "version": "1.19.4",
   "description": "Busiman Desktop Application",
   "main": "dist-electron/main.js",
   "author": {
@@ -9,7 +9,7 @@
   },
   "build": {
     "appId": "com.busiman.desktop",
-    "productName": "BusimanDesktop",
+    "productName": "BusimanDesktop",  
     "copyright": "Copyright © 2025 Busiman",
     "directories": {
       "buildResources": "build",

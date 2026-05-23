@@ -25,6 +25,11 @@ export function getLineDiscountAmount(line: PosCartLine): number {
   if (line.lineDiscountType === 'percent') {
     return Math.min(sub, Math.round(((sub * raw) / 100) * 100) / 100);
   }
+  const type = line.lineDiscountType ?? 'per_unit';
+  if (type === 'per_unit') {
+    const perQty = Math.max(0, line.quantity);
+    return Math.min(sub, Math.round(raw * perQty * 100) / 100);
+  }
   return Math.min(sub, Math.round(raw * 100) / 100);
 }
 

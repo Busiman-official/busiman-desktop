@@ -13,7 +13,7 @@ export interface PosCartLine {
   serialWarning?: boolean;
   batchWarning?: boolean;
   /** Per-line discount (this sale only). */
-  lineDiscountType?: 'flat' | 'percent';
+  lineDiscountType?: 'per_unit' | 'flat' | 'percent';
   lineDiscountValue?: number;
   /** Exclusive GST % on net after line discount; if omitted, panel uses branch default. */
   gstRatePercent?: number;

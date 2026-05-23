@@ -542,7 +542,7 @@ export const salesService = {
 
   async patchOrder(
     orderId: string,
-    body: { status?: 'completed' | 'cancelled'; paymentPending?: boolean },
+    body: { status?: 'completed' | 'cancelled'; paymentPending?: boolean; invoiceDate?: string },
     branchId?: string | null
   ) {
     const response = await api.patch(`/sales/orders/${orderId}`, body, { params: branchParams(branchId) });

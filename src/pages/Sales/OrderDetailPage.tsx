@@ -9,7 +9,8 @@ import { Button, Textarea } from '@/shared/components/ui';
 import { QuotationPdfViewerScreen } from '@/features/sales/components/panels/QuotationPdfViewerScreen';
 import type { QuotationShareLinkState } from '@/features/sales/components/panels/QuotationShareModal';
 import { extractErrorMessage } from '@/utils/error';
-import { Branch } from '@/types';
+import { Branch, UserRole } from '@/types';
+import { authStore } from '@/store/authStore';
 import { useSalesBranchId } from '@/features/sales/hooks/useSalesBranchId';
 import { docId, entityId } from '@/features/sales/utils/ids';
 import {
@@ -21,7 +22,7 @@ import {
   mapOrderLinesForCreateApi,
   orderLineGrossWithGst,
 } from '@/features/sales/utils/mapLinesForCreateOrder';
-import { orderSaleTimestampMs } from '@/utils/commercialDates';
+import { invoiceDateToYmd, orderSaleTimestampMs } from '@/utils/commercialDates';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
 import {
@@ -439,6 +440,8 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const branchId = useSalesBranchId();
   const navigate = useNavigate();
   const printOnceRef = useRef(false);
+  const user = authStore((s) => s.user);
+  const isAdmin = user?.role === UserRole.ADMIN;
 
   const [order, setOrder] = useState<OrderDoc | null>(null);
   const [customerDetail, setCustomerDetail] = useState<CustomerDetailPayload | null>(null);
@@ -448,6 +451,9 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const [detailTab, setDetailTab] = useState<'activity' | 'notes' | 'documents'>('activity');
   const [noteDraft, setNoteDraft] = useState('');
   const [localNotes, setLocalNotes] = useState<Array<{ id: string; text: string; author: string; at: string }>>([]);
+  const [saleDateDraftYmd, setSaleDateDraftYmd] = useState('');
+  const [saleDateSaving, setSaleDateSaving] = useState(false);
+  const [saleDateErr, setSaleDateErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!orderId) {
@@ -466,6 +472,8 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
     try {
       const o = (await salesService.getOrder(orderId, branchId)) as OrderDoc;
       setOrder(o);
+      setSaleDateDraftYmd(invoiceDateToYmd(o.invoiceDate) || invoiceDateToYmd(o.createdAt));
+      setSaleDateErr(null);
       const cid = idStr(o.customerId);
       if (cid) {
         salesService
@@ -710,6 +718,35 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   }, [customerDetail?.orders, orderId]);
 
   const customerIdForLink = idStr(order?.customerId);
+
+  const saleDateDisplay =
+    saleInstant != null
+      ? saleInstant.toLocaleDateString(undefined, { dateStyle: 'medium' })
+      : '—';
+  const saleDateDirty =
+    isAdmin &&
+    saleDateDraftYmd !== '' &&
+    saleDateDraftYmd !== (invoiceDateToYmd(order?.invoiceDate) || invoiceDateToYmd(order?.createdAt));
+  const canEditSaleDate = isAdmin && order?.status !== 'cancelled';
+
+  const saveSaleDate = async () => {
+    if (!orderId || !branchId || !saleDateDraftYmd || !/^\d{4}-\d{2}-\d{2}$/.test(saleDateDraftYmd)) return;
+    setSaleDateSaving(true);
+    setSaleDateErr(null);
+    try {
+      const updated = (await salesService.patchOrder(
+        orderId,
+        { invoiceDate: saleDateDraftYmd },
+        branchId
+      )) as OrderDoc;
+      setOrder(updated);
+      setSaleDateDraftYmd(invoiceDateToYmd(updated.invoiceDate) || saleDateDraftYmd);
+    } catch (e: unknown) {
+      setSaleDateErr(extractErrorMessage(e, 'Failed to update sale date'));
+    } finally {
+      setSaleDateSaving(false);
+    }
+  };
 
   const saveNote = () => {
     const t = noteDraft.trim();
@@ -1143,10 +1180,6 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                       ['Sales point', spName],
                       ['Cashier', cashierLabel],
                       ['Branch', branchName],
-                      [
-                        'Sale date',
-                        saleInstant ? saleInstant.toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—',
-                      ],
                       ['Entered (system)', created ? created.toLocaleString() : '—'],
                       [
                         'Completed',
@@ -1160,6 +1193,43 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                       <span>{v}</span>
                     </div>
                   ))}
+                  <div className="order-detail__kv-row order-detail__kv-row--sale-date">
+                    <span>Sale date</span>
+                    {canEditSaleDate ? (
+                      <div className="order-detail__sale-date-edit">
+                        <input
+                          type="date"
+                          className="order-detail__sale-date-input"
+                          value={saleDateDraftYmd}
+                          min="2000-01-01"
+                          disabled={saleDateSaving}
+                          aria-label="Sale date"
+                          onChange={(e) => {
+                            setSaleDateDraftYmd(e.target.value);
+                            setSaleDateErr(null);
+                          }}
+                        />
+                        {saleDateDirty ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="sm"
+                            disabled={saleDateSaving}
+                            onClick={() => void saveSaleDate()}
+                          >
+                            {saleDateSaving ? 'Saving…' : 'Save'}
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span>{saleDateDisplay}</span>
+                    )}
+                  </div>
+                  {saleDateErr ? (
+                    <p className="order-detail__sale-date-err" role="alert">
+                      {saleDateErr}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>

@@ -160,14 +160,23 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
           <div className="pos-detail-discount-row">
             <Select
               label="Type"
-              value={line.lineDiscountType ?? 'flat'}
-              onChange={(e) => onUpdate({ lineDiscountType: e.target.value as 'flat' | 'percent' })}
+              value={line.lineDiscountType ?? 'per_unit'}
+              onChange={(e) =>
+                onUpdate({ lineDiscountType: e.target.value as 'per_unit' | 'flat' | 'percent' })
+              }
             >
+              <option value="per_unit">Per product (₹)</option>
               <option value="flat">Flat (₹)</option>
               <option value="percent">Percentage (%)</option>
             </Select>
             <Input
-              label={line.lineDiscountType === 'percent' ? 'Percent' : 'Amount (₹)'}
+              label={
+                line.lineDiscountType === 'percent'
+                  ? 'Percent'
+                  : line.lineDiscountType === 'flat'
+                    ? 'Amount (₹)'
+                    : 'Per unit (₹)'
+              }
               type="number"
               onFocus={(e) => e.target.select()}
               min={0}

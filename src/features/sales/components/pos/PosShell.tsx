@@ -611,7 +611,7 @@ export const PosShell: React.FC<Props> = ({
           allowNegativeStock: meta.allowNegativeStock,
           serialWarning: meta.serialWarning,
           batchWarning: meta.batchWarning,
-          lineDiscountType: 'flat',
+          lineDiscountType: 'per_unit',
           lineDiscountValue: 0,
           gstRatePercent: gstOpt,
           notes: noteOpt || '',

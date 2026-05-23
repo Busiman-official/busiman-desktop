@@ -132,8 +132,10 @@ export const PurchasesPage: React.FC = () => {
     setSearchParams(p, { replace: true });
   };
 
-  const onCreated = (order: PurchaseOrder) => {
-    navigate(`/purchases/orders/${order.id}?tab=orders`, { replace: true });
+  const onCreated = (order: PurchaseOrder, mode: 'draft' | 'send' | 'confirm') => {
+    if (mode === 'confirm') {
+      navigate(`/purchases/orders/${order.id}?tab=orders`, { replace: true });
+    }
   };
 
   const cancelDetailOrder = async () => {
@@ -151,7 +153,12 @@ export const PurchasesPage: React.FC = () => {
     }
   };
 
-  const headerTitle = tab === 'orders' ? 'Orders' : tab.charAt(0).toUpperCase() + tab.slice(1);
+  const headerTitle =
+    tab === 'orders' && mode === 'create'
+      ? 'Create order'
+      : tab === 'orders'
+        ? 'Orders'
+        : tab.charAt(0).toUpperCase() + tab.slice(1);
 
   return (
     <main style={{ display: 'grid', gap: 12 }}>
@@ -185,6 +192,7 @@ export const PurchasesPage: React.FC = () => {
         <PurchaseOrderCreatePage
           branchId={branchId}
           supplierOptions={supplierOptions}
+          orderRows={rows}
           onCancel={() => navigate('/purchases?tab=orders', { replace: true })}
           onSaved={onCreated}
         />

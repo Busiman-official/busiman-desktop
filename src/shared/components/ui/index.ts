@@ -10,6 +10,9 @@ export type { ButtonProps } from './Button';
 export { Input } from './Input';
 export type { InputProps } from './Input';
 
+export { SearchCombobox } from './SearchCombobox';
+export type { SearchComboboxProps, SearchComboboxCreatePolicy } from './SearchCombobox';
+
 export { Textarea } from './Textarea';
 export type { TextareaProps } from './Textarea';
 
