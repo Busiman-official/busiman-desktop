@@ -481,6 +481,34 @@
   text-align: right;
 }
 
+.order-detail__unit-price-input {
+  width: 100%;
+  max-width: 108px;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #0f172a;
+  background: #fff;
+}
+
+.order-detail__line-price-actions {
+  padding: 10px 16px 0;
+}
+
+.order-detail__line-price-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.order-detail__line-price-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
 .order-detail__kv-row span:last-child {
   font-weight: 600;
   color: #0f172a;

@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { Link, useMatch, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Textarea } from '@/shared/components/ui';
 import { QuotationPdfViewerScreen } from '@/features/sales/components/panels/QuotationPdfViewerScreen';
+import { OrderReceiptPdfViewerScreen } from '@/features/sales/components/panels/OrderReceiptPdfViewerScreen';
 import type { QuotationShareLinkState } from '@/features/sales/components/panels/QuotationShareModal';
 import { extractErrorMessage } from '@/utils/error';
 import { Branch, UserRole } from '@/types';
@@ -16,27 +17,40 @@ import { docId, entityId } from '@/features/sales/utils/ids';
 import {
   salesService,
   type CustomerDetailPayload,
+  type OrderLinePriceOverride,
   type SalesQuotation,
 } from '@/services/sales.service';
 import {
   mapOrderLinesForCreateApi,
   orderLineGrossWithGst,
 } from '@/features/sales/utils/mapLinesForCreateOrder';
-import { invoiceDateToYmd, orderSaleTimestampMs } from '@/utils/commercialDates';
+import { formatCommercialCalendarDate, invoiceDateToYmd, orderSaleTimestampMs } from '@/utils/commercialDates';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
 import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
 import {
+  RecordPickupPaymentModal,
+  type FulfillmentModalMode,
+  type FulfillmentOrderLine,
+} from '@/features/sales/components/fulfillment/RecordPickupPaymentModal';
+import { isOnAccountMethodCode, type PosPaymentOption } from '@/features/sales/components/pos/posPaymentSplit';
+import {
+  formatInrAmount,
+  normalizeOrderPayments,
   orderCollectedAmount,
+  paymentMethodLabel,
   resolveOrderPaymentSummary,
   type SalesOrderPaymentLine,
 } from '@/features/sales/utils/orderPayments';
 import './OrderDetailPage.css';
 
 type OrderLine = {
+  orderLineId?: string;
   variantId?: unknown;
   variantCode?: string;
   variantName?: string;
   quantity?: number;
+  fulfilledQty?: number;
+  pendingPickQty?: number;
   unitPrice?: number;
   lineTotal?: number;
   posListUnitPrice?: number;
@@ -46,6 +60,24 @@ type OrderLine = {
   posHsn?: string;
   posGstInclusive?: boolean;
 };
+
+type SalesFulfillmentRow = {
+  _id?: string;
+  status?: string;
+  pickupDate?: string;
+  createdAt?: string;
+  lines?: Array<{ quantity?: number; pickedQty?: number; orderLineId?: unknown }>;
+};
+
+function fulfillmentActivityLabel(f: SalesFulfillmentRow): string {
+  const pickQty = (f.lines || []).reduce((s, l) => s + Number(l.pickedQty ?? l.quantity ?? 0), 0);
+  const when = f.pickupDate
+    ? formatCommercialCalendarDate(f.pickupDate)
+    : f.createdAt
+      ? formatCommercialCalendarDate(f.createdAt)
+      : '—';
+  return `${when} · ${String(f.status || 'pickup')} · ${pickQty} unit(s)`;
+}
 
 type OrderDoc = {
   _id?: string;
@@ -69,6 +101,11 @@ type OrderDoc = {
   branchId?: unknown;
   createdBy?: unknown;
   lines?: OrderLine[];
+  fulfillments?: SalesFulfillmentRow[];
+  totalPickedQty?: number;
+  totalPendingPickQty?: number;
+  balanceDue?: number;
+  collectedAmount?: number;
   /** Business sale / invoice date (UTC calendar day from API). */
   invoiceDate?: string;
   createdAt?: string;
@@ -78,6 +115,86 @@ type OrderDoc = {
 
 function formatInr(n: number): string {
   return `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Customer-facing per-unit price (list/tag); falls back to stored unitPrice for legacy lines. */
+function lineDisplayUnitPrice(ln: OrderLine): number {
+  if (ln.posListUnitPrice != null && Number.isFinite(Number(ln.posListUnitPrice))) {
+    return Number(ln.posListUnitPrice);
+  }
+  return Number(ln.unitPrice ?? 0);
+}
+
+function linePriceDraftKey(idx: number): string {
+  return String(idx);
+}
+
+function buildLinePriceOverrides(
+  lines: OrderLine[],
+  drafts: Record<string, string>
+): OrderLinePriceOverride[] {
+  const out: OrderLinePriceOverride[] = [];
+  lines.forEach((ln, idx) => {
+    const draftRaw = drafts[linePriceDraftKey(idx)];
+    if (draftRaw === undefined) return;
+    const draft = Number(draftRaw);
+    const orig = lineDisplayUnitPrice(ln);
+    if (!Number.isFinite(draft) || draft < 0) return;
+    if (Math.abs(draft - orig) < 0.0001) return;
+    out.push({ lineIndex: idx, unitPrice: Math.round(draft * 10000) / 10000 });
+  });
+  return out;
+}
+
+function linePriceDraftsFromOrder(lines: OrderLine[]): Record<string, string> {
+  const drafts: Record<string, string> = {};
+  lines.forEach((ln, idx) => {
+    drafts[linePriceDraftKey(idx)] = String(lineDisplayUnitPrice(ln));
+  });
+  return drafts;
+}
+
+function validateLinePriceDrafts(lines: OrderLine[], drafts: Record<string, string>): string | null {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const raw = drafts[linePriceDraftKey(idx)];
+    const n = Number(raw);
+    if (raw === '' || raw === undefined || !Number.isFinite(n) || n < 0) {
+      return 'Enter valid unit prices (0 or greater) on every line.';
+    }
+  }
+  return null;
+}
+
+const DEFAULT_PAY_OPTS: PosPaymentOption[] = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'card', label: 'Card' },
+  { value: 'upi', label: 'UPI' },
+];
+
+function paymentOptionsFromSettings(
+  s: { paymentMethods?: Array<{ code: string; label: string; enabled?: boolean; sortOrder?: number }> } | null
+): PosPaymentOption[] {
+  if (!s?.paymentMethods?.length) return DEFAULT_PAY_OPTS;
+  const enabled = [...s.paymentMethods]
+    .filter((p) => p.enabled !== false)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    .map((p) => ({ value: p.code, label: p.label }));
+  return enabled.length > 0 ? enabled : DEFAULT_PAY_OPTS;
+}
+
+function mapOrderFulfillmentLines(order: OrderDoc): FulfillmentOrderLine[] {
+  return (order.lines || []).map((ln) => {
+    const ordered = Number(ln.quantity ?? 0);
+    const picked = Number(ln.fulfilledQty ?? 0);
+    return {
+      orderLineId: String(ln.orderLineId ?? ''),
+      variantName: ln.variantName,
+      variantCode: ln.variantCode,
+      quantity: ordered,
+      fulfilledQty: picked,
+      pendingPickQty: ln.pendingPickQty ?? Math.max(0, ordered - picked),
+    };
+  });
 }
 
 function initials(name: string): string {
@@ -99,7 +216,7 @@ function idStr(v: unknown): string {
 /** Sticky actions on the right of Sales module header */
 export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const branchId = useSalesBranchId();
   const [orderCustomerId, setOrderCustomerId] = useState<string | null>(null);
   const [orderSnap, setOrderSnap] = useState<OrderDoc | null>(null);
@@ -113,7 +230,15 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
     pdfBlob: Blob;
   } | null>(null);
   const [printQuotationBusy, setPrintQuotationBusy] = useState(false);
+  const [printReceiptBusy, setPrintReceiptBusy] = useState(false);
+  const [receiptViewer, setReceiptViewer] = useState<{
+    orderNumber: string;
+    customerName: string;
+    pdfBlobUrl: string;
+    pdfBlob: Blob;
+  } | null>(null);
   const quotationPdfUrlRef = useRef<string | null>(null);
+  const receiptPdfUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!branchId || !orderId) {
@@ -148,6 +273,10 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
         URL.revokeObjectURL(quotationPdfUrlRef.current);
         quotationPdfUrlRef.current = null;
       }
+      if (receiptPdfUrlRef.current) {
+        URL.revokeObjectURL(receiptPdfUrlRef.current);
+        receiptPdfUrlRef.current = null;
+      }
     };
   }, []);
 
@@ -158,6 +287,42 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
       quotationPdfUrlRef.current = null;
     }
   }, []);
+
+  const closeReceiptPdfViewer = useCallback(() => {
+    setReceiptViewer(null);
+    if (receiptPdfUrlRef.current) {
+      URL.revokeObjectURL(receiptPdfUrlRef.current);
+      receiptPdfUrlRef.current = null;
+    }
+  }, []);
+
+  const openPrintReceiptViewer = useCallback(async () => {
+    if (!branchId || !orderId) return;
+    setPrintReceiptBusy(true);
+    try {
+      const blob = await salesService.downloadOrderReceiptPdfBlob(orderId, branchId);
+      const orderNumber =
+        (orderSnap?.orderNumber && String(orderSnap.orderNumber)) || orderId.slice(-8);
+      const cid = orderCustomerId || (orderSnap?.customerId ? idStr(orderSnap.customerId) : '');
+      let customerName = 'Walk-in customer';
+      if (cid) {
+        try {
+          const c = await salesService.getCustomer(cid, branchId);
+          customerName = c.name?.trim() || customerName;
+        } catch {
+          /* keep default */
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      if (receiptPdfUrlRef.current) URL.revokeObjectURL(receiptPdfUrlRef.current);
+      receiptPdfUrlRef.current = url;
+      setReceiptViewer({ orderNumber, customerName, pdfBlobUrl: url, pdfBlob: blob });
+    } catch (e: unknown) {
+      window.alert(extractErrorMessage(e, 'Could not open sale receipt'));
+    } finally {
+      setPrintReceiptBusy(false);
+    }
+  }, [branchId, orderId, orderCustomerId, orderSnap]);
 
   const openPrintQuotationViewer = useCallback(async () => {
     if (!branchId || !orderId) return;
@@ -250,11 +415,29 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
     }
   }, [branchId, orderId, orderCustomerId, orderSnap]);
 
+  const printOnceRef = useRef(false);
+  useEffect(() => {
+    printOnceRef.current = false;
+  }, [orderId]);
+
+  useEffect(() => {
+    if (searchParams.get('print') !== '1' || printOnceRef.current) return;
+    if (orderSnap?.mode === 'b2b' && orderSnap?.status === 'draft') return;
+    printOnceRef.current = true;
+    const t = window.setTimeout(() => {
+      void openPrintReceiptViewer().finally(() => {
+        const p = new URLSearchParams(searchParams);
+        p.delete('print');
+        setSearchParams(p, { replace: true });
+      });
+    }, 450);
+    return () => clearTimeout(t);
+  }, [searchParams, orderSnap, openPrintReceiptViewer, setSearchParams]);
+
   const isQuotationDraft = orderSnap?.mode === 'b2b' && orderSnap?.status === 'draft';
   const isPendingPayment =
     orderSnap?.status === 'completed' && Boolean((orderSnap as OrderDoc).paymentPending);
 
-  const printReceipt = () => window.print();
 
 
   const goToReturnsForOrder = () => {
@@ -380,8 +563,13 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
         </Button>
       )}
       {!isQuotationDraft && (
-        <Button type="button" variant="secondary" onClick={printReceipt}>
-          Print Receipt
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={printReceiptBusy}
+          onClick={() => void openPrintReceiptViewer()}
+        >
+          {printReceiptBusy ? 'Opening…' : 'Print Receipt'}
         </Button>
       )}
 
@@ -411,17 +599,29 @@ export function OrderDetailHeaderActions({ orderId }: { orderId: string }) {
 
       {quotationViewer
         ? createPortal(
-            <QuotationPdfViewerScreen
-              quotation={quotationViewer.quotation}
-              customerName={quotationViewer.customerName}
-              customerPhone={quotationViewer.customerPhone}
-              shareLink={quotationViewer.shareLink}
-              pdfBlobUrl={quotationViewer.pdfBlobUrl}
-              pdfBlob={quotationViewer.pdfBlob}
-              onBack={closeQuotationPdfViewer}
-            />,
-            document.body
-          )
+          <QuotationPdfViewerScreen
+            quotation={quotationViewer.quotation}
+            customerName={quotationViewer.customerName}
+            customerPhone={quotationViewer.customerPhone}
+            shareLink={quotationViewer.shareLink}
+            pdfBlobUrl={quotationViewer.pdfBlobUrl}
+            pdfBlob={quotationViewer.pdfBlob}
+            onBack={closeQuotationPdfViewer}
+          />,
+          document.body
+        )
+        : null}
+      {receiptViewer
+        ? createPortal(
+          <OrderReceiptPdfViewerScreen
+            orderNumber={receiptViewer.orderNumber}
+            customerName={receiptViewer.customerName}
+            pdfBlobUrl={receiptViewer.pdfBlobUrl}
+            pdfBlob={receiptViewer.pdfBlob}
+            onClose={closeReceiptPdfViewer}
+          />,
+          document.body
+        )
         : null}
     </>
   );
@@ -439,7 +639,6 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const [searchParams, setSearchParams] = useSearchParams();
   const branchId = useSalesBranchId();
   const navigate = useNavigate();
-  const printOnceRef = useRef(false);
   const user = authStore((s) => s.user);
   const isAdmin = user?.role === UserRole.ADMIN;
 
@@ -454,6 +653,22 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const [saleDateDraftYmd, setSaleDateDraftYmd] = useState('');
   const [saleDateSaving, setSaleDateSaving] = useState(false);
   const [saleDateErr, setSaleDateErr] = useState<string | null>(null);
+  const [linePriceDrafts, setLinePriceDrafts] = useState<Record<string, string>>({});
+  const [linePriceSaving, setLinePriceSaving] = useState(false);
+  const [linePriceErr, setLinePriceErr] = useState<string | null>(null);
+  const [paymentMethodDrafts, setPaymentMethodDrafts] = useState<string[]>([]);
+  const [paymentMethodSavingIndex, setPaymentMethodSavingIndex] = useState<number | null>(null);
+  const [paymentMethodErr, setPaymentMethodErr] = useState<string | null>(null);
+  const [fulfillmentModalOpen, setFulfillmentModalOpen] = useState(false);
+  const [fulfillmentModalMode, setFulfillmentModalMode] = useState<FulfillmentModalMode>('full');
+  const [salesSettings, setSalesSettings] = useState<{
+    paymentMethods?: Array<{ code: string; label: string; enabled?: boolean; sortOrder?: number }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!branchId) return;
+    salesService.getSettings(branchId).then(setSalesSettings).catch(() => setSalesSettings(null));
+  }, [branchId]);
 
   const load = useCallback(async () => {
     if (!orderId) {
@@ -474,6 +689,10 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
       setOrder(o);
       setSaleDateDraftYmd(invoiceDateToYmd(o.invoiceDate) || invoiceDateToYmd(o.createdAt));
       setSaleDateErr(null);
+      setLinePriceErr(null);
+      setLinePriceDrafts(linePriceDraftsFromOrder(o.lines || []));
+      setPaymentMethodDrafts(normalizeOrderPayments(o.payments).map((p) => p.methodCode));
+      setPaymentMethodErr(null);
       const cid = idStr(o.customerId);
       if (cid) {
         salesService
@@ -498,22 +717,6 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    printOnceRef.current = false;
-  }, [orderId]);
-
-  useEffect(() => {
-    if (loading || !order || searchParams.get('print') !== '1' || printOnceRef.current) return;
-    printOnceRef.current = true;
-    const t = window.setTimeout(() => {
-      window.print();
-      const p = new URLSearchParams(searchParams);
-      p.delete('print');
-      setSearchParams(p, { replace: true });
-    }, 450);
-    return () => clearTimeout(t);
-  }, [loading, order, orderId, searchParams, setSearchParams]);
 
   useEffect(() => {
     const VALID_CTABS = new Set([
@@ -575,14 +778,6 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
 
   const deliveryAmount = 0;
   const paymentPendingFlag = Boolean(order?.paymentPending);
-  const amountOwingOnAccount =
-    paymentPendingFlag && order?.status === 'completed'
-      ? (() => {
-        const pa = (order as OrderDoc).paymentPendingAmount;
-        if (pa != null && Number.isFinite(Number(pa))) return Number(pa);
-        return Number(order?.total ?? 0);
-      })()
-      : 0;
   const paymentPaid = order?.status === 'completed' && !paymentPendingFlag;
   const collectedAtSale = order ? orderCollectedAmount(order as OrderDoc) : 0;
   const paymentLabel =
@@ -614,6 +809,50 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
   const discount = Number(order?.discountAmount ?? 0);
   const tax = Number(order?.taxAmount ?? 0);
   const total = Number(order?.total ?? 0);
+
+  const balanceDue =
+    order?.balanceDue != null && Number.isFinite(Number(order.balanceDue))
+      ? Number(order.balanceDue)
+      : Math.max(0, total - collectedAtSale);
+  const amountOwingOnAccount = paymentPendingFlag
+    ? (() => {
+      const pa = (order as OrderDoc).paymentPendingAmount;
+      if (pa != null && Number.isFinite(Number(pa))) return Number(pa);
+      return balanceDue > 0 ? balanceDue : total;
+    })()
+    : 0;
+
+  const totalPickedQty = Number(order?.totalPickedQty ?? 0);
+  const totalPendingPickQty =
+    order?.totalPendingPickQty != null
+      ? Number(order.totalPendingPickQty)
+      : Math.max(0, qtySum - totalPickedQty);
+  const canRecordPickup =
+    ['confirmed', 'fulfilling'].includes(String(order?.status || '')) && totalPendingPickQty > 0;
+  const canRecordPayment = paymentPendingFlag && balanceDue > 0;
+
+  const openFulfillmentModal = (mode: FulfillmentModalMode) => {
+    setFulfillmentModalMode(mode);
+    setFulfillmentModalOpen(true);
+  };
+  const payOpts = useMemo(() => paymentOptionsFromSettings(salesSettings), [salesSettings]);
+  const payOptsForEdit = useMemo(
+    () => payOpts.filter((p) => !isOnAccountMethodCode(p.value)),
+    [payOpts]
+  );
+  const fulfillmentLines = useMemo(
+    () => (order ? mapOrderFulfillmentLines(order) : []),
+    [order]
+  );
+  const salesPointSessionOpen = useMemo(() => {
+    const sp = order?.salesPointId;
+    if (sp && typeof sp === 'object' && sp !== null && 'sessionStatus' in sp) {
+      return String((sp as { sessionStatus?: string }).sessionStatus) === 'open';
+    }
+    const sid = idStr(order?.salesPointId);
+    const row = salesPoints.find((s) => docId(s as { _id?: string; id?: string }) === sid);
+    return String((row as { sessionStatus?: string } | undefined)?.sessionStatus || '') === 'open';
+  }, [order?.salesPointId, salesPoints]);
 
   const created = order?.createdAt ? new Date(order.createdAt) : null;
   const updated = order?.updatedAt ? new Date(order.updatedAt) : null;
@@ -669,7 +908,46 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
         ts: order.updatedAt ? new Date(order.updatedAt).toLocaleString() : ca,
       });
     }
-    if (order.status === 'completed' && !(order as OrderDoc).paymentPending) {
+    const pickupEvents = [...((order as OrderDoc).fulfillments || [])].sort((a, b) => {
+      const ta = a.pickupDate
+        ? new Date(a.pickupDate).getTime()
+        : a.createdAt
+          ? new Date(a.createdAt).getTime()
+          : 0;
+      const tb = b.pickupDate
+        ? new Date(b.pickupDate).getTime()
+        : b.createdAt
+          ? new Date(b.createdAt).getTime()
+          : 0;
+      return ta - tb;
+    });
+    pickupEvents.forEach((f, i) => {
+      const pickQty = (f.lines || []).reduce((s, l) => s + Number(l.pickedQty ?? l.quantity ?? 0), 0);
+      rows.push({
+        key: `pickup-${f._id ?? i}`,
+        dot: 'blue',
+        title: `Pickup — ${String(f.status || 'partial')}`,
+        desc: `${pickQty} unit(s) picked`,
+        ts: f.pickupDate
+          ? formatCommercialCalendarDate(f.pickupDate)
+          : f.createdAt
+            ? formatCommercialCalendarDate(f.createdAt)
+            : '—',
+      });
+    });
+
+    const tenderLines = normalizeOrderPayments((order as OrderDoc).payments);
+    if (tenderLines.length > 0) {
+      tenderLines.forEach((p, i) => {
+        rows.push({
+          key: `pay-${i}`,
+          dot: 'green',
+          title: `Payment — ${paymentMethodLabel(p.methodCode)}`,
+          desc: formatInrAmount(p.amount),
+          ts: p.paidAt ? formatCommercialCalendarDate(p.paidAt) : order.updatedAt ? new Date(order.updatedAt).toLocaleString() : ca,
+        });
+      });
+    } else if (order.status === 'completed' && !(order as OrderDoc).paymentPending) {
       rows.push({
         key: 'p',
         dot: 'green',
@@ -729,6 +1007,67 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
     saleDateDraftYmd !== (invoiceDateToYmd(order?.invoiceDate) || invoiceDateToYmd(order?.createdAt));
   const canEditSaleDate = isAdmin && order?.status !== 'cancelled';
 
+  const canEditLinePrices = isAdmin && order?.status !== 'cancelled';
+  const canEditPaymentMethods =
+    isAdmin &&
+    order?.status !== 'cancelled' &&
+    normalizeOrderPayments(order?.payments).length > 0;
+
+  const linePriceOverrides = useMemo(
+    () => (order?.lines?.length ? buildLinePriceOverrides(order.lines, linePriceDrafts) : []),
+    [order?.lines, linePriceDrafts]
+  );
+
+  const linePriceDirty = canEditLinePrices && linePriceOverrides.length > 0;
+
+  const saveLinePrices = async () => {
+    if (!orderId || !branchId || linePriceOverrides.length === 0) return;
+    const validationErr = validateLinePriceDrafts(lineItems, linePriceDrafts);
+    if (validationErr) {
+      setLinePriceErr(validationErr);
+      return;
+    }
+    setLinePriceSaving(true);
+    setLinePriceErr(null);
+    try {
+      const updated = (await salesService.patchOrder(
+        orderId,
+        { lineOverrides: linePriceOverrides },
+        branchId
+      )) as OrderDoc;
+      setOrder(updated);
+      setLinePriceDrafts(linePriceDraftsFromOrder(updated.lines || []));
+    } catch (e: unknown) {
+      setLinePriceErr(extractErrorMessage(e, 'Failed to update line prices'));
+    } finally {
+      setLinePriceSaving(false);
+    }
+  };
+
+  const applyPaymentMethodChange = async (index: number, methodCode: string) => {
+    if (!orderId || !branchId || !canEditPaymentMethods) return;
+    const prev = [...paymentMethodDrafts];
+    const next = [...paymentMethodDrafts];
+    next[index] = methodCode;
+    setPaymentMethodDrafts(next);
+    setPaymentMethodSavingIndex(index);
+    setPaymentMethodErr(null);
+    try {
+      const updated = (await salesService.patchOrder(
+        orderId,
+        { paymentMethods: next },
+        branchId
+      )) as OrderDoc;
+      setOrder(updated);
+      setPaymentMethodDrafts(normalizeOrderPayments(updated.payments).map((p) => p.methodCode));
+    } catch (e: unknown) {
+      setPaymentMethodDrafts(prev);
+      setPaymentMethodErr(extractErrorMessage(e, 'Failed to update payment method'));
+    } finally {
+      setPaymentMethodSavingIndex(null);
+    }
+  };
+
   const saveSaleDate = async () => {
     if (!orderId || !branchId || !saleDateDraftYmd || !/^\d{4}-\d{2}-\d{2}$/.test(saleDateDraftYmd)) return;
     setSaleDateSaving(true);
@@ -784,7 +1123,50 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
 
   return (
     <div className="order-detail">
-      {paymentPendingFlag ? (
+      {canRecordPickup ? (
+        <div
+          className="order-detail__banner-pickup"
+          role="status"
+          style={{
+            padding: '10px 16px',
+            background: '#eff6ff',
+            borderBottom: '1px solid #bfdbfe',
+            color: '#1e3a8a',
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
+            <span>
+              <strong>Partial pickup</strong> — Picked {totalPickedQty} of {qtySum} units
+              {totalPendingPickQty > 0 ? ` · ${totalPendingPickQty} pending` : ''}
+            </span>
+            {canRecordPayment ? (
+              <span style={{ color: '#92400e', fontSize: 12 }}>
+                Payment pending
+                {collectedAtSale > 0
+                  ? ` — ${formatInr(collectedAtSale)} received · ${formatInr(amountOwingOnAccount)} still due`
+                  : ` — ${formatInr(amountOwingOnAccount)} due`}
+                {' '}(order total {formatInr(total)})
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+            <Button type="button" variant="primary" size="sm" onClick={() => openFulfillmentModal('full')}>
+              Record pickup
+            </Button>
+            {canRecordPayment ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => openFulfillmentModal('payment-only')}>
+                Record payment
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : canRecordPayment ? (
         <div
           className="order-detail__banner-oa"
           role="status"
@@ -794,13 +1176,22 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
             borderBottom: '1px solid #fde68a',
             color: '#78350f',
             fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
           }}
         >
-          <strong>Payment pending</strong>
-          {collectedAtSale > 0
-            ? ` — ${formatInr(collectedAtSale)} received · ${formatInr(amountOwingOnAccount)} still on account (order total ${formatInr(total)}).`
-            : ` — ${formatInr(amountOwingOnAccount)} on account for this order (order total ${formatInr(total)}).`}
-          {' '}Record payment in Customers → Payments.
+          <span>
+            <strong>Payment pending</strong>
+            {collectedAtSale > 0
+              ? ` — ${formatInr(collectedAtSale)} received · ${formatInr(amountOwingOnAccount)} still due (order total ${formatInr(total)}).`
+              : ` — ${formatInr(amountOwingOnAccount)} due for this order (order total ${formatInr(total)}).`}
+          </span>
+          <Button type="button" variant="primary" size="sm" onClick={() => openFulfillmentModal('payment-only')}>
+            Record payment
+          </Button>
         </div>
       ) : null}
       {/* <div className="order-detail__summary">
@@ -875,7 +1266,9 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                     <th style={{ width: 52 }} />
                     <th>Product</th>
                     <th>Qty</th>
-                    <th>Unit</th>
+                    <th>Picked</th>
+                    <th>Pending</th>
+                    <th>Unit price</th>
                     <th>Discount</th>
                     <th style={{ textAlign: 'right' }}>Total (incl. GST)</th>
                   </tr>
@@ -885,7 +1278,9 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                     const lt = Number(ln.lineTotal ?? 0);
                     const lineGross = orderLineGrossWithGst(ln);
                     const qty = Number(ln.quantity ?? 0);
-                    const unit = Number(ln.unitPrice ?? 0);
+                    const picked = Number(ln.fulfilledQty ?? 0);
+                    const pending = ln.pendingPickQty ?? Math.max(0, qty - picked);
+                    const unit = lineDisplayUnitPrice(ln);
                     const listU =
                       ln.posListUnitPrice != null && Number.isFinite(Number(ln.posListUnitPrice))
                         ? Number(ln.posListUnitPrice)
@@ -906,7 +1301,36 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                         <td>
                           <span className="order-detail__qty-badge">{qty}</span>
                         </td>
-                        <td>{formatInr(unit)}</td>
+                        <td>{picked}</td>
+                        <td>{pending}</td>
+                        <td>
+                          {canEditLinePrices ? (
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              className="order-detail__unit-price-input"
+                              value={linePriceDrafts[linePriceDraftKey(idx)] ?? ''}
+                              onChange={(e) =>
+                                setLinePriceDrafts((prev) => ({
+                                  ...prev,
+                                  [linePriceDraftKey(idx)]: e.target.value,
+                                }))
+                              }
+                              onFocus={(e) => e.target.select()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  void saveLinePrices();
+                                }
+                              }}
+                              disabled={linePriceSaving}
+                              aria-label={`Unit price for ${ln.variantName || 'item'}`}
+                            />
+                          ) : (
+                            formatInr(unit)
+                          )}
+                        </td>
                         <td style={{ color: lineDisc > 0 ? '#16a34a' : '#94a3b8' }}>
                           {lineDisc > 0 ? `−${formatInr(lineDisc)}` : '—'}
                         </td>
@@ -916,6 +1340,7 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                   })}
                 </tbody>
               </table>
+              {linePriceErr ? <p className="order-detail__sale-date-err">{linePriceErr}</p> : null}
               <div className="order-detail__totals">
                 <div className="order-detail__totals-row">
                   <span>Taxable amount (excl. GST)</span>
@@ -969,6 +1394,32 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
               </div>
               {detailTab === 'activity' && (
                 <div className="order-detail__tab-panel">
+                  {(order.fulfillments || []).length > 0 ? (
+                    <div style={{ marginBottom: 16 }}>
+                      <div className="order-detail__card-title" style={{ marginBottom: 8 }}>
+                        Pickup history
+                      </div>
+                      {[...(order.fulfillments || [])]
+                        .sort((a, b) => {
+                          const ta = a.pickupDate
+                            ? new Date(a.pickupDate).getTime()
+                            : a.createdAt
+                              ? new Date(a.createdAt).getTime()
+                              : 0;
+                          const tb = b.pickupDate
+                            ? new Date(b.pickupDate).getTime()
+                            : b.createdAt
+                              ? new Date(b.createdAt).getTime()
+                              : 0;
+                          return tb - ta;
+                        })
+                        .map((f) => (
+                          <div key={String(f._id)} className="order-detail__note-card">
+                            <div className="order-detail__note-meta">{fulfillmentActivityLabel(f)}</div>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
                   <div className="order-detail__timeline">
                     {timeline.map((ev) => (
                       <div key={ev.key} className="order-detail__tl-item">
@@ -1133,7 +1584,19 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
                 </div>
                 {paymentSummary.payments.length > 0 ? (
                   <div className="order-detail__payments-block">
-                    <OrderPaymentsBreakdown payments={paymentSummary.payments} />
+                    <OrderPaymentsBreakdown
+                      payments={paymentSummary.payments}
+                      editable={canEditPaymentMethods}
+                      methodOptions={payOptsForEdit}
+                      draftMethods={canEditPaymentMethods ? paymentMethodDrafts : undefined}
+                      methodSavingIndex={paymentMethodSavingIndex}
+                      onMethodChange={(i, code) => void applyPaymentMethodChange(i, code)}
+                    />
+                    {paymentMethodErr ? (
+                      <p className="order-detail__sale-date-err" role="alert">
+                        {paymentMethodErr}
+                      </p>
+                    ) : null}
                   </div>
                 ) : paymentPaid ? (
                   <div className="order-detail__doc-row">
@@ -1287,6 +1750,25 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({ branches, sale
           </div>
         </div>
       </div>
+
+      {fulfillmentModalOpen && order ? (
+        <RecordPickupPaymentModal
+          isOpen
+          mode={fulfillmentModalMode}
+          orderId={orderId}
+          branchId={branchId}
+          orderNumber={order.orderNumber}
+          lines={fulfillmentLines}
+          balanceDue={balanceDue}
+          total={total}
+          customerId={customerIdForLink || null}
+          payOpts={payOpts}
+          sessionOpen={salesPointSessionOpen}
+          orderStatus={String(order.status || '')}
+          onClose={() => setFulfillmentModalOpen(false)}
+          onSuccess={() => void load()}
+        />
+      ) : null}
     </div>
   );
 };

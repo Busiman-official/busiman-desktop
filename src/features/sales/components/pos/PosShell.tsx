@@ -49,6 +49,11 @@ import {
 import { PosPaymentSplitSection } from './PosPaymentSplitSection';
 import { PosPaymentDetailsModal } from './PosPaymentDetailsModal';
 import {
+  RecordPickupPaymentModal,
+  type FulfillmentOrderLine,
+} from '../fulfillment/RecordPickupPaymentModal';
+import { orderCollectedAmount } from '../../utils/orderPayments';
+import {
   buildCheckoutPayments,
   checkoutUnallocated,
   computeCashRemainder,
@@ -167,6 +172,9 @@ export const PosShell: React.FC<Props> = ({
   const [checkoutCustomerModal, setCheckoutCustomerModal] = useState(false);
   const [checkoutModalBusy, setCheckoutModalBusy] = useState(false);
   const [checkoutModalError, setCheckoutModalError] = useState<string | null>(null);
+  const [saveOrderBusy, setSaveOrderBusy] = useState(false);
+  const [savedOrderPrompt, setSavedOrderPrompt] = useState<Record<string, unknown> | null>(null);
+  const [fulfillmentModalOpen, setFulfillmentModalOpen] = useState(false);
   const [counterCustomerName, setCounterCustomerName] = useState<string | null>(null);
   const [intentCustomerLabel, setIntentCustomerLabel] = useState<string | null>(null);
   const [customerModalMode, setCustomerModalMode] = useState<CustomerModalMode>('sale');
@@ -234,6 +242,28 @@ export const PosShell: React.FC<Props> = ({
     if (!branchId) return;
     salesService.getSettings(branchId).then(setSettings).catch(() => { });
   }, [branchId]);
+
+  useEffect(() => {
+    document.body.dataset.salesPosActive = '1';
+    return () => {
+      delete document.body.dataset.salesPosActive;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k') return;
+      e.preventDefault();
+      e.stopPropagation();
+      const input = lookupInputRef.current;
+      if (!input || input.disabled) return;
+      input.focus();
+      input.select();
+      setSuggestOpen(true);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
@@ -326,6 +356,13 @@ export const PosShell: React.FC<Props> = ({
       return Math.min(i, suggestions.length - 1);
     });
   }, [suggestions]);
+
+  useEffect(() => {
+    if (highlightIndex === null) return;
+    document
+      .getElementById(`pos-lookup-option-${highlightIndex}`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [highlightIndex]);
 
   const lookupDebouncing =
     lookupQuery.trim().length > 0 && lookupQuery.trim() !== debouncedSearch.trim();
@@ -492,12 +529,6 @@ export const PosShell: React.FC<Props> = ({
     },
     [payOpts, nonCashAmountInputs, totals.total],
   );
-
-  const fillRemainderOnAccount = useCallback(() => {
-    const collected = sumCollectedTender(totals.total, nonCashAmounts, 0);
-    const remainder = roundMoney(Math.max(0, totals.total - collected));
-    setOnAccountInput(remainder > 0 ? String(remainder) : '');
-  }, [totals.total, nonCashAmounts]);
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -971,6 +1002,95 @@ export const PosShell: React.FC<Props> = ({
     [branchId, branchTaxPercent, customerAllowsSale, customerId, invoiceDateYmd, lines, salesPointId, totals.discountAmount]
   );
 
+  const mapSavedOrderFulfillmentLines = useCallback((order: Record<string, unknown>): FulfillmentOrderLine[] => {
+    const rows = Array.isArray(order.lines) ? order.lines : [];
+    return rows.map((raw) => {
+      const ln = raw as Record<string, unknown>;
+      const ordered = Number(ln.quantity ?? 0);
+      const picked = Number(ln.fulfilledQty ?? 0);
+      return {
+        orderLineId: String(ln.orderLineId ?? ln._id ?? ''),
+        variantName: String(ln.variantName ?? ''),
+        variantCode: String(ln.variantCode ?? ''),
+        quantity: ordered,
+        fulfilledQty: picked,
+        pendingPickQty: Math.max(0, ordered - picked),
+      };
+    });
+  }, []);
+
+  const saveAsOrder = useCallback(async () => {
+    if (!branchId || !salesPointId || lines.length === 0) return;
+    if (salesPointSessionStatus !== 'open') {
+      setCheckoutErrorModal('This counter session is closed. You can’t save an order from this sales point.');
+      return;
+    }
+    if (customerId && !customerAllowsSale) {
+      setCheckoutError(INACTIVE_CUSTOMER_MSG);
+      return;
+    }
+    setSaveOrderBusy(true);
+    setCheckoutError(null);
+    try {
+      const order = (await salesService.createOrder(
+        {
+          mode: 'pos',
+          salesPointId,
+          customerId: customerId || undefined,
+          lines: linesForCheckoutPayload(lines, branchTaxPercent),
+          discountAmount: totals.discountAmount > 0 ? totals.discountAmount : undefined,
+          invoiceDate: invoiceDateYmd,
+        },
+        branchId
+      )) as Record<string, unknown>;
+      clearPosDraft(branchId, salesPointId);
+      clear();
+      setDiscountInput('0');
+      resetPaymentSplit();
+      setHeldDrafts(listHeldPosDrafts(branchId, salesPointId));
+      setSavedOrderPrompt(order);
+      lookupInputRef.current?.focus();
+    } catch (err: unknown) {
+      setCheckoutError(extractErrorMessage(err, 'Could not save order'));
+    } finally {
+      setSaveOrderBusy(false);
+    }
+  }, [
+    branchId,
+    branchTaxPercent,
+    clear,
+    customerAllowsSale,
+    customerId,
+    invoiceDateYmd,
+    lines,
+    resetPaymentSplit,
+    salesPointId,
+    salesPointSessionStatus,
+    totals.discountAmount,
+  ]);
+
+  const finishSavedOrderPrompt = useCallback(
+    (recordNow: boolean) => {
+      if (recordNow) setFulfillmentModalOpen(true);
+      else {
+        showToast(`Order ${String(savedOrderPrompt?.orderNumber ?? 'saved')}`);
+        setSavedOrderPrompt(null);
+      }
+    },
+    [savedOrderPrompt, showToast]
+  );
+
+  const savedOrderFulfillmentLines = useMemo(
+    () => (savedOrderPrompt ? mapSavedOrderFulfillmentLines(savedOrderPrompt) : []),
+    [mapSavedOrderFulfillmentLines, savedOrderPrompt]
+  );
+
+  const savedOrderBalanceDue = useMemo(() => {
+    if (!savedOrderPrompt) return 0;
+    const total = Number(savedOrderPrompt.total ?? 0);
+    return Math.max(0, Math.round((total - orderCollectedAmount(savedOrderPrompt)) * 100) / 100);
+  }, [savedOrderPrompt]);
+
   useEffect(() => {
     const raw = searchParams.get('orderDiscount');
     if (!raw) return;
@@ -1145,8 +1265,6 @@ export const PosShell: React.FC<Props> = ({
     async (opts?: {
       customerId?: string;
       createCustomer?: PosNewCustomerPayload;
-      /** Override on-account amount for this checkout (e.g. Pay later shortcut). */
-      onAccountAmountOverride?: number;
     }) => {
       if (!branchId || !salesPointId || lines.length === 0) return;
       if (salesPointSessionStatus !== 'open') {
@@ -1186,11 +1304,7 @@ export const PosShell: React.FC<Props> = ({
           );
           customerIdForOrder = c._id;
         }
-        const onAccountRaw =
-          opts?.onAccountAmountOverride != null
-            ? roundMoney(opts.onAccountAmountOverride)
-            : onAccountAmount;
-        const onAccount = onAccountRaw;
+        const onAccount = onAccountAmount;
         const nc = nonCashAmountsFromInputs(payOpts, nonCashAmountInputs);
         const balanced = isCheckoutBalanced(totals.total, nc, onAccount);
         const overAlloc = isCheckoutOverAllocated(totals.total, nc, onAccount);
@@ -1210,7 +1324,7 @@ export const PosShell: React.FC<Props> = ({
                 totals.total,
                 nonCashAmountInputs,
                 paymentDetailsByMethod,
-                onAccountRaw,
+                onAccount,
               );
         if (totals.total > 0 && onAccount <= 0 && !payments?.length) {
           setCheckoutModalError('Add a payment amount or enable Cash in Sales settings.');
@@ -1297,8 +1411,7 @@ export const PosShell: React.FC<Props> = ({
     );
   }, [setSearchParams]);
 
-  const openCheckoutModal = useCallback(
-    (opts?: { fillRemainderOnAccount?: boolean }) => {
+  const openCheckoutModal = useCallback(() => {
       if (!branchId || !salesPointId || lines.length === 0) return;
       if (salesPointSessionStatus !== 'open') {
         setCheckoutError(null);
@@ -1313,27 +1426,13 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutError(INACTIVE_CUSTOMER_MSG);
         return;
       }
-      let remainderOnAccount = 0;
-      if (opts?.fillRemainderOnAccount) {
-        remainderOnAccount = roundMoney(
-          Math.max(0, totals.total - sumCollectedTender(totals.total, nonCashAmounts, 0)),
-        );
-        fillRemainderOnAccount();
-      }
       const intent = searchParams.get('posOrderForCustomer') === '1';
       const canAutoCheckout =
-        isCheckoutBalanced(totals.total, nonCashAmounts, remainderOnAccount) &&
-        !isCheckoutOverAllocated(totals.total, nonCashAmounts, remainderOnAccount) &&
-        (remainderOnAccount <= 0 || Boolean(customerId?.trim()));
+        isCheckoutBalanced(totals.total, nonCashAmounts, onAccountAmount) &&
+        !isCheckoutOverAllocated(totals.total, nonCashAmounts, onAccountAmount) &&
+        (onAccountAmount <= 0 || Boolean(customerId?.trim()));
       if (intent && customerId?.trim() && canAutoCheckout) {
-        void completeSale({
-          customerId,
-          onAccountAmountOverride: opts?.fillRemainderOnAccount ? remainderOnAccount : undefined,
-        });
-        return;
-      }
-      if (opts?.fillRemainderOnAccount && customerId?.trim() && canAutoCheckout) {
-        void completeSale({ customerId, onAccountAmountOverride: remainderOnAccount });
+        void completeSale({ customerId });
         return;
       }
       setCustomerModalMode('sale');
@@ -1346,9 +1445,9 @@ export const PosShell: React.FC<Props> = ({
       completeSale,
       customerAllowsSale,
       customerId,
-      fillRemainderOnAccount,
       lines.length,
       nonCashAmounts,
+      onAccountAmount,
       salesPointId,
       totals.total,
       salesPointSessionStatus,
@@ -1802,21 +1901,20 @@ export const PosShell: React.FC<Props> = ({
                 <Button
                   type="button"
                   variant="secondary"
-                  className="pos-pay-later-btn"
-                  onClick={() => openCheckoutModal({ fillRemainderOnAccount: true })}
+                  className="pos-save-order-btn"
+                  onClick={() => void saveAsOrder()}
                   disabled={
+                    saveOrderBusy ||
                     checkoutModalBusy ||
                     checkoutCustomerModal ||
                     lines.length === 0 ||
                     !salesPointId ||
-                    stockBlocked ||
                     salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale) ||
-                    totals.total <= 0
+                    (Boolean(customerId?.trim()) && !customerAllowsSale)
                   }
-                  title="Put the remaining balance on the customer’s account (requires customer)"
+                  title="Save as open order for partial pickup and payment later"
                 >
-                  Pay later
+                  {saveOrderBusy ? 'Saving…' : 'Save as order'}
                 </Button>
               </div>
             </div>
@@ -1977,7 +2075,7 @@ export const PosShell: React.FC<Props> = ({
           error={checkoutModalError}
           counterCustomerId={customerId}
           counterCustomerName={counterCustomerName}
-          hideWalkIn={onAccountAmount > 0}
+          walkInDisabled={onAccountAmount > 0}
           onClose={closeCheckoutCustomerModal}
           onConfirmExisting={onCustomerModalConfirmExisting}
           onConfirmNew={onCustomerModalConfirmNew}
@@ -2027,6 +2125,66 @@ export const PosShell: React.FC<Props> = ({
           </div>
         </div>
       </Modal>
+
+      <Modal
+        isOpen={Boolean(savedOrderPrompt) && !fulfillmentModalOpen}
+        onClose={() => {
+          setSavedOrderPrompt(null);
+        }}
+        title="Order saved"
+        size="sm"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ margin: 0, color: '#334155', lineHeight: 1.5 }}>
+            {savedOrderPrompt
+              ? `Order ${String(savedOrderPrompt.orderNumber ?? '')} is in History. Record pickup and payment now, or continue later from the order detail page.`
+              : ''}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => finishSavedOrderPrompt(false)}
+            >
+              Save only
+            </Button>
+            <Button type="button" variant="primary" onClick={() => finishSavedOrderPrompt(true)}>
+              Record pickup now
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {savedOrderPrompt && fulfillmentModalOpen ? (
+        <RecordPickupPaymentModal
+          isOpen
+          orderId={String(savedOrderPrompt._id ?? '')}
+          branchId={branchId}
+          orderNumber={String(savedOrderPrompt.orderNumber ?? '')}
+          lines={savedOrderFulfillmentLines}
+          balanceDue={savedOrderBalanceDue}
+          total={Number(savedOrderPrompt.total ?? 0)}
+          customerId={
+            savedOrderPrompt.customerId
+              ? typeof savedOrderPrompt.customerId === 'object'
+                ? String((savedOrderPrompt.customerId as { _id?: string })._id ?? '')
+                : String(savedOrderPrompt.customerId)
+              : customerId
+          }
+          payOpts={payOpts}
+          sessionOpen={salesPointSessionStatus === 'open'}
+          onClose={() => {
+            setFulfillmentModalOpen(false);
+            setSavedOrderPrompt(null);
+          }}
+          onSuccess={() => {
+            showToast(`Pickup recorded for ${String(savedOrderPrompt.orderNumber ?? 'order')}`);
+            setStockRefreshToken((n) => n + 1);
+            setFulfillmentModalOpen(false);
+            setSavedOrderPrompt(null);
+          }}
+        />
+      ) : null}
 
       <QuotationFromOrderDrawer
         isOpen={quotationDrawerOpen}

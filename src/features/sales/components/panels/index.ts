@@ -12,3 +12,4 @@ export { QuotationFromOrderDrawer } from './QuotationFromOrderDrawer';
 export { QuotationShareModal } from './QuotationShareModal';
 export type { QuotationShareLinkState } from './QuotationShareModal';
 export { QuotationPdfViewerScreen } from './QuotationPdfViewerScreen';
+export { OrderReceiptPdfViewerScreen } from './OrderReceiptPdfViewerScreen';

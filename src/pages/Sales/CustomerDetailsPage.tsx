@@ -18,9 +18,9 @@ import {
 } from '@/services/sales.service';
 import {
   mapQuotationLinesForCreateApi,
-  quotationLineGrossInr,
 } from '@/features/sales/utils/mapLinesForCreateOrder';
 import { SalesLineMeta } from '@/features/sales/components/shared/SalesLineMeta';
+import { QuotationTotalsSummary } from '@/features/sales/components/shared/QuotationTotalsSummary';
 import { OrderPaymentsBreakdown } from '@/features/sales/components/shared/OrderPaymentsBreakdown';
 import {
   normalizeOrderPayments,
@@ -198,6 +198,10 @@ export const CustomerDetailsPage: React.FC = () => {
   const [payOrderSearch, setPayOrderSearch] = useState('');
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState('cash');
+  const [payDateYmd, setPayDateYmd] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
 
   const [noteDraft, setNoteDraft] = useState('');
   const [noteAdding, setNoteAdding] = useState(false);
@@ -426,6 +430,10 @@ export const CustomerDetailsPage: React.FC = () => {
   );
 
   const openCollectModal = (opts?: { orderId?: string; amount?: number }) => {
+    const d = new Date();
+    setPayDateYmd(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    );
     setPayModalCtx({
       orderId: opts?.orderId,
       amount: opts?.amount,
@@ -1668,6 +1676,9 @@ export const CustomerDetailsPage: React.FC = () => {
                             <tr className="cd-quot-lines-row">
                               <td colSpan={7}>
                                 <div className="cd-quot-lines">
+                                  <div className="cd-quot-totals-wrap">
+                                    <QuotationTotalsSummary quotation={qu} />
+                                  </div>
                                   <table className="cd-table cd-table--nested">
                                     <thead>
                                       <tr>
@@ -1686,7 +1697,6 @@ export const CustomerDetailsPage: React.FC = () => {
                                           qn > 0
                                             ? Math.round((taxableLine / qn) * 10000) / 10000
                                             : l.unitPrice;
-                                        const lineGross = quotationLineGrossInr(l);
                                         return (
                                           <tr key={`${qu._id}-ln-${li}`}>
                                             <td>
@@ -1701,7 +1711,11 @@ export const CustomerDetailsPage: React.FC = () => {
                                                     posListUnitPrice: l.unitPrice,
                                                     unitPrice: eff,
                                                     posGstInclusive:
-                                                      l.priceIncludesGst === false ? false : undefined,
+                                                      l.priceIncludesGst === false
+                                                        ? false
+                                                        : l.priceIncludesGst === true
+                                                          ? true
+                                                          : undefined,
                                                     posGstRatePercent: l.taxRatePercent,
                                                     posLineDiscountAmount: l.discountAmount,
                                                     posLineNotes: l.lineNotes,
@@ -1712,7 +1726,7 @@ export const CustomerDetailsPage: React.FC = () => {
                                             </td>
                                             <td>{l.quantity}</td>
                                             <td>{formatInr(l.unitPrice)}</td>
-                                            <td>{formatInr(lineGross)}</td>
+                                            <td>{formatInr(taxableLine)}</td>
                                           </tr>
                                         );
                                       })}
@@ -2026,6 +2040,25 @@ export const CustomerDetailsPage: React.FC = () => {
           })}
           {filteredPayOrders.length === 0 ? <div style={{ padding: 12, color: '#9ca3af' }}>No unpaid orders</div> : null}
         </div>
+        <label className="cd-pay-date-field">
+          <span className="cd-pay-date-field__label">Payment date</span>
+          <input
+            type="date"
+            className="cd-pay-date-field__input"
+            value={payDateYmd}
+            min="2000-01-01"
+            max={(() => {
+              const d = new Date();
+              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            })()}
+            disabled={payRecording}
+            onChange={(e) => {
+              const v = e.target.value;
+              const max = new Date().toISOString().slice(0, 10);
+              setPayDateYmd(v && v > max ? max : v);
+            }}
+          />
+        </label>
         <Input label="Amount (₹)" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
         <Select
           label="Payment method"
@@ -2067,9 +2100,13 @@ export const CustomerDetailsPage: React.FC = () => {
                   setPayRecording(true);
                   setError(null);
                   try {
+                    if (payDateYmd > new Date().toISOString().slice(0, 10)) {
+                      window.alert('Payment date cannot be in the future.');
+                      return;
+                    }
                     const updated = await salesService.collectOrderPayment(
                       oid,
-                      { amount: amt, methodCode: payMethod },
+                      { amount: amt, methodCode: payMethod, paymentDate: payDateYmd },
                       branchId
                     );
                     await load();

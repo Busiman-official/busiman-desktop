@@ -83,11 +83,11 @@
   min-height: 26px;
 }
 
-.po-create-details-head__right {
+.po-create-details-head__left {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .po-create-details-fields {
@@ -129,34 +129,6 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   max-width: 28rem;
-}
-
-.po-create-details-foot {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  min-height: 22px;
-  margin-top: 2px;
-}
-
-.po-create-details-ref-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: flex-end;
-  width: 100%;
-  max-width: 22rem;
-  margin-left: auto;
-}
-
-.po-create-details-ref-row .po-create-label {
-  flex-shrink: 0;
-  margin: 0;
-}
-
-.po-create-details-ref-row .po-create-input {
-  flex: 1;
-  min-width: 0;
 }
 
 .po-create-card__title {
@@ -310,47 +282,23 @@
   margin-top: var(--spacing-sm);
 }
 
-.po-create-priority {
-  display: inline-flex;
-  gap: 0;
+.po-create-urgent-toggle {
   border: 0.5px solid var(--color-border);
   border-radius: var(--border-radius);
-  overflow: hidden;
-  width: fit-content;
-  height: 28px;
-}
-
-.po-create-priority__btn {
-  border: 0;
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: var(--font-weight-medium);
   padding: 4px 12px;
+  height: 28px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-.po-create-priority__btn--active {
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  box-shadow: inset 0 0 0 1px var(--color-border);
-}
-
-.po-create-priority__btn--urgent.po-create-priority__btn--active {
+.po-create-urgent-toggle--active {
   background: #fff7ed;
   color: #c2410c;
   box-shadow: inset 0 0 0 1px #fed7aa;
-}
-
-.po-create-ref-toggle {
-  border: 0;
-  background: transparent;
-  color: var(--color-primary);
-  font-size: var(--font-size-small);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  padding: 0;
-  text-align: left;
 }
 
 .po-create-toolbar {
@@ -672,9 +620,8 @@
     gap: 8px;
   }
 
-  .po-create-details-head__right {
-    width: 100%;
-    justify-content: flex-end;
+  .po-create-urgent-toggle {
+    margin-left: auto;
   }
 
   .po-create-details-fields {

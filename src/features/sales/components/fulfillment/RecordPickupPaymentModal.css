@@ -1,0 +1,128 @@
+.rpp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.rpp-modal {
+  background: #fff;
+  border-radius: 12px;
+  width: min(720px, 100%);
+  max-height: min(90vh, 900px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+}
+
+.rpp-header {
+  padding: 16px 20px 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.rpp-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.rpp-sub {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.rpp-body {
+  padding: 16px 20px;
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.rpp-field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.rpp-field--payment-date {
+  margin-bottom: 10px;
+}
+
+.rpp-field input[type='date'],
+.rpp-field input[type='text'] {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.rpp-section-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.rpp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rpp-table th,
+.rpp-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+}
+
+.rpp-table th {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.rpp-product {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.rpp-muted {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.rpp-qty-input {
+  width: 72px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.rpp-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+.rpp-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.rpp-footer {
+  padding: 12px 20px 16px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

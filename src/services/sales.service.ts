@@ -177,6 +177,11 @@ export interface QuotationShareLinkData {
   note?: string;
 }
 
+export type OrderLinePriceOverride = {
+  lineIndex: number;
+  unitPrice: number;
+};
+
 export type QuotationLineOverride = {
   lineIndex: number;
   quantity?: number;
@@ -542,7 +547,14 @@ export const salesService = {
 
   async patchOrder(
     orderId: string,
-    body: { status?: 'completed' | 'cancelled'; paymentPending?: boolean; invoiceDate?: string },
+    body: {
+      status?: 'completed' | 'cancelled';
+      paymentPending?: boolean;
+      invoiceDate?: string;
+      lineOverrides?: OrderLinePriceOverride[];
+      /** Admin: method codes per `payments[]` index (amounts unchanged). */
+      paymentMethods?: string[];
+    },
     branchId?: string | null
   ) {
     const response = await api.patch(`/sales/orders/${orderId}`, body, { params: branchParams(branchId) });
@@ -554,11 +566,30 @@ export const salesService = {
     body: {
       amount: number;
       methodCode: string;
+      paymentDate?: string;
       details?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine['details'];
     },
     branchId?: string | null
   ) {
     const response = await api.post(`/sales/orders/${orderId}/collect-payment`, body, {
+      params: branchParams(branchId),
+    });
+    return extractApiData(response);
+  },
+
+  async recordOrderFulfillment(
+    orderId: string,
+    body: {
+      pickupDate?: string;
+      lines: Array<{ orderLineId: string; quantityPicked: number }>;
+      payments?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine[];
+      onAccountAmount?: number;
+      note?: string;
+      paymentOnly?: boolean;
+    },
+    branchId?: string | null
+  ) {
+    const response = await api.post(`/sales/orders/${orderId}/fulfillments`, body, {
       params: branchParams(branchId),
     });
     return extractApiData(response);
@@ -746,6 +777,14 @@ export const salesService = {
     branchId?: string | null
   ): Promise<Blob> {
     const response = await api.post('/sales/quotations/preview-pdf', body, {
+      params: branchParams(branchId),
+      responseType: 'blob',
+    });
+    return response.data as Blob;
+  },
+
+  async downloadOrderReceiptPdfBlob(orderId: string, branchId?: string | null): Promise<Blob> {
+    const response = await api.get(`/sales/orders/${orderId}/receipt-pdf`, {
       params: branchParams(branchId),
       responseType: 'blob',
     });

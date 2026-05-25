@@ -39,7 +39,8 @@ export const QuotationFromOrderDrawer: React.FC<QuotationFromOrderDrawerProps> =
     if (isOpen) {
       setValidUntil('');
       setDeliveryCharges('');
-      setNotes('');
+      const orderNotes = order && typeof order.notes === 'string' ? order.notes.trim() : '';
+      setNotes(orderNotes);
       setTerms('');
       setError(null);
     }

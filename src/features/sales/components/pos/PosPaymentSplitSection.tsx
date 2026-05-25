@@ -23,6 +23,10 @@ type Props = {
   onNonCashChange: (methodCode: string, raw: string) => void;
   onOnAccountChange: (raw: string) => void;
   onOpenDetails: (methodCode: string, label: string) => void;
+  /** When true, cash is editable and not auto-computed as remainder. */
+  manualTenderEntry?: boolean;
+  tenderInputs?: Record<string, string>;
+  onTenderChange?: (methodCode: string, raw: string) => void;
 };
 
 function DocumentIcon() {
@@ -60,6 +64,9 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
   onNonCashChange,
   onOnAccountChange,
   onOpenDetails,
+  manualTenderEntry = false,
+  tenderInputs,
+  onTenderChange,
 }) => {
   if (payOpts.length === 0) return null;
 
@@ -73,7 +80,14 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
           const isCash = isCashMethodCode(p.value);
           const showDetails = supportsPaymentDetailsModal(p.value);
           const hasDetails = paymentDetailsFilled(detailsByMethod[p.value]);
-          const displayAmount = isCash ? cashAmount : (nonCashInputs[p.value] ?? "");
+          const manual = manualTenderEntry && tenderInputs && onTenderChange;
+          const displayAmount = manual
+            ? (tenderInputs[p.value] ?? "")
+            : isCash
+              ? total > 0
+                ? cashAmount.toFixed(2)
+                : "0"
+              : (nonCashInputs[p.value] ?? "");
 
           return (
             <div
@@ -94,12 +108,14 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
                   className="pos-payment-split__input no-spinner"
                   min={0}
                   step="0.01"
-                  value={isCash ? (total > 0 ? cashAmount.toFixed(2) : "0") : displayAmount}
-                  readOnly={isCash}
+                  value={displayAmount}
+                  readOnly={isCash && !manual}
                   disabled={disabled}
-                  onChange={(e) => onNonCashChange(p.value, e.target.value)}
+                  onChange={(e) =>
+                    manual ? onTenderChange!(p.value, e.target.value) : onNonCashChange(p.value, e.target.value)
+                  }
                   aria-label={`${p.label} amount`}
-                  aria-readonly={isCash}
+                  aria-readonly={isCash && !manual}
                 />
               </div>
               {showDetails ? (

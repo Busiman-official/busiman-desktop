@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { SalesQuotation, QuotationShareLinkData, SalesQuotationLine } from '@/services/sales.service';
-import { quotationLineGrossInr } from '@/features/sales/utils/mapLinesForCreateOrder';
 import { SalesLineMeta } from '../shared/SalesLineMeta';
+import { QuotationTotalsSummary } from '../shared/QuotationTotalsSummary';
 import './QuotationShareFlow.css';
 
 function formatInr(n: number) {
@@ -159,10 +159,11 @@ export function QuotationShareModal({
               </p>
             </div>
             <div className="qsf-info__right">
-              <span className="qsf-info__total">{formatInr(q.total)}</span>
               <p className="qsf-info__valid">Valid until {formatValidUntil(q.validUntil)}</p>
             </div>
           </div>
+
+          <QuotationTotalsSummary quotation={q} className="qsf-totals" />
 
           {q.lines?.length ? (
             <div className="qsf-lines" aria-label="Quotation line items">
@@ -174,7 +175,6 @@ export function QuotationShareModal({
                   const taxableLine = Number(l.lineTotal ?? 0);
                   const eff =
                     qty > 0 ? Math.round((taxableLine / qty) * 10000) / 10000 : l.unitPrice;
-                  const lineGross = quotationLineGrossInr(l);
                   return (
                     <li key={i} className="qsf-lines__item">
                       <div className="qsf-lines__row">
@@ -183,7 +183,7 @@ export function QuotationShareModal({
                           <span className="qsf-lines__code">{l.variantCode ? ` · ${l.variantCode}` : ''}</span>
                         </span>
                         <span className="qsf-lines__amt">
-                          {formatInr(lineGross)} × {qty}
+                          {formatInr(taxableLine)} × {qty}
                         </span>
                       </div>
                       <SalesLineMeta
@@ -192,7 +192,8 @@ export function QuotationShareModal({
                             ...l,
                             posListUnitPrice: l.unitPrice,
                             unitPrice: eff,
-                            posGstInclusive: l.priceIncludesGst === false ? false : undefined,
+                            posGstInclusive:
+                              l.priceIncludesGst === false ? false : l.priceIncludesGst === true ? true : undefined,
                             posGstRatePercent: l.taxRatePercent,
                             posLineDiscountAmount: l.discountAmount,
                             posLineNotes: l.lineNotes,

@@ -24,7 +24,17 @@ import {
 } from '../../utils/orderPayments';
 import './SalesHistoryPanel.css';
 
-type StatusFilter = 'all' | 'completed' | 'draft' | 'cancelled';
+type StatusFilter =
+  | 'all'
+  | 'completed'
+  | 'on_account'
+  | 'partially_paid'
+  | 'cancelled'
+  | 'fulfilling'
+  | 'confirmed'
+  | 'quotation'
+  | 'draft'
+  | 'pending';
 type ModeFilter = 'all' | 'pos' | 'b2b' | 'online';
 type DateFilter = 'any' | 'today' | 'week' | 'month';
 type AmountFilter = 'any' | 'high' | 'low';
@@ -76,6 +86,8 @@ function statusPill(row: Record<string, unknown>): { label: string; cls: string 
   }
   if (status === 'completed') return { label: 'Completed', cls: 'sales-history-pill--completed' };
   if (status === 'cancelled') return { label: 'Cancelled', cls: 'sales-history-pill--cancelled' };
+  if (status === 'fulfilling') return { label: 'Partial pickup', cls: 'sales-history-pill--onaccount' };
+  if (status === 'confirmed') return { label: 'Open order', cls: 'sales-history-pill--draft' };
   if (isQuotationOrderRow(row)) return { label: 'Quotation', cls: 'sales-history-pill--quotation' };
   if (status === 'draft') return { label: 'Draft', cls: 'sales-history-pill--draft' };
   return { label: 'Pending', cls: 'sales-history-pill--draft' };
@@ -696,7 +708,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     },
     pending: () => {
       setSaleDateYmd('');
-      setStatusFilter('draft');
+      setStatusFilter('pending');
       setDateFilter('any');
       setAmountFilter('any');
     },
@@ -705,7 +717,13 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   const statusOpts: SelectOption[] = [
     { value: 'all', label: 'Status: All' },
     { value: 'completed', label: 'Completed' },
-    { value: 'draft', label: 'Draft / pending' },
+    { value: 'on_account', label: 'On account' },
+    { value: 'partially_paid', label: 'Partially paid' },
+    { value: 'confirmed', label: 'Open order' },
+    { value: 'fulfilling', label: 'Partial pickup' },
+    { value: 'quotation', label: 'Quotation' },
+    { value: 'draft', label: 'Draft (POS)' },
+    { value: 'pending', label: 'Pending / in progress' },
     { value: 'cancelled', label: 'Cancelled' },
   ];
   const modeOpts: SelectOption[] = [

@@ -126,3 +126,19 @@
   background: #f1f5f9;
   color: #475569;
 }
+
+.order-pay-chip--cycle {
+  border: 1px dashed currentColor;
+  cursor: pointer;
+  font: inherit;
+  transition: opacity 0.15s;
+}
+
+.order-pay-chip--cycle:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.order-pay-chip--cycle:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}

@@ -256,8 +256,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
   const [deliveryLocationId, setDeliveryLocationId] = useState('');
   const [priority, setPriority] = useState<PurchaseOrderPriority>('normal');
-  const [internalReference, setInternalReference] = useState('');
-  const [showReference, setShowReference] = useState(false);
   const [supplierMessage, setSupplierMessage] = useState('');
   const [shippingFreight, setShippingFreight] = useState(0);
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
@@ -456,7 +454,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     supplierId ||
       supplierSearch.trim() ||
       lines.length ||
-      internalReference.trim() ||
       expectedDeliveryDate ||
       supplierMessage.trim() ||
       attachments.length ||
@@ -584,7 +581,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       paymentTerms: paymentTerms || undefined,
       priority,
       shippingFreight: orderTotals.freight,
-      internalNotes: internalReference.trim() || undefined,
       supplierMessage: supplierMessage.trim() || undefined,
       attachments: attachmentPayload.length ? attachmentPayload : undefined,
       lines: lines.map((l) => ({
@@ -797,10 +793,10 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
           aria-labelledby="po-order-details-eyebrow"
         >
           <div className="po-create-details-head">
-            <span id="po-order-details-eyebrow" className="po-create-card__eyebrow">
-              Order details
-            </span>
-            <div className="po-create-details-head__right">
+            <div className="po-create-details-head__left">
+              <span id="po-order-details-eyebrow" className="po-create-card__eyebrow">
+                Order details
+              </span>
               <Tooltip content="Auto-generated. Click refresh to change." position="bottom">
                 <span className="po-create-po-chip">
                   {poNumber}
@@ -814,23 +810,15 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                   </button>
                 </span>
               </Tooltip>
-              <div className="po-create-priority" role="group" aria-label="Order priority">
-                <button
-                  type="button"
-                  className={`po-create-priority__btn${priority === 'normal' ? ' po-create-priority__btn--active' : ''}`}
-                  onClick={() => setPriority('normal')}
-                >
-                  Normal
-                </button>
-                <button
-                  type="button"
-                  className={`po-create-priority__btn po-create-priority__btn--urgent${priority === 'urgent' ? ' po-create-priority__btn--active' : ''}`}
-                  onClick={() => setPriority('urgent')}
-                >
-                  ⚑ Urgent
-                </button>
-              </div>
             </div>
+            <button
+              type="button"
+              className={`po-create-urgent-toggle${priority === 'urgent' ? ' po-create-urgent-toggle--active' : ''}`}
+              aria-pressed={priority === 'urgent'}
+              onClick={() => setPriority((p) => (p === 'urgent' ? 'normal' : 'urgent'))}
+            >
+              ⚑ Urgent
+            </button>
           </div>
 
           <div className="po-create-details-fields">
@@ -991,37 +979,12 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
               </button>
             </p>
           ) : null}
-
-          <div className="po-create-details-foot">
-            {showReference ? (
-              <div className="po-create-details-ref-row">
-                <label className="po-create-label" htmlFor="po-internal-ref">
-                  Internal reference <span className="po-create-hint">(optional)</span>
-                </label>
-                <input
-                  id="po-internal-ref"
-                  className="po-create-input"
-                  value={internalReference}
-                  onChange={(e) => setInternalReference(e.target.value)}
-                  placeholder="e.g. For Diwali stock, Linked to indent #44"
-                />
-              </div>
-            ) : (
-              <button type="button" className="po-create-ref-toggle" onClick={() => setShowReference(true)}>
-                + Add reference
-              </button>
-            )}
-          </div>
         </section>
 
         <section className="po-create-card" aria-labelledby="po-create-lines-title">
-          <h2 id="po-create-lines-title" className="po-create-card__title">
-            Line items
-          </h2>
           <div className="po-create-toolbar">
             <div className="po-create-toolbar__search">
               <Input
-                label="Add by SKU or product name"
                 value={variantSearch}
                 onChange={(e) => setVariantSearch(e.target.value)}
                 placeholder="Type at least 2 characters"
