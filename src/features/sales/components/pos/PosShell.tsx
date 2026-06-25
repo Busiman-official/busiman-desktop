@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Button, Input } from '@/shared/components/ui';
 import { inventoryService, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
 import { salesService, type SalesSettingsData, type SalesQuotation } from '@/services/sales.service';
-import { searchService } from '@/features/inventory/services/search.service';
 import type { ItemSearchResult } from '@/features/inventory/types/search.types';
+import type { SearchComboboxSubmitContext } from '@/shared/components/ui/SearchCombobox';
 import { usePriceResolver } from '../../hooks/usePriceResolver';
 import { computePosCartTotals } from './posTotals';
 import {
@@ -28,6 +28,7 @@ import {
 } from './posStorage';
 import {
   buildLineMetaFromItemVariant,
+  isMongoObjectId,
   resolveBarcodeForPos,
   resolveVariantIdForPos,
   type PosResolvedLineMeta,
@@ -36,6 +37,7 @@ import { PosCartLineListCard } from './PosCartLineListCard';
 import { PosCartItemDetailPanel } from './PosCartItemDetailPanel';
 import { usePosCart, type PosCartLine } from './usePosCart';
 import { PosQuickAddGrid } from './PosQuickAddGrid';
+import { PosProductLookup } from './PosProductLookup';
 import { PosMiscSlider } from './PosMiscSlider';
 import { PosVariantPickerModal, type PosVariantPickerLine } from './PosVariantPickerModal';
 import { QuotationFromOrderDrawer } from '../panels/QuotationFromOrderDrawer';
@@ -70,6 +72,18 @@ import {
   type PosPaymentMethodDetails,
 } from './posPaymentSplit';
 import { formatPosQuantityDisplay, roundPosQuantity } from './posQuantity';
+import {
+  countIncompletePosSerialLines,
+  normalizePosSerial,
+  trimSerialsToQuantity,
+  isPosSerialLineComplete,
+} from './posSerialUtils';
+import {
+  CounterWorkspaceShell,
+  CounterHeldDraftsBanner,
+  CounterCartEmptyState,
+  CounterSummaryRows,
+} from '@/shared/components/counter-workspace';
 import './PosShell.css';
 
 type CustomerModalMode = 'sale' | 'quotation';
@@ -84,35 +98,6 @@ interface Props {
   customerAllowsSale?: boolean;
   /** Sale / invoice calendar date (YYYY-MM-DD) sent with checkout and draft B2B orders. */
   invoiceDateYmd: string;
-}
-
-const DEBOUNCE_MS = 280;
-
-function posSearchMatchBadge(searchMatch: ItemSearchResult['searchMatch']): {
-  label: string;
-  className: string;
-  title: string;
-} {
-  const kind = searchMatch?.kind ?? 'master';
-  if (kind === 'variant') {
-    return {
-      label: 'Variant',
-      className: 'pos-suggest-badge--variant',
-      title: 'Matched on variant code, name, barcode, or HSN',
-    };
-  }
-  if (kind === 'both') {
-    return {
-      label: 'Product + variant',
-      className: 'pos-suggest-badge--both',
-      title: 'Matched on product fields and on a variant',
-    };
-  }
-  return {
-    label: 'Product',
-    className: 'pos-suggest-badge--master',
-    title: 'Matched on product name, SKU, barcode, category, tags, or description',
-  };
 }
 
 const DEFAULT_PAY_OPTS = [
@@ -147,16 +132,9 @@ export const PosShell: React.FC<Props> = ({
   const [searchParams, setSearchParams] = useSearchParams();
   const { resolvePrice, resolvePricesBatch } = usePriceResolver(branchId);
   const lookupInputRef = useRef<HTMLInputElement>(null);
-  const lookupWrapRef = useRef<HTMLDivElement>(null);
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [settings, setSettings] = useState<SalesSettingsData | null>(null);
   const [lookupQuery, setLookupQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [searchSuggestionsLoading, setSearchSuggestionsLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState<ItemSearchResult[]>([]);
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
   const [nonCashAmountInputs, setNonCashAmountInputs] = useState<Record<string, string>>({});
   const [paymentDetailsByMethod, setPaymentDetailsByMethod] = useState<
     Record<string, PosPaymentMethodDetails>
@@ -218,12 +196,21 @@ export const PosShell: React.FC<Props> = ({
   } = usePosCart();
 
   const [selectedDetailVariantId, setSelectedDetailVariantId] = useState<string | null>(null);
+  const [detailFocusPrice, setDetailFocusPrice] = useState(false);
+  const [detailFocusSerial, setDetailFocusSerial] = useState(false);
 
   const [variantPicker, setVariantPicker] = useState<{
     item: InventoryItem;
     variants: InventoryVariant[];
     highlightVariantId: string | null;
   } | null>(null);
+
+  const closeCartDetailModal = useCallback(() => {
+    setSelectedDetailVariantId(null);
+    setDetailFocusPrice(false);
+    setDetailFocusSerial(false);
+    lookupInputRef.current?.focus();
+  }, []);
 
   const getUnitFactor = useCallback((line: PosCartLine, unitOfMeasure?: string | null): number => {
     const unit = (unitOfMeasure || line.unitOfMeasure || line.baseUnit || '').trim().toLowerCase();
@@ -249,29 +236,6 @@ export const PosShell: React.FC<Props> = ({
       delete document.body.dataset.salesPosActive;
     };
   }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k') return;
-      e.preventDefault();
-      e.stopPropagation();
-      const input = lookupInputRef.current;
-      if (!input || input.disabled) return;
-      input.focus();
-      input.select();
-      setSuggestOpen(true);
-    };
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, []);
-
-  useEffect(() => {
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => setDebouncedSearch(lookupQuery.trim()), DEBOUNCE_MS);
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    };
-  }, [lookupQuery]);
 
   useEffect(() => {
     if (!checkoutCustomerModal || !customerId || !branchId) {
@@ -312,73 +276,6 @@ export const PosShell: React.FC<Props> = ({
       cancelled = true;
     };
   }, [posOrderForCustomerIntent, customerId, branchId]);
-
-  useEffect(() => {
-    const q = debouncedSearch.trim();
-    if (!q) {
-      setSuggestions([]);
-      setSearchSuggestionsLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setSearchSuggestionsLoading(true);
-    searchService
-      .search(q, { types: ['item'], branchId }, 12)
-      .then((res) => {
-        if (!cancelled) {
-          let items = (res.items || []) as ItemSearchResult[];
-          if (categoryChip) {
-            items = items.filter(
-              (it) => it.category?.toLowerCase() === categoryChip.toLowerCase()
-            );
-          }
-          setSuggestions(items);
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg === 'Search canceled') return;
-        setSuggestions([]);
-      })
-      .finally(() => {
-        if (!cancelled) setSearchSuggestionsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedSearch, categoryChip, branchId]);
-
-  useEffect(() => {
-    setHighlightIndex((i) => {
-      if (suggestions.length === 0) return null;
-      if (i === null) return null;
-      return Math.min(i, suggestions.length - 1);
-    });
-  }, [suggestions]);
-
-  useEffect(() => {
-    if (highlightIndex === null) return;
-    document
-      .getElementById(`pos-lookup-option-${highlightIndex}`)
-      ?.scrollIntoView({ block: 'nearest' });
-  }, [highlightIndex]);
-
-  const lookupDebouncing =
-    lookupQuery.trim().length > 0 && lookupQuery.trim() !== debouncedSearch.trim();
-  const suggestPanelLoading = searchSuggestionsLoading || lookupDebouncing;
-  const showSuggestPanel =
-    suggestOpen && Boolean(salesPointId) && lookupQuery.trim().length > 0;
-
-  useEffect(() => {
-    const onDoc = (ev: MouseEvent) => {
-      if (!lookupWrapRef.current?.contains(ev.target as Node)) {
-        setSuggestOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
 
   useEffect(() => {
     if (!locationId || lines.length === 0) {
@@ -555,6 +452,36 @@ export const PosShell: React.FC<Props> = ({
     });
   }, [availableByVariant, getUnitFactor, lines, settings?.allowNegativePos]);
 
+  const incompleteSerialLineCount = useMemo(
+    () => countIncompletePosSerialLines(lines),
+    [lines]
+  );
+
+  const chargeDisabled = useMemo(
+    () =>
+      checkoutModalBusy ||
+      checkoutCustomerModal ||
+      lines.length === 0 ||
+      !salesPointId ||
+      stockBlocked ||
+      incompleteSerialLineCount > 0 ||
+      salesPointSessionStatus !== 'open' ||
+      (Boolean(customerId?.trim()) && !customerAllowsSale) ||
+      !paymentSplitBalanced,
+    [
+      checkoutModalBusy,
+      checkoutCustomerModal,
+      lines.length,
+      salesPointId,
+      stockBlocked,
+      incompleteSerialLineCount,
+      salesPointSessionStatus,
+      customerId,
+      customerAllowsSale,
+      paymentSplitBalanced,
+    ]
+  );
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 3200);
@@ -565,20 +492,50 @@ export const PosShell: React.FC<Props> = ({
       if (!selectedDetailVariantId) return;
       const current = lines.find((l) => l.variantId === selectedDetailVariantId);
       if (!current) return;
+      const nextPatch = { ...patch };
+      if (current.serialWarning && nextPatch.quantity != null) {
+        nextPatch.serialNumbers = trimSerialsToQuantity(
+          { ...current, ...nextPatch },
+          nextPatch.quantity
+        );
+      }
       if (patch.unitOfMeasure && patch.unitOfMeasure !== current.unitOfMeasure) {
         const currentFactor = getUnitFactor(current, current.unitOfMeasure);
         const nextFactor = getUnitFactor(current, patch.unitOfMeasure);
         const nextUnitPrice = (current.unitPrice / currentFactor) * nextFactor;
         updateLine(selectedDetailVariantId, {
-          ...patch,
+          ...nextPatch,
           unitOfMeasure: patch.unitOfMeasure,
           unitPrice: Math.round(nextUnitPrice * 10000) / 10000,
         });
         return;
       }
-      updateLine(selectedDetailVariantId, patch);
+      updateLine(selectedDetailVariantId, nextPatch);
     },
     [getUnitFactor, lines, selectedDetailVariantId, updateLine]
+  );
+
+  const otherCartSerialsForLine = useCallback(
+    (variantId: string) => {
+      const out: string[] = [];
+      for (const ln of lines) {
+        if (ln.variantId === variantId) continue;
+        for (const sn of ln.serialNumbers ?? []) {
+          out.push(normalizePosSerial(sn));
+        }
+      }
+      return out;
+    },
+    [lines]
+  );
+
+  const openLineDetail = useCallback(
+    (variantId: string, opts?: { focusPrice?: boolean; focusSerial?: boolean }) => {
+      setDetailFocusPrice(opts?.focusPrice === true);
+      setDetailFocusSerial(opts?.focusSerial === true);
+      setSelectedDetailVariantId(variantId);
+    },
+    []
   );
 
   /** Removes the line for this variant; clears the detail modal if it was showing that line. */
@@ -594,8 +551,9 @@ export const PosShell: React.FC<Props> = ({
 
   const handleDetailRemove = useCallback(() => {
     if (!selectedDetailVariantId) return;
-    removeLineFromCart(selectedDetailVariantId);
-  }, [selectedDetailVariantId, removeLineFromCart]);
+    removeLine(selectedDetailVariantId);
+    closeCartDetailModal();
+  }, [closeCartDetailModal, removeLine, selectedDetailVariantId]);
 
   const setLineQuantity = useCallback(
     (variantId: string, nextQty: number) => {
@@ -606,16 +564,33 @@ export const PosShell: React.FC<Props> = ({
         return;
       }
       const cap = 999_999;
-      updateLine(variantId, { quantity: Math.min(cap, q) });
+      const qty = Math.min(cap, q);
+      const current = lines.find((l) => l.variantId === variantId);
+      if (current?.serialWarning) {
+        updateLine(variantId, {
+          quantity: qty,
+          serialNumbers: trimSerialsToQuantity(current, qty),
+        });
+        return;
+      }
+      updateLine(variantId, { quantity: qty });
     },
-    [removeLineFromCart, updateLine]
+    [lines, removeLineFromCart, updateLine]
   );
 
   const addLineFromMeta = useCallback(
     async (
       meta: PosResolvedLineMeta,
       qty = 1,
-      options?: { quiet?: boolean; unitPrice?: number; notes?: string; hsn?: string; gstRatePercent?: number; unitOfMeasure?: string }
+      options?: {
+        quiet?: boolean;
+        skipDetailAfterAdd?: boolean;
+        unitPrice?: number;
+        notes?: string;
+        hsn?: string;
+        gstRatePercent?: number;
+        unitOfMeasure?: string;
+      }
     ) => {
       if (!salesPointId) return;
       try {
@@ -653,20 +628,25 @@ export const PosShell: React.FC<Props> = ({
         });
         pushRecentVariant(branchId, salesPointId, { variantId: meta.variantId, label: meta.label });
         setRecent(getRecentVariants(branchId, salesPointId));
+        const openDetail = !options?.skipDetailAfterAdd && !options?.quiet;
         if (!options?.quiet) {
           showToast(`Added: ${meta.label}`);
           setLookupQuery('');
-          setSuggestions([]);
-          setSearchSuggestionsLoading(false);
-          setSuggestOpen(false);
-          setHighlightIndex(null);
+        }
+        if (openDetail) {
+          if (meta.serialWarning) {
+            openLineDetail(meta.variantId, { focusSerial: true });
+          } else {
+            openLineDetail(meta.variantId, { focusPrice: true });
+          }
+        } else if (!options?.quiet) {
           lookupInputRef.current?.focus();
         }
       } catch (e: unknown) {
         setCheckoutError(e instanceof Error ? e.message : 'Could not resolve price');
       }
     },
-    [addOrMerge, branchId, customerId, resolvePrice, salesPointId, settings?.taxRatePercent, showToast]
+    [addOrMerge, branchId, customerId, openLineDetail, resolvePrice, salesPointId, settings?.taxRatePercent, showToast]
   );
 
   /** Keeps cart hydration from re-running when settings/customer resolve updates `addLineFromMeta` identity. */
@@ -720,6 +700,7 @@ export const PosShell: React.FC<Props> = ({
           if (qty <= 0) continue;
           await addLineFromMetaRef.current(meta, qty, {
             quiet: true,
+            skipDetailAfterAdd: true,
             unitPrice: ln.unitPrice != null ? Number(ln.unitPrice) : undefined,
             unitOfMeasure: typeof ln.unitOfMeasure === 'string' ? ln.unitOfMeasure : undefined,
             notes: typeof ln.posLineNotes === 'string' ? ln.posLineNotes : undefined,
@@ -791,7 +772,11 @@ export const PosShell: React.FC<Props> = ({
         (lastMergedVariantId && variants.some((x) => x.id === lastMergedVariantId)
           ? lastMergedVariantId
           : defaultV.id);
-      setVariantPicker({ item: fullItem, variants, highlightVariantId: hi });
+      setVariantPicker({
+        item: fullItem,
+        variants,
+        highlightVariantId: hi,
+      });
     },
     [addLineFromMeta, lastMergedVariantId, salesPointId]
   );
@@ -815,11 +800,9 @@ export const PosShell: React.FC<Props> = ({
         showToast(`Added to cart: ${label}`);
         setVariantPicker(null);
         setLookupQuery('');
-        setSuggestions([]);
-        setSearchSuggestionsLoading(false);
-        setSuggestOpen(false);
-        setHighlightIndex(null);
-        lookupInputRef.current?.focus();
+        const last = picked[picked.length - 1];
+        setSelectedDetailVariantId(last.meta.variantId);
+        setDetailFocusPrice(true);
       } catch (e: unknown) {
         setCheckoutError(e instanceof Error ? e.message : 'Could not add variants');
       }
@@ -834,7 +817,9 @@ export const PosShell: React.FC<Props> = ({
       try {
         const sm = item.searchMatch;
         const hintedVariantId =
-          sm?.variant?.id && (sm.kind === 'variant' || sm.kind === 'both')
+          sm?.variant?.id &&
+          (sm.kind === 'variant' || sm.kind === 'both') &&
+          isMongoObjectId(sm.variant.id)
             ? sm.variant.id
             : undefined;
 
@@ -869,43 +854,36 @@ export const PosShell: React.FC<Props> = ({
     [addLineFromMeta, handleActivateProduct, salesPointId]
   );
 
-  const tryAddFromInput = useCallback(async () => {
-    setCheckoutError(null);
-    if (!salesPointId || checkoutModalBusy || checkoutCustomerModal) return;
-    const q = lookupQuery.trim();
-    if (!q) return;
-    if (suggestPanelLoading) {
-      setCheckoutError('Wait for product search to finish.');
-      return;
-    }
-    const resolved = await resolveBarcodeForPos(q);
-    if (resolved) {
-      await addLineFromMeta(resolved, 1);
-      return;
-    }
-    if (suggestions.length > 0) {
-      const idx = highlightIndex ?? 0;
-      const safe = Math.min(Math.max(0, idx), suggestions.length - 1);
-      await onPickSearchItem(suggestions[safe]);
-      return;
-    }
-    setCheckoutError('Unknown barcode or no match. Try search or pick from the list.');
-  }, [
-    addLineFromMeta,
-    checkoutModalBusy,
-    checkoutCustomerModal,
-    highlightIndex,
-    lookupQuery,
-    onPickSearchItem,
-    salesPointId,
-    suggestions,
-    suggestPanelLoading,
-  ]);
-
-  const handleLookupSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await tryAddFromInput();
-  };
+  const tryAddFromInput = useCallback(
+    async (ctx: SearchComboboxSubmitContext<ItemSearchResult>) => {
+      setCheckoutError(null);
+      if (!salesPointId || checkoutModalBusy || checkoutCustomerModal) return;
+      const q = ctx.query.trim();
+      if (!q) return;
+      if (ctx.isLoading) {
+        setCheckoutError('Wait for product search to finish.');
+        return;
+      }
+      const resolved = await resolveBarcodeForPos(q);
+      if (resolved) {
+        await addLineFromMeta(resolved, 1);
+        return;
+      }
+      if (ctx.items.length > 0) {
+        const safe = Math.min(Math.max(0, ctx.activeIndex), ctx.items.length - 1);
+        await onPickSearchItem(ctx.items[safe]);
+        return;
+      }
+      setCheckoutError('Unknown barcode or no match. Try search or pick from the list.');
+    },
+    [
+      addLineFromMeta,
+      checkoutModalBusy,
+      checkoutCustomerModal,
+      onPickSearchItem,
+      salesPointId,
+    ]
+  );
 
   const onRecentClick = async (entry: PosRecentEntry) => {
     setCheckoutError(null);
@@ -923,10 +901,6 @@ export const PosShell: React.FC<Props> = ({
     if (branchId && salesPointId) clearPosDraft(branchId, salesPointId);
     clear();
     setLookupQuery('');
-    setSuggestions([]);
-    setSearchSuggestionsLoading(false);
-    setSuggestOpen(false);
-    setHighlightIndex(null);
     setCheckoutError(null);
     setDiscountInput('0');
     resetPaymentSplit();
@@ -1276,6 +1250,12 @@ export const PosShell: React.FC<Props> = ({
         setCheckoutModalError('Reduce quantities or enable “Allow negative POS” in Settings.');
         return;
       }
+      if (incompleteSerialLineCount > 0) {
+        setCheckoutModalError(
+          `${incompleteSerialLineCount} line${incompleteSerialLineCount === 1 ? '' : 's'} still need serial numbers.`
+        );
+        return;
+      }
       const saleCust = opts?.customerId;
       if (saleCust && saleCust === customerId && !customerAllowsSale) {
         setCheckoutModalError(INACTIVE_CUSTOMER_MSG);
@@ -1389,6 +1369,7 @@ export const PosShell: React.FC<Props> = ({
       salesPointId,
       salesPointSessionStatus,
       stockBlocked,
+      incompleteSerialLineCount,
       totals.discountAmount,
       totals.total,
       setSearchParams,
@@ -1456,6 +1437,29 @@ export const PosShell: React.FC<Props> = ({
     ]
   );
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        e.stopPropagation();
+        const input = lookupInputRef.current;
+        if (!input || input.disabled) return;
+        input.focus();
+        input.select();
+        return;
+      }
+      if (e.key !== 'Enter') return;
+      if (chargeDisabled || variantPicker || cameraOpen) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openCheckoutModal();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [cameraOpen, chargeDisabled, openCheckoutModal, variantPicker]);
+
   const onCustomerModalConfirmExisting = useCallback(
     (id: string) => {
       if (customerModalMode === 'quotation') void createDraftOrderForQuotation(id);
@@ -1511,10 +1515,6 @@ export const PosShell: React.FC<Props> = ({
     clear();
     // working draft stays separate; no banner needed
     setLookupQuery('');
-    setSuggestions([]);
-    setSearchSuggestionsLoading(false);
-    setSuggestOpen(false);
-    setHighlightIndex(null);
     setCheckoutError(null);
     setDiscountInput('0');
     resetPaymentSplit();
@@ -1536,186 +1536,48 @@ export const PosShell: React.FC<Props> = ({
   const hasBarcodeDetector =
     typeof window !== 'undefined' && 'BarcodeDetector' in window && Boolean((window as unknown as { BarcodeDetector?: unknown }).BarcodeDetector);
 
-  const lookupCombobox = (
-    <div ref={lookupWrapRef} className="pos-lookup-combobox">
-      <form onSubmit={handleLookupSubmit} className="pos-lookup-form">
-        <div className="pos-search-field">
-          <span className="pos-search-field__icon" aria-hidden>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M21 21l-4.35-4.35" />
-            </svg>
-          </span>
-          <div className="pos-search-field__input">
-            <Input
-              ref={lookupInputRef}
-              id="pos-product-lookup-input"
-              role="combobox"
-              aria-expanded={showSuggestPanel}
-              aria-controls="pos-product-lookup-panel"
-              aria-autocomplete="list"
-              aria-activedescendant={
-                highlightIndex !== null && suggestions.length > 0
-                  ? `pos-lookup-option-${highlightIndex}`
-                  : undefined
-              }
-              value={lookupQuery}
-              onChange={(e) => {
-                setLookupQuery(e.target.value);
-                setSuggestOpen(true);
-                setHighlightIndex(null);
-              }}
-              onFocus={() => setSuggestOpen(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  if (suggestPanelLoading || suggestions.length === 0) return;
-                  e.preventDefault();
-                  setSuggestOpen(true);
-                  setHighlightIndex((prev) => {
-                    if (prev === null) return 0;
-                    return Math.min(prev + 1, suggestions.length - 1);
-                  });
-                  return;
-                }
-                if (e.key === 'ArrowUp') {
-                  if (suggestPanelLoading || suggestions.length === 0) return;
-                  e.preventDefault();
-                  setSuggestOpen(true);
-                  setHighlightIndex((prev) => {
-                    if (prev === null) return suggestions.length - 1;
-                    return Math.max(0, prev - 1);
-                  });
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setSuggestOpen(false);
-                  setHighlightIndex(null);
-                }
-              }}
-              placeholder={
-                salesPointId
-                  ? 'Scan barcode or type name, SKU… (Enter to add)'
-                  : 'Select a sales point first'
-              }
-              autoComplete="off"
-              disabled={!salesPointId}
-            />
-          </div>
-        </div>
-      </form>
-      {showSuggestPanel ? (
-        <div
-          id="pos-product-lookup-panel"
-          className="pos-suggest-panel"
-          aria-busy={suggestPanelLoading}
-        >
-          {suggestPanelLoading ? (
-            <div className="pos-suggest-loading" role="status" aria-live="polite">
-              <span className="pos-suggest-loading__spinner" aria-hidden />
-              <span className="pos-suggest-loading__text">
-                {lookupDebouncing ? 'Searching…' : 'Searching products…'}
-              </span>
-            </div>
-          ) : suggestions.length === 0 ? (
-            <div className="pos-suggest-empty" role="status">
-              No matching products. Try another term or scan a barcode.
-            </div>
-          ) : (
-            <ul
-              id="pos-product-lookup-listbox"
-              className="pos-suggest-list"
-              role="listbox"
-              aria-label="Matching products"
-            >
-              {suggestions.map((it, idx) => {
-                const badge = posSearchMatchBadge(it.searchMatch);
-                const vm = it.searchMatch?.variant;
-                const showVariantDetail =
-                  !!vm && (it.searchMatch?.kind === 'variant' || it.searchMatch?.kind === 'both');
-                const ariaParts = [
-                  badge.label,
-                  it.name,
-                  showVariantDetail && vm?.name ? vm.name : null,
-                  it.sku ? `SKU ${it.sku}` : null,
-                ].filter(Boolean);
-                return (
-                  <li key={`${it.id}-${it.searchMatch?.variant?.id ?? 'master'}`} role="presentation">
-                    <button
-                      type="button"
-                      id={`pos-lookup-option-${idx}`}
-                      role="option"
-                      aria-selected={highlightIndex === idx}
-                      aria-label={ariaParts.join('. ')}
-                      title={badge.title}
-                      className={`pos-suggest-item ${highlightIndex === idx ? 'pos-suggest-item--active' : ''}`}
-                      onMouseEnter={() => setHighlightIndex(idx)}
-                      onClick={() => onPickSearchItem(it)}
-                    >
-                      <div className="pos-suggest-item__row">
-                        <span className={`pos-suggest-badge ${badge.className}`}>{badge.label}</span>
-                        <span className="pos-suggest-name">{it.name}</span>
-                      </div>
-                      {showVariantDetail && vm ? (
-                        <span className="pos-suggest-variant">
-                          <span className="pos-suggest-variant__label">Variant</span>
-                          <span className="pos-suggest-variant__text">
-                            {vm.name}
-                            {vm.code ? ` · ${vm.code}` : ''}
-                          </span>
-                        </span>
-                      ) : null}
-                      <span className="pos-suggest-sku">
-                        {it.hasVariants && it.searchMatch?.kind === 'master'
-                          ? `Listing SKU: ${it.sku}`
-                          : `SKU: ${it.sku}`}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      ) : null}
-    </div>
+  const serialDetailBlocksLookup = Boolean(
+    selectedDetailLine?.serialWarning &&
+      selectedDetailVariantId &&
+      !isPosSerialLineComplete(selectedDetailLine)
+  );
+
+  const productLookup = (
+    <PosProductLookup
+      branchId={branchId}
+      salesPointId={salesPointId}
+      value={lookupQuery}
+      onValueChange={setLookupQuery}
+      categoryChip={categoryChip}
+      inputRef={lookupInputRef}
+      onPickItem={onPickSearchItem}
+      onSubmitQuery={tryAddFromInput}
+      disabled={serialDetailBlocksLookup}
+    />
   );
 
   return (
-    <div className="pos-shell">
-      {toast ? (
-        <div className="pos-toast" role="status">
-          {toast}
-        </div>
-      ) : null}
-
-      <div className="pos-main">
-        {posHydrateOrderBusy ? (
+    <CounterWorkspaceShell
+      toast={toast}
+      loadingOverlay={
+        posHydrateOrderBusy ? (
           <div className="pos-hydrate-overlay" role="status" aria-live="polite">
             Loading order…
           </div>
-        ) : null}
-        <section className="pos-scan" aria-label="Find and add products">
-          {heldDrafts.length > 0 ? (
-            <div className="pos-draft-banner" role="status" aria-label="Drafts">
-              <span className="pos-draft-banner__text">Drafts ({heldDrafts.length})</span>
-              <div className="pos-draft-banner__actions" style={{ gap: 8, flexWrap: 'wrap' }}>
-                {heldDrafts.slice(0, 6).map((d, idx) => (
-                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="pos-muted" style={{ fontSize: 12 }}>
-                      Draft {heldDrafts.length - idx}
-                    </span>
-                    <Button type="button" variant="primary" onClick={() => resumeHeldDraft(d)}>
-                      Resume
-                    </Button>
-                    <Button type="button" variant="secondary" onClick={() => discardHeldDraft(d.id)}>
-                      Discard
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
+        ) : null
+      }
+      heldDraftsBanner={
+        heldDrafts.length > 0 ? (
+          <CounterHeldDraftsBanner
+            drafts={heldDrafts}
+            labelForIndex={(_d, idx) => `Draft ${idx}`}
+            onResume={resumeHeldDraft}
+            onDiscard={discardHeldDraft}
+          />
+        ) : null
+      }
+      leftBody={
+        <>
           <PosQuickAddGrid
             branchId={branchId}
             salesPointId={salesPointId}
@@ -1750,273 +1612,212 @@ export const PosShell: React.FC<Props> = ({
             resolvePricesBatch={resolvePricesBatch}
             onConfirm={handleVariantPickerConfirm}
           />
+        </>
+      }
+      leftFooter={
+        <>
+          <CounterSummaryRows
+            subtotal={totals.subtotal}
+            total={totals.total}
+            adjustmentInput={discountInput}
+            onAdjustmentInputChange={setDiscountInput}
+          />
 
-          {/* eslint-disable-next-line no-constant-condition -- intentionally disabled recent strip */}
-          {false && recent.length > 0 && salesPointId ? (
-            <div className="pos-recent">
-              {/* <span className="pos-recent-label">Recent</span> */}
-              <div className="pos-recent-scroll">
-                <button
-                  type="button"
-                  className="pos-recent-arrow pos-recent-arrow--left"
-                  onClick={() => recentWrapRef.current?.scrollBy({ left: -280, behavior: 'smooth' })}
-                  disabled={!recentScroll.left}
-                  aria-label="Scroll recent left"
-                >
-                  ‹
-                </button>
-                <div ref={recentWrapRef} className="pos-recent-chips" role="list">
-                  {recent.slice(0, 12).map((r) => (
-                    <button
-                      key={r.variantId}
-                      type="button"
-                      className="pos-chip"
-                      onClick={() => onRecentClick(r)}
-                      role="listitem"
-                      title={r.label}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="pos-recent-arrow pos-recent-arrow--right"
-                  onClick={() => recentWrapRef.current?.scrollBy({ left: 280, behavior: 'smooth' })}
-                  disabled={!recentScroll.right}
-                  aria-label="Scroll recent right"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <PosPaymentSplitSection
+            payOpts={payOpts}
+            total={totals.total}
+            disabled={checkoutModalBusy || checkoutCustomerModal}
+            nonCashInputs={nonCashAmountInputs}
+            cashAmount={cashPaymentAmount}
+            onAccountInput={onAccountInput}
+            onAccountAmount={onAccountAmount}
+            onAccountNeedsCustomer={onAccountNeedsCustomer}
+            paidNow={paidNowAmount}
+            unallocated={paymentUnallocated}
+            detailsByMethod={paymentDetailsByMethod}
+            overAllocated={paymentSplitOverAllocated}
+            onNonCashChange={handleNonCashAmountChange}
+            onOnAccountChange={handleOnAccountChange}
+            onOpenDetails={(methodCode, methodLabel) =>
+              setPaymentDetailsModal({ methodCode, methodLabel })
+            }
+          />
 
-          <footer className="pos-summary">
-            <div className="pos-summary__rows">
-              <div className="pos-summary__row">
-                <span>Subtotal</span>
-                <span>₹{totals.subtotal.toFixed(2)}</span>
+          <div className="pos-charge-row">
+            {incompleteSerialLineCount > 0 ? (
+              <div className="pos-serial-checkout-banner" role="status">
+                {incompleteSerialLineCount} item{incompleteSerialLineCount === 1 ? '' : 's'} need serial numbers
+                before checkout
               </div>
-              <div className="pos-summary__row">
-                <span>Discount</span>
-                <span className="pos-summary__discount-inline">
-                  <span className="pos-summary__discount-currency">₹</span>
-                  <input
-                    className="pos-summary__discount-field"
-                    type="number"
-                    min={0}
-                    onFocus={(e) => e.target.select()}
-                    step="0.01"
-                    value={discountInput}
-                    onChange={(e) => setDiscountInput(e.target.value)}
-                    aria-label="Order discount amount"
-                  />
-                </span>
-              </div>
-              <div className="pos-summary__row pos-summary__row--total">
-                <span>Total</span>
-                <span>₹{totals.total.toFixed(2)}</span>
-              </div>
-            </div>
-
-            <PosPaymentSplitSection
-              payOpts={payOpts}
-              total={totals.total}
-              disabled={checkoutModalBusy || checkoutCustomerModal}
-              nonCashInputs={nonCashAmountInputs}
-              cashAmount={cashPaymentAmount}
-              onAccountInput={onAccountInput}
-              onAccountAmount={onAccountAmount}
-              onAccountNeedsCustomer={onAccountNeedsCustomer}
-              paidNow={paidNowAmount}
-              unallocated={paymentUnallocated}
-              detailsByMethod={paymentDetailsByMethod}
-              overAllocated={paymentSplitOverAllocated}
-              onNonCashChange={handleNonCashAmountChange}
-              onOnAccountChange={handleOnAccountChange}
-              onOpenDetails={(methodCode, methodLabel) =>
-                setPaymentDetailsModal({ methodCode, methodLabel })
-              }
-            />
-
-            <div className="pos-charge-row">
-              <div className="pos-charge-row__docs" role="group" aria-label="Documents before payment">
-                <button
-                  type="button"
-                  className="pos-doc-btn pos-doc-btn--quotation"
-                  onClick={openQuotationFromCart}
-                  disabled={
-                    checkoutModalBusy ||
-                    checkoutCustomerModal ||
-                    lines.length === 0 ||
-                    !salesPointId ||
-                    salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale)
-                  }
-                  title="Save cart as a B2B draft order and open the quotation builder (customer required)"
-                >
-                  <span className="pos-doc-btn__icon" aria-hidden>
-                    ◇
-                  </span>
-                  <span className="pos-doc-btn__text">
-                    <span className="pos-doc-btn__label">Quotation</span>
-                    <span className="pos-doc-btn__hint">from cart</span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="pos-doc-btn pos-doc-btn--invoice"
-                  disabled
-                  title="Invoices from completed sales are not available in the app yet. Use Charge to complete a sale, or create a Quotation for a proposal PDF."
-                >
-                  <span className="pos-doc-btn__icon" aria-hidden>
-                    ⧉
-                  </span>
-                  <span className="pos-doc-btn__text">
-                    <span className="pos-doc-btn__label">Invoice</span>
-                    <span className="pos-doc-btn__hint">soon</span>
-                  </span>
-                </button>
-              </div>
-              <div className="pos-charge-row__actions">
-                <Button
-                  type="button"
-                  variant="primary"
-                  className="pos-charge-btn"
-                  onClick={() => openCheckoutModal()}
-                  disabled={
-                    checkoutModalBusy ||
-                    checkoutCustomerModal ||
-                    lines.length === 0 ||
-                    !salesPointId ||
-                    stockBlocked ||
-                    salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale) ||
-                    !paymentSplitBalanced
-                  }
-                >
-                  {checkoutModalBusy ? 'Processing…' : `Charge ₹${totals.total.toFixed(2)}`}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="pos-save-order-btn"
-                  onClick={() => void saveAsOrder()}
-                  disabled={
-                    saveOrderBusy ||
-                    checkoutModalBusy ||
-                    checkoutCustomerModal ||
-                    lines.length === 0 ||
-                    !salesPointId ||
-                    salesPointSessionStatus !== 'open' ||
-                    (Boolean(customerId?.trim()) && !customerAllowsSale)
-                  }
-                  title="Save as open order for partial pickup and payment later"
-                >
-                  {saveOrderBusy ? 'Saving…' : 'Save as order'}
-                </Button>
-              </div>
-            </div>
-
-            {customerId?.trim() && !customerAllowsSale ? (
-              <div className="sales-panel-error pos-checkout-err">{INACTIVE_CUSTOMER_MSG}</div>
             ) : null}
-            {checkoutError ? <div className="sales-panel-error pos-checkout-err">{checkoutError}</div> : null}
-          </footer>
-        </section>
-
-        <div className="pos-right">
-          <div className="pos-order-head">
-            <div className="pos-order-head__top">
-              <div className="pos-order-head__left">
-                {lookupCombobox}
-              </div>
-              <div className="pos-order-head__actions">
-                <Button type="button" variant="secondary" onClick={holdOrder} disabled={checkoutModalBusy}>
-                  Hold order
-                </Button>
-                {posOrderForCustomerIntent && customerId && intentCustomerLabel ? (
-                  <div className="pos-order-for-customer" role="status">
-                    <span className="pos-order-for-customer__text">For {intentCustomerLabel}</span>
-                    <button
-                      type="button"
-                      className="pos-order-for-customer__clear"
-                      aria-label="Stop creating this order for this customer"
-                      onClick={clearPosOrderIntent}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : null}
-                <Button type="button" variant="secondary" onClick={handleNewSale}>
-                  Clear
-                </Button>
-              </div>
+            <div className="pos-charge-row__docs" role="group" aria-label="Documents before payment">
+              <button
+                type="button"
+                className="pos-doc-btn pos-doc-btn--quotation"
+                onClick={openQuotationFromCart}
+                disabled={
+                  checkoutModalBusy ||
+                  checkoutCustomerModal ||
+                  lines.length === 0 ||
+                  !salesPointId ||
+                  salesPointSessionStatus !== 'open' ||
+                  (Boolean(customerId?.trim()) && !customerAllowsSale)
+                }
+                title="Save cart as a B2B draft order and open the quotation builder (customer required)"
+              >
+                <span className="pos-doc-btn__icon" aria-hidden>
+                  ◇
+                </span>
+                <span className="pos-doc-btn__text">
+                  <span className="pos-doc-btn__label">Quotation</span>
+                  <span className="pos-doc-btn__hint">from cart</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="pos-doc-btn pos-doc-btn--invoice"
+                disabled
+                title="Invoices from completed sales are not available in the app yet. Use Charge to complete a sale, or create a Quotation for a proposal PDF."
+              >
+                <span className="pos-doc-btn__icon" aria-hidden>
+                  ⧉
+                </span>
+                <span className="pos-doc-btn__text">
+                  <span className="pos-doc-btn__label">Invoice</span>
+                  <span className="pos-doc-btn__hint">soon</span>
+                </span>
+              </button>
+            </div>
+            <div className="pos-charge-row__actions">
+              <Button
+                type="button"
+                variant="primary"
+                className="pos-charge-btn"
+                onClick={() => openCheckoutModal()}
+                disabled={chargeDisabled}
+                title={
+                  incompleteSerialLineCount > 0
+                    ? 'Complete serial numbers on all lines first'
+                    : 'Charge (Ctrl+Enter)'
+                }
+              >
+                {checkoutModalBusy ? 'Processing…' : `Charge ₹${totals.total.toFixed(2)}`}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="pos-save-order-btn"
+                onClick={() => void saveAsOrder()}
+                disabled={
+                  saveOrderBusy ||
+                  checkoutModalBusy ||
+                  checkoutCustomerModal ||
+                  lines.length === 0 ||
+                  !salesPointId ||
+                  salesPointSessionStatus !== 'open' ||
+                  (Boolean(customerId?.trim()) && !customerAllowsSale)
+                }
+                title="Save as open order for partial pickup and payment later"
+              >
+                {saveOrderBusy ? 'Saving…' : 'Save as order'}
+              </Button>
             </div>
           </div>
 
-
-          <section className="pos-cart" aria-label="Cart">
-            {lines.length === 0 ? (
-              <div className="pos-empty">
-                <div className="pos-empty__box">
-                  <p className="pos-empty__title">Scan a product to start a sale</p>
-                  <p className="pos-empty__sub">
-                    Use scan or search and quick-add cards for regular products; use the MISC strip below for
-                    non-stock items. Lines merge by variant.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="pos-cart-list-col">
-                <div className="pos-cart-list">
-                  {lines.map((line) => {
-                    const lineTotal = getLineTotalWithGst(line, branchTaxPercent);
-                    const avail = availableByVariant[line.variantId];
-                    const unitFactor = getUnitFactor(line, line.unitOfMeasure);
-                    const warn =
-                      !line.isNonStock &&
-                      !line.allowNegativeStock &&
-                      !settings?.allowNegativePos &&
-                      avail !== undefined &&
-                      line.quantity * unitFactor > avail;
-                    const availableInSelectedUnit =
-                      avail === undefined ? undefined : Math.round((avail / unitFactor) * 1000) / 1000;
-                    return (
-                      <PosCartLineListCard
-                        key={line.variantId}
-                        line={line}
-                        lineTotal={lineTotal}
-                        selected={selectedDetailVariantId === line.variantId}
-                        flash={lastMergedVariantId === line.variantId}
-                        available={availableInSelectedUnit}
-                        showStockWarning={warn}
-                        onSelect={() => setSelectedDetailVariantId(line.variantId)}
-                        onQuantityChange={(q) => setLineQuantity(line.variantId, q)}
-                        onUnitChange={(unitOfMeasure) => {
-                          const currentFactor = getUnitFactor(line, line.unitOfMeasure);
-                          const nextFactor = getUnitFactor(line, unitOfMeasure);
-                          const nextUnitPrice = (line.unitPrice / currentFactor) * nextFactor;
-                          updateLine(line.variantId, {
-                            unitOfMeasure,
-                            unitPrice: Math.round(nextUnitPrice * 10000) / 10000,
-                          });
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </section>
-
-        </div>
-      </div>
-
+          {customerId?.trim() && !customerAllowsSale ? (
+            <div className="sales-panel-error pos-checkout-err">{INACTIVE_CUSTOMER_MSG}</div>
+          ) : null}
+          {checkoutError ? <div className="sales-panel-error pos-checkout-err">{checkoutError}</div> : null}
+        </>
+      }
+      rightSearch={productLookup}
+      rightHeadActions={
+        <>
+          <Button type="button" variant="secondary" onClick={holdOrder} disabled={checkoutModalBusy}>
+            Hold order
+          </Button>
+          <Button type="button" variant="secondary" onClick={handleNewSale}>
+            Clear
+          </Button>
+        </>
+      }
+      rightHeadStatus={
+        posOrderForCustomerIntent && customerId && intentCustomerLabel ? (
+          <div className="pos-order-for-customer" role="status">
+            <span className="pos-order-for-customer__text">For {intentCustomerLabel}</span>
+            <button
+              type="button"
+              className="pos-order-for-customer__clear"
+              aria-label="Stop creating this order for this customer"
+              onClick={clearPosOrderIntent}
+            >
+              ×
+            </button>
+          </div>
+        ) : null
+      }
+      cart={
+        lines.length === 0 ? (
+          <CounterCartEmptyState
+            title="Scan a product to start a sale"
+            subtitle="Use scan or search and quick-add cards for regular products; use the MISC strip below for non-stock items. Lines merge by variant."
+          />
+        ) : (
+          <div className="pos-cart-list-col">
+            <div className="pos-cart-list">
+              {lines.map((line) => {
+                const lineTotal = getLineTotalWithGst(line, branchTaxPercent);
+                const avail = availableByVariant[line.variantId];
+                const unitFactor = getUnitFactor(line, line.unitOfMeasure);
+                const warn =
+                  !line.isNonStock &&
+                  !line.allowNegativeStock &&
+                  !settings?.allowNegativePos &&
+                  avail !== undefined &&
+                  line.quantity * unitFactor > avail;
+                const availableInSelectedUnit =
+                  avail === undefined ? undefined : Math.round((avail / unitFactor) * 1000) / 1000;
+                return (
+                  <PosCartLineListCard
+                    key={line.variantId}
+                    line={line}
+                    lineTotal={lineTotal}
+                    selected={selectedDetailVariantId === line.variantId}
+                    flash={lastMergedVariantId === line.variantId}
+                    available={availableInSelectedUnit}
+                    showStockWarning={warn}
+                    onSelect={() => {
+                      const needsSerial =
+                        line.serialWarning && !isPosSerialLineComplete(line);
+                      openLineDetail(line.variantId, {
+                        focusSerial: needsSerial,
+                        focusPrice: false,
+                      });
+                    }}
+                    onPickSerials={() => {
+                      openLineDetail(line.variantId, { focusSerial: true });
+                    }}
+                    onQuantityChange={(q) => setLineQuantity(line.variantId, q)}
+                    onUnitChange={(unitOfMeasure) => {
+                      const currentFactor = getUnitFactor(line, line.unitOfMeasure);
+                      const nextFactor = getUnitFactor(line, unitOfMeasure);
+                      const nextUnitPrice = (line.unitPrice / currentFactor) * nextFactor;
+                      updateLine(line.variantId, {
+                        unitOfMeasure,
+                        unitPrice: Math.round(nextUnitPrice * 10000) / 10000,
+                      });
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )
+      }
+    >
       <Modal
         isOpen={Boolean(selectedDetailVariantId && selectedDetailLine)}
-        onClose={() => setSelectedDetailVariantId(null)}
+        onClose={closeCartDetailModal}
         size="lg"
         className="pos-cart-detail-modal"
       >
@@ -2024,11 +1825,15 @@ export const PosShell: React.FC<Props> = ({
           <PosCartItemDetailPanel
             line={selectedDetailLine}
             embeddedInModal
+            focusPriceOnMount={detailFocusPrice}
+            focusSerialOnMount={detailFocusSerial}
+            salesLocationId={locationId}
+            otherCartSerials={otherCartSerialsForLine(selectedDetailLine.variantId)}
             branchTaxPercent={branchTaxPercent}
             onUpdate={handleDetailUpdate}
             onRemove={handleDetailRemove}
-            onSave={() => setSelectedDetailVariantId(null)}
-            onClose={() => setSelectedDetailVariantId(null)}
+            onSave={closeCartDetailModal}
+            onClose={closeCartDetailModal}
           />
         ) : null}
       </Modal>
@@ -2222,6 +2027,6 @@ export const PosShell: React.FC<Props> = ({
           onBack={backFromQuotationPdf}
         />
       ) : null}
-    </div>
+    </CounterWorkspaceShell>
   );
 };

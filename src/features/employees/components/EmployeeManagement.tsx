@@ -4,16 +4,18 @@
 
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { employeeService, CreateEmployeeRequest, ActiveSessionInfo } from '@/services/employee.service';
+import { voipService } from '@/services/voip.service';
 import { employeeDetailsService } from '@/services/employee.service';
 import { shiftService } from '@/services/shift.service';
 import { branchService } from '@/services/branch.service';
 import { User, UserRole, EmployeeDetails, UpdateEmployeeDetailsRequest, Branch } from '@/types';
 import { Shift } from '@/types/shift';
-import { Button, Input, Card, Select, BranchModuleCheckboxGroup } from '@/shared/components/ui';
+import { Button, Input, Card, Select, BranchModuleCheckboxGroup, Checkbox } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ProfileSummarySection } from '@/pages/Employee/sections/ProfileSummarySection';
+import { VoipSection } from '@/pages/Employee/sections/VoipSection';
 import { EmploymentRoleSection } from '@/pages/Employee/sections/EmploymentRoleSection';
 import { ShiftAttendanceSection } from '@/pages/Employee/sections/ShiftAttendanceSection';
 import { TaskPreferencesSection } from '@/pages/Employee/sections/TaskPreferencesSection';
@@ -49,6 +51,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   } | null>(null);
   const [sectionsExpanded, setSectionsExpanded] = useState<Record<string, boolean>>({
     profile: true,
+    voip: true,
     employment: true,
     shift: true,
     task: false,
@@ -66,7 +69,11 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
     phoneNumber: '',
     employeeId: '',
     designation: '',
+    enableVoip: true,
+    sipExtension: '',
   });
+  const [voipConfigured, setVoipConfigured] = useState(false);
+  const [voipRangeHint, setVoipRangeHint] = useState('');
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
   const [loadingShifts, setLoadingShifts] = useState(false);
@@ -102,8 +109,30 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   useEffect(() => {
     if (viewMode === 'add') {
       loadShifts();
+      void loadVoipSuggestion();
     }
   }, [viewMode]);
+
+  const loadVoipSuggestion = async () => {
+    try {
+      const [status, next] = await Promise.all([
+        voipService.getConfigStatus(),
+        voipService.getNextExtension(),
+      ]);
+      setVoipConfigured(status.configured);
+      if (status.configured) {
+        setVoipRangeHint(`${status.extensionRangeStart}–${status.extensionRangeEnd}`);
+      }
+      setFormData((prev) => ({
+        ...prev,
+        enableVoip: status.configured ? prev.enableVoip : false,
+        sipExtension: next.suggestedExtension,
+      }));
+    } catch (err) {
+      logger.error('[EmployeeManagement] Failed to load VoIP suggestion', err);
+      setVoipConfigured(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedEmployeeId && viewMode === 'details') {
@@ -195,11 +224,14 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       phoneNumber: '',
       employeeId: '',
       designation: '',
+      enableVoip: voipConfigured,
+      sipExtension: '',
     });
     setSelectedShiftId('');
     setError(null);
     setSuccess(null);
-  }, []);
+    void loadVoipSuggestion();
+  }, [voipConfigured]);
 
   useImperativeHandle(ref, () => ({ openAddEmployee: handleAddEmployee }), [handleAddEmployee]);
 
@@ -252,9 +284,21 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
           formData.visibleDepartments && formData.visibleDepartments.length > 0
             ? formData.visibleDepartments
             : undefined,
+        enableVoip: formData.enableVoip && voipConfigured ? true : false,
+        sipExtension:
+          formData.enableVoip && voipConfigured && formData.sipExtension?.trim()
+            ? formData.sipExtension.trim()
+            : undefined,
       };
       const newEmployee = await employeeService.createEmployee(payload);
-      setSuccess('Employee created successfully');
+      let successMsg = 'Employee created successfully';
+      if (newEmployee.sipExtension) {
+        successMsg += ` — SIP extension ${newEmployee.sipExtension}`;
+        if (newEmployee.sipPasswordGenerated) {
+          successMsg += `. SIP password (save now): ${newEmployee.sipPasswordGenerated}`;
+        }
+      }
+      setSuccess(successMsg);
       
       // If shift is selected, assign it to the employee
       if (selectedShiftId) {
@@ -415,11 +459,20 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       setUnsavedChanges(false);
       setShowConfirmModal(false);
       setPendingUpdate(null);
+      if (updated.sipPasswordGenerated && updated.sipExtension) {
+        const isReset = request.resetVoipPassword === true;
+        setSuccess(
+          isReset
+            ? `SIP password reset for extension ${updated.sipExtension}. Employee should tap Reset SIP password on Phone or log in again.`
+            : `VoIP extension ${updated.sipExtension} created. SIP password: ${updated.sipPasswordGenerated} — save it now; it will not be shown again.`
+        );
+      }
       await loadEmployees(); // Refresh the list
     } catch (err: any) {
-      setDetailsError(err.response?.data?.message || 'Failed to update employee details');
+      setDetailsError(err.response?.data?.message || err.message || 'Failed to update employee details');
       setShowConfirmModal(false);
       setPendingUpdate(null);
+      throw err;
     }
   };
 
@@ -515,6 +568,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                     <th>Modules</th>
                     <th>Branch</th>
                     <th>Employee ID</th>
+                    <th>SIP Ext</th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
@@ -522,7 +576,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                 <tbody>
                   {employees.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="employee-table__empty-cell">
+                      <td colSpan={9} className="employee-table__empty-cell">
                         <EmptyState
                           title="No one on the roster yet"
                           message="Use Add employee (top right on the Employees tab) to invite your first team member."
@@ -544,6 +598,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                         </td>
                         <td>{employee.branchId ? branches.find(b => b.id === employee.branchId)?.name || '-' : '-'}</td>
                       <td>{employee.employeeId || '-'}</td>
+                      <td>{employee.sipExtension || '—'}</td>
                       <td>
                         {isEmployeeOnline(employee.id) ? (
                           <span className="status-badge status-badge--online">
@@ -727,6 +782,38 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                   )}
                 </div>
 
+                {voipConfigured ? (
+                  <div className="form-row form-row--full employee-voip-section">
+                    <Checkbox
+                      checked={formData.enableVoip ?? false}
+                      label="Enable app phone (FreePBX extension)"
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, enableVoip: e.target.checked }))
+                      }
+                      disabled={loading}
+                    />
+                    {formData.enableVoip ? (
+                      <>
+                        <Input
+                          label={`SIP extension${voipRangeHint ? ` (${voipRangeHint})` : ''}`}
+                          type="text"
+                          name="sipExtension"
+                          value={formData.sipExtension || ''}
+                          onChange={handleChange}
+                          disabled={loading}
+                        />
+                        <small style={{ color: '#666' }}>
+                          Auto-suggested next free extension. Change only if you need a specific number.
+                        </small>
+                      </>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="employee-form-voip-hint">
+                    VoIP is not configured on the server — employee will be created without a phone extension.
+                  </p>
+                )}
+
                 <div className="form-actions">
                   <Button type="button" variant="secondary" onClick={handleCancelForm} disabled={loading}>
                     Cancel
@@ -770,6 +857,15 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                     canEdit={canEdit}
                     isExpanded={sectionsExpanded.profile}
                     onToggle={() => handleSectionToggle('profile')}
+                    onUnsavedChange={setUnsavedChanges}
+                  />
+
+                  <VoipSection
+                    employee={employeeDetails}
+                    onUpdate={handleUpdate}
+                    canEdit={canEdit}
+                    isExpanded={sectionsExpanded.voip}
+                    onToggle={() => handleSectionToggle('voip')}
                     onUnsavedChange={setUnsavedChanges}
                   />
 

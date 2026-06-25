@@ -29,6 +29,9 @@ export interface User {
   canActAsProxy?: boolean;
   allowCheckoutWithoutWifi?: boolean;
   allowCheckinWithoutWifi?: boolean;
+  sipExtension?: string;
+  voipEnabled?: boolean;
+  sipPasswordGenerated?: string;
 }
 
 // Auth types
@@ -397,6 +400,12 @@ export interface EmployeeDetails {
   breakRuleOverride?: boolean;
   holidayWorkingPermission?: boolean;
   canActAsProxy?: boolean;
+
+  // VoIP
+  sipExtension?: string;
+  voipEnabled?: boolean;
+  /** Returned once when an extension is provisioned in this response */
+  sipPasswordGenerated?: string;
   
   // System & Audit (read-only)
   createdAt: string;
@@ -453,6 +462,11 @@ export interface UpdateEmployeeDetailsRequest {
   breakRuleOverride?: boolean;
   holidayWorkingPermission?: boolean;
   canActAsProxy?: boolean;
+
+  // VoIP (HR/Admin)
+  enableVoip?: boolean;
+  sipExtension?: string;
+  resetVoipPassword?: boolean;
   
   // Optional reason for audit
   reason?: string;

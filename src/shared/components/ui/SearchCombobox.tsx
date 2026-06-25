@@ -8,6 +8,13 @@ import './SearchCombobox.css';
 
 export type SearchComboboxCreatePolicy = 'never' | 'empty-only' | 'always';
 
+export type SearchComboboxSubmitContext<T> = {
+  query: string;
+  items: T[];
+  activeIndex: number;
+  isLoading: boolean;
+};
+
 export type SearchComboboxProps<T> = {
   id?: string;
   label?: string;
@@ -59,6 +66,19 @@ export type SearchComboboxProps<T> = {
 
   hint?: React.ReactNode;
   comboboxAriaLabel?: string;
+
+  /** Merged with the internal input ref (e.g. POS focus shortcut). */
+  inputRef?: React.Ref<HTMLInputElement | null>;
+  /** Optional content before the input (e.g. search icon). */
+  inputLeading?: React.ReactNode;
+  fieldClassName?: string;
+  inputClassName?: string;
+  listClassName?: string;
+  /**
+   * When set, Enter runs this instead of selecting a row.
+   * Useful for barcode scan + add flows (POS).
+   */
+  onSubmit?: (ctx: SearchComboboxSubmitContext<T>) => void | Promise<void>;
 };
 
 function defaultFilter<T>(items: T[], query: string, getSearchableText?: (item: T) => string): T[] {
@@ -126,6 +146,12 @@ export function SearchCombobox<T>({
 
   hint,
   comboboxAriaLabel,
+  inputRef: inputRefProp,
+  inputLeading,
+  fieldClassName = '',
+  inputClassName = '',
+  listClassName = '',
+  onSubmit,
 }: SearchComboboxProps<T>) {
   const autoId = useId();
   const inputId = idProp ?? `search-combobox-${autoId}`;
@@ -133,7 +159,20 @@ export function SearchCombobox<T>({
   const minCreate = minCreateLength ?? minSearchLength;
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const localInputRef = useRef<HTMLInputElement | null>(null);
+
+  const setInputRef = useCallback(
+    (node: HTMLInputElement | null) => {
+      localInputRef.current = node;
+      if (!inputRefProp) return;
+      if (typeof inputRefProp === 'function') {
+        inputRefProp(node);
+      } else {
+        (inputRefProp as React.MutableRefObject<HTMLInputElement | null>).current = node;
+      }
+    },
+    [inputRefProp]
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isOpenInternal, setIsOpenInternal] = useState(false);
@@ -237,7 +276,7 @@ export function SearchCombobox<T>({
     (item: T) => {
       onSelect(item);
       setOpen(false);
-      inputRef.current?.blur();
+      localInputRef.current?.blur();
     },
     [onSelect, setOpen]
   );
@@ -254,6 +293,18 @@ export function SearchCombobox<T>({
       return;
     }
     if (!isOpen) {
+      if (e.key === 'Enter' && onSubmit && query.trim()) {
+        e.preventDefault();
+        void Promise.resolve(
+          onSubmit({
+            query,
+            items: displayedItems,
+            activeIndex: 0,
+            isLoading: showLoading,
+          })
+        );
+        return;
+      }
       if (e.key === 'ArrowDown' || e.key === 'Enter') {
         setOpen(true);
       }
@@ -276,6 +327,17 @@ export function SearchCombobox<T>({
       e.preventDefault();
       if (showCreate && activeIndex === createIndex) {
         requestCreate();
+        return;
+      }
+      if (onSubmit) {
+        void Promise.resolve(
+          onSubmit({
+            query,
+            items: displayedItems,
+            activeIndex: activeIndex >= 0 ? activeIndex : 0,
+            isLoading: showLoading,
+          })
+        );
         return;
       }
       const item = displayedItems[activeIndex >= 0 ? activeIndex : 0];
@@ -338,11 +400,13 @@ export function SearchCombobox<T>({
         </label>
       ) : null}
 
-      <input
-        ref={inputRef}
-        id={inputId}
-        type="text"
-        className={`search-combobox__input${error ? ' search-combobox__input--error' : ''}`}
+      <div className={`search-combobox__field${fieldClassName ? ` ${fieldClassName}` : ''}`}>
+        {inputLeading}
+        <input
+          ref={setInputRef}
+          id={inputId}
+          type="text"
+          className={`search-combobox__input${error ? ' search-combobox__input--error' : ''}${inputClassName ? ` ${inputClassName}` : ''}`}
         value={value}
         disabled={disabled}
         placeholder={placeholder}
@@ -356,7 +420,8 @@ export function SearchCombobox<T>({
         onChange={(e) => onValueChange(e.target.value)}
         onFocus={() => setOpen(true)}
         onKeyDown={handleKeyDown}
-      />
+        />
+      </div>
 
       {error ? <p className="search-combobox__error">{error}</p> : null}
       {!error && hint ? <div className="search-combobox__hint">{hint}</div> : null}
@@ -364,7 +429,7 @@ export function SearchCombobox<T>({
       {isOpen ? (
         <div
           id={listId}
-          className={`search-combobox__list${listHasStickyCreate ? ' search-combobox__list--with-sticky-create' : ''}`}
+          className={`search-combobox__list${listHasStickyCreate ? ' search-combobox__list--with-sticky-create' : ''}${listClassName ? ` ${listClassName}` : ''}`}
           role="listbox"
         >
           <div className="search-combobox__list-body">
@@ -381,8 +446,6 @@ export function SearchCombobox<T>({
                   </div>
                 ))}
               </>
-            ) : displayedItems.length === 0 && !showEmptyBeforeCreate ? (
-              <div className="search-combobox__empty">{emptyMessage}</div>
             ) : (
               displayedItems.map((item, index) => {
                 const active = index === activeIndex;

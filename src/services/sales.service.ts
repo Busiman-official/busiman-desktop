@@ -488,6 +488,7 @@ export const salesService = {
         posLineNotes?: string;
         posHsn?: string;
         posGstInclusive?: boolean;
+        serialNumbers?: string[];
       }>;
       paymentMethodCode?: string;
       discountAmount?: number;
@@ -516,6 +517,7 @@ export const salesService = {
         posLineNotes?: string;
         posHsn?: string;
         posGstInclusive?: boolean;
+        serialNumbers?: string[];
       }>;
       paymentMethodCode?: string;
       /** Split tender (real methods only). Collected + onAccountAmount must equal order total. */

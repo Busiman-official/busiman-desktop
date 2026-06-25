@@ -1,35 +1,49 @@
-import React, { useMemo, useState } from 'react';
-import { Button, Input, Select } from '@/shared/components/ui';
-import { type PurchaseOrder, type PurchaseOrderStatus } from '@/services/purchase.service';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Button } from '@/shared/components/ui';
+import { EmptyState } from '@/shared/components/data-display';
+import { type PurchaseOrder, type PurchaseOrderListStats } from '@/services/purchase.service';
+import { formatInr, purchaseOrderGrandTotal } from '../utils/supplierDirectory';
+import { isReceivablePurchaseOrder } from '../utils/receivablePurchaseOrders';
+import {
+  buildActiveFilterChips,
+  DEFAULT_PO_LIST_STATUSES,
+  filtersForStatCard,
+  hasActiveListFilters,
+  purchaseOrderStatusLabel,
+  type PoListStatCard,
+  type PurchaseOrderListFilters,
+} from '../utils/purchaseOrderListFilters';
+import { PurchaseOrdersListStats } from './PurchaseOrdersListStats';
+import './PurchaseOrdersListPanel.css';
 
 type Props = {
   rows: PurchaseOrder[];
   total: number;
   page: number;
   pageSize: number;
-  filters: {
-    search: string;
-    status: PurchaseOrderStatus | '';
-    supplierId: string;
-    dateFrom: string;
-    dateTo: string;
-  };
+  loading?: boolean;
+  stats: PurchaseOrderListStats;
+  statsLoading?: boolean;
+  filters: PurchaseOrderListFilters;
   supplierOptions: Array<{ id: string; name: string }>;
-  onFiltersChange: (patch: Partial<Props['filters']>) => void;
+  onFiltersChange: (patch: Partial<PurchaseOrderListFilters>) => void;
   onPageChange: (page: number) => void;
   onCreate: () => void;
   onOpenOrder: (orderId: string) => void;
+  onReceiveOrder?: (order: PurchaseOrder) => void;
+  highlightedRowIndex: number;
+  onHighlightedRowIndexChange: (index: number) => void;
 };
 
-function statusPill(status: PurchaseOrderStatus): React.CSSProperties {
-  const map: Record<PurchaseOrderStatus, React.CSSProperties> = {
-    draft: { background: '#f8fafc', color: '#334155', border: '1px solid #cbd5e1' },
-    confirmed: { background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' },
-    partial: { background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' },
-    completed: { background: '#ecfdf5', color: '#047857', border: '1px solid #bbf7d0' },
-    cancelled: { background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' },
-  };
-  return map[status];
+function formatShortDate(iso?: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function receivePercent(order: PurchaseOrder): number {
+  const ordered = Math.max(0, order.totalOrderedQty);
+  if (ordered <= 0) return 0;
+  return Math.min(100, Math.round((order.totalReceivedQty / ordered) * 100));
 }
 
 export const PurchaseOrdersListPanel: React.FC<Props> = ({
@@ -37,141 +51,205 @@ export const PurchaseOrdersListPanel: React.FC<Props> = ({
   total,
   page,
   pageSize,
+  loading,
+  stats,
+  statsLoading,
   filters,
   supplierOptions,
   onFiltersChange,
   onPageChange,
   onCreate,
   onOpenOrder,
+  onReceiveOrder,
+  highlightedRowIndex,
+  onHighlightedRowIndexChange,
 }) => {
-  const [searchDraft, setSearchDraft] = useState(filters.search);
+  const tableWrapRef = useRef<HTMLDivElement>(null);
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+  const showingFrom = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingTo = Math.min(page * pageSize, total);
+
+  const supplierName = useMemo(
+    () => supplierOptions.find((s) => s.id === filters.supplierId)?.name,
+    [filters.supplierId, supplierOptions]
+  );
+  const activeChips = useMemo(
+    () => buildActiveFilterChips(filters, supplierName),
+    [filters, supplierName]
+  );
+  const showActiveStrip = hasActiveListFilters(filters);
+
+  const clearAllFilters = () => {
+    onFiltersChange({
+      search: '',
+      statuses: [...DEFAULT_PO_LIST_STATUSES],
+      overdueOnly: false,
+      supplierId: '',
+      dateFrom: '',
+      dateTo: '',
+    });
+  };
+
+  const handleStatClick = (card: PoListStatCard) => {
+    onFiltersChange(filtersForStatCard(card));
+  };
+
+  useEffect(() => {
+    if (highlightedRowIndex < 0 || !tableWrapRef.current) return;
+    const el = tableWrapRef.current.querySelector<HTMLElement>(
+      `[data-list-row-index="${highlightedRowIndex}"]`
+    );
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [highlightedRowIndex, rows.length]);
 
   return (
-    <section style={{ display: 'grid', gap: 12 }}>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr auto',
-          gap: 8,
-          alignItems: 'end',
-          background: '#fff',
-          border: '1px solid #e2e8f0',
-          borderRadius: 12,
-          padding: 12,
-        }}
-      >
-        <Input
-          label="Search PO / Supplier"
-          value={searchDraft}
-          onChange={(e) => setSearchDraft(e.target.value)}
-          onBlur={() => onFiltersChange({ search: searchDraft.trim() })}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onFiltersChange({ search: searchDraft.trim() });
-          }}
-          placeholder="PO-XXXX or supplier"
-        />
-        <Select
-          label="Status"
-          value={filters.status}
-          onChange={(e) => onFiltersChange({ status: e.target.value as PurchaseOrderStatus | '' })}
-        >
-          <option value="">All</option>
-          <option value="draft">Draft</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="partial">Partial</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-        </Select>
-        <Select
-          label="Supplier"
-          value={filters.supplierId}
-          onChange={(e) => onFiltersChange({ supplierId: e.target.value })}
-        >
-          <option value="">All suppliers</option>
-          {supplierOptions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
+    <section className="po-list">
+      <PurchaseOrdersListStats
+        stats={stats}
+        statsLoading={statsLoading}
+        filters={filters}
+        onStatClick={handleStatClick}
+      />
+      {showActiveStrip ? (
+        <div className="po-list__active">
+          <span className="po-list__active-label">Active filters</span>
+          {activeChips.map((chip) => (
+            <span key={chip.key} className="po-list__active-chip">
+              {chip.label}
+            </span>
           ))}
-        </Select>
-        <Input
-          label="Date from"
-          type="date"
-          value={filters.dateFrom}
-          onChange={(e) => onFiltersChange({ dateFrom: e.target.value })}
-        />
-        <Input
-          label="Date to"
-          type="date"
-          value={filters.dateTo}
-          onChange={(e) => onFiltersChange({ dateTo: e.target.value })}
-        />
-        <Button variant="primary" onClick={onCreate}>
-          + Create Order
-        </Button>
-      </div>
-
-      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
-              {['PO Number', 'Supplier', 'Order Date', 'Items', 'Ordered', 'Received', 'Pending', 'Status'].map((h) => (
-                <th key={h} style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', color: '#334155' }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 16, color: '#64748b' }}>
-                  No purchase orders found.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => (
-                <tr
-                  key={row.id}
-                  onClick={() => onOpenOrder(row.id)}
-                  style={{ cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}
-                >
-                  <td style={{ padding: '10px 12px', fontWeight: 600, color: '#0f172a' }}>{row.poNumber}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.supplierName}</td>
-                  <td style={{ padding: '10px 12px' }}>{new Date(row.orderDate).toLocaleDateString()}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.itemCount}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.totalOrderedQty}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.totalReceivedQty}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.totalPendingQty}</td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <span style={{ ...statusPill(row.status), borderRadius: 999, padding: '2px 8px', fontSize: 12 }}>
-                      {row.status}
-                    </span>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: '#64748b', fontSize: 12 }}>
-          Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
-        </span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="secondary" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
-            Prev
-          </Button>
-          <span style={{ alignSelf: 'center', color: '#475569', fontSize: 12 }}>
-            Page {page} / {pages}
-          </span>
-          <Button variant="secondary" disabled={page >= pages} onClick={() => onPageChange(page + 1)}>
-            Next
+          <Button type="button" size="sm" variant="secondary" onClick={clearAllFilters}>
+            Clear all
           </Button>
         </div>
+      ) : null}
+
+      <div className="po-list__card">
+        {loading ? (
+          <div className="po-list__loading">Loading purchase orders…</div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title={showActiveStrip ? 'No orders match your filters' : 'No purchase orders yet'}
+            message={
+              showActiveStrip
+                ? 'Try different filters or clear them.'
+                : 'Create a purchase order to plan supplier purchases.'
+            }
+            action={
+              showActiveStrip ? (
+                <Button variant="secondary" onClick={clearAllFilters}>
+                  Clear filters
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={onCreate}>
+                  Create first order
+                </Button>
+              )
+            }
+          />
+        ) : (
+          <div className="po-list__table-wrap" ref={tableWrapRef}>
+            <table className="po-list__table">
+              <thead>
+                <tr>
+                  {['PO', 'Supplier', 'Order date', 'Expected', 'Progress', 'Amount', 'Status', 'Actions'].map(
+                    (h) => (
+                      <th key={h}>{h}</th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, rowIndex) => {
+                  const pct = receivePercent(row);
+                  const canReceive = isReceivablePurchaseOrder(row);
+                  const amount = purchaseOrderGrandTotal(row);
+                  const showProgress =
+                    row.status !== 'draft' && row.status !== 'cancelled';
+                  const highlighted = rowIndex === highlightedRowIndex;
+
+                  return (
+                    <tr
+                      key={row.id}
+                      data-list-row-index={rowIndex}
+                      className={`po-list__row${highlighted ? ' po-list__row--highlighted' : ''}`}
+                      onMouseEnter={() => onHighlightedRowIndexChange(rowIndex)}
+                      onClick={() => onHighlightedRowIndexChange(rowIndex)}
+                    >
+                      <td>
+                        <div className="po-list__po-num">{row.poNumber}</div>
+                        <div className="po-list__po-meta">
+                          {row.itemCount} item{row.itemCount === 1 ? '' : 's'}
+                          {row.priority === 'urgent' ? (
+                            <span className="po-list__urgent"> · Urgent</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>{row.supplierName}</td>
+                      <td>{formatShortDate(row.orderDate)}</td>
+                      <td>{formatShortDate(row.expectedDeliveryDate)}</td>
+                      <td>
+                        {!showProgress ? (
+                          <span className="po-list__progress-label">—</span>
+                        ) : (
+                          <>
+                            <div className="po-list__progress-bar" aria-hidden>
+                              <div className="po-list__progress-fill" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="po-list__progress-label">
+                              {row.totalReceivedQty} / {row.totalOrderedQty} ({pct}%)
+                            </span>
+                          </>
+                        )}
+                      </td>
+                      <td className="po-list__amount">{formatInr(amount)}</td>
+                      <td>
+                        <span className={`po-list__pill po-list__pill--${row.status}`}>
+                          {purchaseOrderStatusLabel(row.status)}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="po-list__actions">
+                          <Button type="button" size="sm" variant="secondary" onClick={() => onOpenOrder(row.id)}>
+                            Open
+                          </Button>
+                          {canReceive && onReceiveOrder ? (
+                            <Button type="button" size="sm" variant="primary" onClick={() => onReceiveOrder(row)}>
+                              Receive
+                            </Button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+
+      {!loading && total > 0 ? (
+        <div className="po-list__foot">
+          <span className="po-list__foot-meta">
+            Showing {showingFrom}–{showingTo} of {total}
+          </span>
+          <span className="po-list__kbd-hint">
+            ↑↓ move · Enter open · R receive · 1–3 filters · / search · Ctrl+Shift+Enter new PO
+          </span>
+          <div className="po-list__foot-pages">
+            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+              Previous
+            </Button>
+            <span className="po-list__foot-meta">
+              Page {page} of {pages}
+            </span>
+            <Button variant="secondary" size="sm" disabled={page >= pages} onClick={() => onPageChange(page + 1)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 };

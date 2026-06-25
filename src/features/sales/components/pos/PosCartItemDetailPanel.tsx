@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Button, Input, Select, Textarea } from '@/shared/components/ui';
 import type { PosCartLine } from './usePosCart';
 import { PosQuantityStepper } from './PosQuantityStepper';
@@ -12,6 +12,9 @@ import {
   isGstInclusive,
   normalizePosGstRatePercent,
 } from './posLineMath';
+import { ReceivingLocationSelect } from '@/features/inventory/components/ReceivingLocationSelect';
+import { PosSerialCaptureSection } from './PosSerialCaptureSection';
+import { trimSerialsToQuantity } from './posSerialUtils';
 import './PosCartItemDetailPanel.css';
 
 interface Props {
@@ -23,6 +26,18 @@ interface Props {
   onClose: () => void;
   /** When true, render for placement inside a dialog (no sidebar chrome / empty placeholder). */
   embeddedInModal?: boolean;
+  /** Focus unit price when the modal opens (search add flow). */
+  focusPriceOnMount?: boolean;
+  /** Focus serial input when the modal opens (serialized product add / incomplete line). */
+  focusSerialOnMount?: boolean;
+  /** Sales point stock location for serial ISSUE validation. */
+  salesLocationId?: string | null;
+  /** Serials on other cart lines (duplicate guard). */
+  otherCartSerials?: string[];
+  /** Receipt counter: qty, unit, cost, notes only (no GST/discount). */
+  mode?: 'sales' | 'receipt';
+  receiptBranchId?: string | null;
+  headerDefaultLocationId?: string | null;
 }
 
 export const PosCartItemDetailPanel: React.FC<Props> = ({
@@ -33,11 +48,35 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
   onSave,
   onClose,
   embeddedInModal = false,
+  focusPriceOnMount = false,
+  focusSerialOnMount = false,
+  salesLocationId = null,
+  otherCartSerials = [],
+  mode = 'sales',
+  receiptBranchId = null,
+  headerDefaultLocationId = null,
 }) => {
+  const isReceipt = mode === 'receipt';
+  const priceInputRef = useRef<HTMLInputElement>(null);
   const effectiveGst = line ? (line.gstRatePercent ?? normalizePosGstRatePercent(branchTaxPercent)) : 0;
+
+  useEffect(() => {
+    if (!embeddedInModal || !line) return;
+    if (focusSerialOnMount && line.serialWarning) return;
+    if (!focusPriceOnMount) return;
+    const id = window.requestAnimationFrame(() => {
+      priceInputRef.current?.focus();
+      priceInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [embeddedInModal, focusPriceOnMount, focusSerialOnMount, line?.serialWarning, line?.variantId]);
 
   const summary = useMemo(() => {
     if (!line) return null;
+    if (isReceipt) {
+      const lineTotal = line.quantity * line.unitPrice;
+      return { lineTotal };
+    }
     const branchGst = normalizePosGstRatePercent(branchTaxPercent);
     const subtotal = line.quantity * line.unitPrice;
     const discount = getLineDiscountAmount(line);
@@ -47,7 +86,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
     const inclusive = isGstInclusive(line);
     const total = inclusive ? net : net + gst;
     return { subtotal, discount, net, taxable, gst, total, inclusive };
-  }, [line, branchTaxPercent]);
+  }, [branchTaxPercent, isReceipt, line]);
 
   if (!line) {
     if (embeddedInModal) return null;
@@ -55,7 +94,11 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
       <aside className="pos-detail-panel pos-detail-panel--empty" aria-label="Line details">
         <div className="pos-detail-panel__placeholder">
           <p className="pos-detail-panel__placeholder-title">Select a product</p>
-          <p className="pos-detail-panel__placeholder-sub">Click a line in the cart to edit quantity, price, GST, and more.</p>
+          <p className="pos-detail-panel__placeholder-sub">
+            {isReceipt
+              ? 'Click a line in the cart to edit quantity, unit cost, and notes.'
+              : 'Click a line in the cart to edit quantity, price, GST, and more.'}
+          </p>
         </div>
       </aside>
     );
@@ -63,6 +106,19 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
 
   const Wrapper: React.ElementType = embeddedInModal ? 'div' : 'aside';
   const rootClass = embeddedInModal ? 'pos-detail-panel pos-detail-panel--modal' : 'pos-detail-panel';
+
+  const isSerialLine = !isReceipt && line.serialWarning === true;
+
+  const handleQtyCommit = (n: number) => {
+    if (isSerialLine) {
+      onUpdate({
+        quantity: n,
+        serialNumbers: trimSerialsToQuantity(line, n),
+      });
+      return;
+    }
+    onUpdate({ quantity: n });
+  };
 
   return (
     <Wrapper className={rootClass} aria-label="Edit line">
@@ -85,7 +141,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             <div className="pos-detail-stepper">
               <PosQuantityStepper
                 quantity={line.quantity}
-                onCommit={(n) => onUpdate({ quantity: n })}
+                onCommit={handleQtyCommit}
                 min={POS_QTY_MIN}
                 max={999_999}
                 buttonClassName="pos-detail-stepper__btn"
@@ -95,6 +151,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
               <Select
                 value={line.unitOfMeasure || line.baseUnit || 'pcs'}
                 onChange={(e) => onUpdate({ unitOfMeasure: e.target.value })}
+                disabled={isSerialLine}
               >
                 {(line.unitOptions?.length ? line.unitOptions : [{ unitCode: line.baseUnit || 'pcs', factorToBase: 1 }]).map((u) => (
                   <option key={u.unitCode} value={u.unitCode}>
@@ -105,9 +162,15 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             </div>
           </div>
           <Input
-            label={isGstInclusive(line) ? 'Unit price (₹, incl. GST)' : 'Unit price (₹, excl. GST)'}
+            ref={priceInputRef}
+            label={isReceipt ? 'Unit cost (₹)' : isGstInclusive(line) ? 'Unit price (₹, incl. GST)' : 'Unit price (₹, excl. GST)'}
             type="number"
             onFocus={(e) => e.target.select()}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              onSave();
+            }}
             min={0}
             step={0.01}
             value={line.unitPrice}
@@ -118,6 +181,30 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
           />
         </section>
 
+        {isSerialLine ? (
+          <PosSerialCaptureSection
+            line={line}
+            salesLocationId={salesLocationId}
+            otherCartSerials={otherCartSerials}
+            focusOnMount={focusSerialOnMount && embeddedInModal}
+            onSerialNumbersChange={(serialNumbers) => onUpdate({ serialNumbers })}
+          />
+        ) : null}
+
+        {isReceipt && receiptBranchId ? (
+          <section className="pos-detail-section">
+            <ReceivingLocationSelect
+              branchId={receiptBranchId}
+              label="Storage location"
+              value={line.toLocationId ?? headerDefaultLocationId}
+              onChange={(locationId, meta) =>
+                onUpdate({ toLocationId: locationId, toLocationPath: meta.pathLabel })
+              }
+            />
+          </section>
+        ) : null}
+
+        {!isReceipt ? (
         <section className="pos-detail-section">
           <h4 className="pos-detail-section__label">GST</h4>
           <div className="pos-detail-gst-mode" role="radiogroup" aria-label="GST pricing">
@@ -154,7 +241,9 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             ))}
           </div>
         </section>
+        ) : null}
 
+        {!isReceipt ? (
         <section className="pos-detail-section">
           <h4 className="pos-detail-section__label">Discount</h4>
           <div className="pos-detail-discount-row">
@@ -189,6 +278,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             />
           </div>
         </section>
+        ) : null}
 
         <section className="pos-detail-section">
           <h4 className="pos-detail-section__label">Extra details</h4>
@@ -197,17 +287,38 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             value={line.notes ?? ''}
             onChange={(e) => onUpdate({ notes: e.target.value })}
             rows={3}
-            placeholder="Line note for this sale…"
+            placeholder={isReceipt ? 'Line note for this receipt…' : 'Line note for this sale…'}
           />
+          {!isReceipt ? (
           <Input
             label="HSN / SAC"
             value={line.hsn ?? ''}
             onChange={(e) => onUpdate({ hsn: e.target.value })}
             placeholder="e.g. 0402"
           />
+          ) : null}
         </section>
 
-        {summary && (
+        {summary && isReceipt ? (
+          <div className="pos-detail-summary">
+            <div className="pos-detail-summary__row">
+              <span>Unit cost</span>
+              <span>₹{line.unitPrice.toFixed(2)}</span>
+            </div>
+            <div className="pos-detail-summary__row">
+              <span>Quantity</span>
+              <span>
+                × {formatPosQuantityDisplay(line.quantity)} {line.unitOfMeasure || line.baseUnit || 'pcs'}
+              </span>
+            </div>
+            <div className="pos-detail-summary__row pos-detail-summary__row--total">
+              <span>Line total</span>
+              <span>₹{summary.lineTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        ) : null}
+
+        {summary && !isReceipt && 'total' in summary ? (
           <div className="pos-detail-summary">
             <div className="pos-detail-summary__row">
               <span>{summary.inclusive ? 'Unit price (incl. GST)' : 'Unit price (excl. GST)'}</span>
@@ -245,7 +356,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
               <span>₹{summary.total.toFixed(2)}</span>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
       <footer className="pos-detail-panel__footer">

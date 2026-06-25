@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Select } from '@/shared/components/ui';
 import { SideDrawer } from '@/shared/components/modals/SideDrawer';
 import type { SelectOption } from '@/shared/components/ui';
@@ -25,6 +25,7 @@ type Props = {
   paymentTermOptions: SelectOption[];
   existingParties: ExistingParty[];
   onSaved: (party: QuickAddPartyResult) => void;
+  persistParty?: (party: Omit<QuickAddPartyResult, 'id'>) => Promise<QuickAddPartyResult>;
 };
 
 function normalizeName(s: string): string {
@@ -42,7 +43,9 @@ export const QuickAddPartyDrawer: React.FC<Props> = ({
   paymentTermOptions,
   existingParties,
   onSaved,
+  persistParty,
 }) => {
+  const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
   const [gstin, setGstin] = useState('');
   const [phone, setPhone] = useState('');
@@ -50,6 +53,7 @@ export const QuickAddPartyDrawer: React.FC<Props> = ({
   const [paymentTerms, setPaymentTerms] = useState('net_30');
   const [nameError, setNameError] = useState('');
   const [duplicateWarning, setDuplicateWarning] = useState('');
+  const saveRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -61,6 +65,12 @@ export const QuickAddPartyDrawer: React.FC<Props> = ({
     setNameError('');
     setDuplicateWarning('');
   }, [isOpen, initialName]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = window.setTimeout(() => saveRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
 
   const paymentLabel = useMemo(
     () => paymentTermOptions.find((o) => o.value === paymentTerms)?.label || paymentTerms,
@@ -113,7 +123,6 @@ export const QuickAddPartyDrawer: React.FC<Props> = ({
             if (nameError) setNameError('');
           }}
           error={nameError}
-          autoFocus
         />
         <Input
           label="GSTIN"
@@ -149,8 +158,8 @@ export const QuickAddPartyDrawer: React.FC<Props> = ({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="button" onClick={handleSave}>
-            Save
+          <Button ref={saveRef} type="button" variant="primary" onClick={() => void handleSave()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
           </Button>
         </div>
       </div>

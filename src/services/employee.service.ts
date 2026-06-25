@@ -38,6 +38,9 @@ export interface CreateEmployeeRequest {
     relationship?: string;
   };
   bio?: string;
+  enableVoip?: boolean;
+  sipExtension?: string;
+  sipPasswordGenerated?: string;
 }
 
 export interface UpdateEmployeeRequest {

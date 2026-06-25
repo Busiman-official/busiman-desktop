@@ -3,14 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input, SearchCombobox, Select, Textarea } from '@/shared/components/ui';
 import { Tooltip } from '@/shared/components/ui/Tooltip';
 import { ConfirmDialog } from '@/shared/components/modals/ConfirmDialog';
-import { SideDrawer } from '@/shared/components/modals/SideDrawer';
 import {
   inventoryService,
-  catalogRows,
   type CatalogVariantRow,
   type Location,
   LocationType,
 } from '@/services/inventory.service';
+import { ProductSearchCombobox } from '@/features/inventory/components/product-search';
 import { branchService } from '@/services/branch.service';
 import type { Branch } from '@/types';
 import {
@@ -21,6 +20,21 @@ import {
   type PurchaseOrderSupplierContact,
 } from '@/services/purchase.service';
 import { QuickAddPartyDrawer } from './QuickAddPartyDrawer';
+import {
+  catalogCostPrice,
+  enrichPurchaseLine,
+  type PurchaseLineUnitOption,
+} from '../utils/purchaseLineUnits';
+import {
+  PAYMENT_TERM_OPTIONS,
+  buildSupplierSnapshot,
+  filterSuppliers,
+  formatInr,
+  paymentLabelToValue,
+  resolveSupplierIdFromName,
+  type SupplierRecord,
+} from '../utils/supplierDirectory';
+import { usePurchaseSupplierCatalog } from '../hooks/usePurchaseSupplierCatalog';
 import './PurchaseOrderCreatePage.css';
 
 type DraftLine = {
@@ -31,43 +45,71 @@ type DraftLine = {
   sku: string;
   quantityOrdered: number;
   unitId: string;
+  unitOptions: PurchaseLineUnitOption[];
   expectedPrice: number;
   taxPercent: number;
   discountPercent: number;
 };
 
-type SupplierRecord = {
-  id: string;
-  name: string;
-  gstin: string;
-  email: string;
-  paymentTermsLabel: string;
-  lastOrderedAt?: number;
-  lastOrderTotal?: number;
-};
+function selectInputOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.select();
+}
+
+function parseDecimalInput(raw: string): number | null {
+  const t = raw.trim();
+  if (t === '' || t === '-' || t === '.') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function quantityInputValue(qty: number): string {
+  if (!qty || qty <= 0) return '';
+  return String(qty);
+}
+
+function priceInputValue(price: number): string {
+  if (!price || price <= 0) return '';
+  return String(price);
+}
+
+function commitQtyForLine(
+  variantId: string,
+  raw: string,
+  updateLine: (variantId: string, patch: Partial<DraftLine>) => void,
+  removeLine: (variantId: string) => void
+): void {
+  const parsed = parseDecimalInput(raw);
+  if (parsed == null || parsed <= 0) {
+    removeLine(variantId);
+    return;
+  }
+  updateLine(variantId, { quantityOrdered: parsed });
+}
+
+function decrementQtyForLine(
+  variantId: string,
+  currentQty: number,
+  updateLine: (variantId: string, patch: Partial<DraftLine>) => void,
+  removeLine: (variantId: string) => void
+): void {
+  const next = Math.max(0, Number(currentQty) || 0) - 1;
+  if (next <= 0) {
+    removeLine(variantId);
+    return;
+  }
+  updateLine(variantId, { quantityOrdered: next });
+}
 
 type Props = {
   branchId?: string | null;
   supplierOptions: Array<{ id: string; name: string }>;
   orderRows: PurchaseOrder[];
+  initialSupplierId?: string | null;
   onCancel: () => void;
   onSaved: (order: PurchaseOrder, mode: 'draft' | 'send' | 'confirm') => void;
+  /** Renders Confirm order (and popover) in the module navbar trailing slot. */
+  onNavbarTrailingChange?: (node: React.ReactNode | null) => void;
 };
-
-const PAYMENT_TERM_OPTIONS = [
-  { value: 'due_on_receipt', label: 'Due on receipt' },
-  { value: 'net_7', label: 'Net 7' },
-  { value: 'net_15', label: 'Net 15' },
-  { value: 'net_30', label: 'Net 30' },
-  { value: 'net_45', label: 'Net 45' },
-  { value: 'net_60', label: 'Net 60' },
-  { value: 'advance', label: 'Advance' },
-];
-
-function formatInr(n: number): string {
-  const v = Number.isFinite(n) ? n : 0;
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(v);
-}
 
 function formatDateIn(v: string): string {
   if (!v) return '';
@@ -78,51 +120,6 @@ function formatDateIn(v: string): string {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function stableHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
-function sanitizeEmailLocal(s: string): string {
-  return s.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 48) || 'vendor';
-}
-
-function buildSupplierSnapshot(
-  supplierId: string,
-  supplierName: string,
-  orderPaymentTerms: string,
-  emailOverride?: string
-): PurchaseOrderSupplierContact {
-  if (!supplierId.trim()) {
-    return {
-      contactPerson: '—',
-      phone: '—',
-      email: '—',
-      gstin: '—',
-      defaultPaymentTerms: orderPaymentTerms
-        ? PAYMENT_TERM_OPTIONS.find((o) => o.value === orderPaymentTerms)?.label || orderPaymentTerms
-        : '—',
-      outstandingDues: 0,
-    };
-  }
-  const h = stableHash(`${supplierId}|${supplierName}`);
-  const dues = h % 11 === 0 ? (h % 890_120) / 100 : 0;
-  const panish = ((h >>> 0) % 1e9).toString().padStart(9, '0').slice(0, 9);
-  const label = supplierName.trim() || supplierId;
-  return {
-    contactPerson: `Accounts — ${label}`.slice(0, 200),
-    phone: `+91 98${(h % 90_000_000).toString().padStart(8, '0')}`,
-    email: emailOverride?.trim() || `${sanitizeEmailLocal(label)}.po@supplier.local`,
-    gstin: `22AAAAA${panish}A1Z5`.slice(0, 15),
-    defaultPaymentTerms:
-      PAYMENT_TERM_OPTIONS.find((o) => o.value === orderPaymentTerms)?.label || orderPaymentTerms || 'Net 30',
-    outstandingDues: dues,
-  };
 }
 
 function clampPct(n: number): number {
@@ -143,85 +140,11 @@ function lineMath(qty: number, unitPrice: number, taxPct: number, discPct: numbe
   return { gross, discountAmt, taxAmt, lineTotal };
 }
 
-function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let inQ = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"') {
-      inQ = !inQ;
-      continue;
-    }
-    if (ch === ',' && !inQ) {
-      out.push(cur.trim());
-      cur = '';
-      continue;
-    }
-    cur += ch;
-  }
-  out.push(cur.trim());
-  return out;
-}
-
-function isMongoId(s: string): boolean {
-  return /^[a-fA-F0-9]{24}$/.test(String(s).trim());
-}
-
 function daysAgoLabel(ts: number): string {
   const days = Math.max(0, Math.floor((Date.now() - ts) / 86400000));
   if (days === 0) return 'today';
   if (days === 1) return '1 day ago';
   return `${days} days ago`;
-}
-
-function buildSupplierDirectory(
-  supplierOptions: Array<{ id: string; name: string }>,
-  orderRows: PurchaseOrder[]
-): SupplierRecord[] {
-  const map = new Map<string, SupplierRecord>();
-  for (const s of supplierOptions) {
-    const snap = buildSupplierSnapshot(s.id, s.name, 'net_30');
-    map.set(s.id, {
-      id: s.id,
-      name: s.name,
-      gstin: snap.gstin || '—',
-      email: snap.email || '',
-      paymentTermsLabel: snap.defaultPaymentTerms || 'Net 30',
-    });
-  }
-  for (const o of orderRows) {
-    const id = o.supplierId;
-    const name = o.supplierName || id;
-    const snap = o.supplierContactSnapshot;
-    const existing = map.get(id);
-    const ts = new Date(o.orderDate).getTime();
-    const total = o.lines.reduce((sum, l) => {
-      const { lineTotal } = lineMath(l.quantityOrdered, l.expectedPrice ?? 0, l.taxPercent ?? 0, l.discountPercent ?? 0);
-      return sum + lineTotal;
-    }, 0) + (o.shippingFreight ?? 0);
-    if (!existing) {
-      map.set(id, {
-        id,
-        name,
-        gstin: snap?.gstin || buildSupplierSnapshot(id, name, 'net_30').gstin || '—',
-        email: snap?.email || buildSupplierSnapshot(id, name, 'net_30').email || '',
-        paymentTermsLabel: snap?.defaultPaymentTerms || 'Net 30',
-        lastOrderedAt: ts,
-        lastOrderTotal: total,
-      });
-    } else {
-      if (!existing.lastOrderedAt || ts > existing.lastOrderedAt) {
-        existing.lastOrderedAt = ts;
-        existing.lastOrderTotal = total;
-      }
-      if (snap?.gstin) existing.gstin = snap.gstin;
-      if (snap?.email) existing.email = snap.email;
-      if (snap?.defaultPaymentTerms) existing.paymentTermsLabel = snap.defaultPaymentTerms;
-      if (name) existing.name = name;
-    }
-  }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 type LocalAttachment = { id: string; fileName: string; size?: number; mimeType?: string };
@@ -236,8 +159,10 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
   branchId,
   supplierOptions,
   orderRows,
+  initialSupplierId,
   onCancel,
   onSaved,
+  onNavbarTrailingChange,
 }) => {
   const navigate = useNavigate();
   const [poNumber, setPoNumber] = useState('—');
@@ -263,32 +188,132 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
   const [branches, setBranches] = useState<Branch[]>([]);
   const [knownOrders, setKnownOrders] = useState<PurchaseOrder[]>(orderRows);
   const [variantSearch, setVariantSearch] = useState('');
-  const [suggestions, setSuggestions] = useState<CatalogVariantRow[]>([]);
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [toast, setToast] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
-  const [sendDrawerOpen, setSendDrawerOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [sendEmail, setSendEmail] = useState('');
-  const [sendSubject, setSendSubject] = useState('');
+  const [lineFocusTarget, setLineFocusTarget] = useState<{ variantId: string; field: 'qty' | 'price' } | null>(
+    null
+  );
+  const [supplierListOpen, setSupplierListOpen] = useState(false);
+  const [variantListOpen, setVariantListOpen] = useState(false);
+  const supplierListOpenRef = useRef(false);
+  const variantListOpenRef = useRef(false);
+  const deliveryLocationRef = useRef<HTMLSelectElement>(null);
+  const expectedDeliveryRef = useRef<HTMLInputElement>(null);
+  const variantSearchRef = useRef<HTMLInputElement>(null);
+  const supplierSearchRef = useRef<HTMLInputElement>(null);
+  const qtyInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const priceInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  const focusDeliveryLocation = useCallback(() => {
+    window.requestAnimationFrame(() => deliveryLocationRef.current?.focus());
+  }, []);
+
+  const focusExpectedDelivery = useCallback(() => {
+    window.requestAnimationFrame(() => expectedDeliveryRef.current?.focus());
+  }, []);
+
+  const focusVariantSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = variantSearchRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+  }, []);
+
+  const focusSupplierSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = supplierSearchRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+  }, []);
+
+  const applyDeliveryLocation = useCallback(
+    (next: string) => {
+      setDeliveryLocationId(next);
+      if (next) focusExpectedDelivery();
+    },
+    [focusExpectedDelivery]
+  );
+
+  const focusLineQty = useCallback((variantId: string) => {
+    setLineFocusTarget({ variantId, field: 'qty' });
+  }, []);
+
+  const focusLinePrice = useCallback((variantId: string) => {
+    setLineFocusTarget({ variantId, field: 'price' });
+  }, []);
+
+  const isActiveQtyInput = useCallback((): boolean => {
+    const active = document.activeElement;
+    if (!active) return false;
+    for (const el of qtyInputRefs.current.values()) {
+      if (el === active) return true;
+    }
+    return false;
+  }, []);
+
+  const isActivePriceInput = useCallback((): boolean => {
+    const active = document.activeElement;
+    if (!active) return false;
+    for (const el of priceInputRefs.current.values()) {
+      if (el === active) return true;
+    }
+    return false;
+  }, []);
+
+  const isSupplierSearchInput = useCallback((el: Element | null): el is HTMLInputElement => {
+    if (!el || !(el instanceof HTMLInputElement)) return false;
+    return el === supplierSearchRef.current || el.id === 'po-supplier-search';
+  }, []);
+
+  const isVariantSearchInput = useCallback((el: Element | null): el is HTMLInputElement => {
+    if (!el || !(el instanceof HTMLInputElement)) return false;
+    return el === variantSearchRef.current;
+  }, []);
+
+  const isComboboxListOpen = (el: HTMLInputElement): boolean => el.getAttribute('aria-expanded') === 'true';
+
+  const handleSupplierOpenChange = useCallback((open: boolean) => {
+    supplierListOpenRef.current = open;
+    setSupplierListOpen(open);
+  }, []);
+
+  const handleVariantOpenChange = useCallback((open: boolean) => {
+    variantListOpenRef.current = open;
+    setVariantListOpen(open);
+  }, []);
   const [footerEmailOverride, setFooterEmailOverride] = useState('');
-  const [footerEmailEditing, setFooterEmailEditing] = useState(false);
   const [dismissOpenPoAlert, setDismissOpenPoAlert] = useState(false);
   const [urgentHintDismissed, setUrgentHintDismissed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
-  const supplierDirectory = useMemo(
-    () => buildSupplierDirectory(supplierOptions, knownOrders),
-    [supplierOptions, knownOrders]
-  );
+  const { supplierDirectory, saveSupplier } = usePurchaseSupplierCatalog(branchId, knownOrders);
 
   const supplierItems = useMemo(
     () => [...supplierDirectory, ...extraParties],
     [supplierDirectory, extraParties]
   );
+
+  const initialSupplierAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (initialSupplierAppliedRef.current) return;
+    const sid = initialSupplierId?.trim();
+    if (!sid) return;
+    const match = supplierItems.find((s) => s.id === sid);
+    if (match) {
+      setSupplierId(match.id);
+      setSupplierSearch(match.name);
+      initialSupplierAppliedRef.current = true;
+    }
+  }, [initialSupplierId, supplierItems]);
 
   const refreshPoNumber = useCallback(() => {
     purchaseService
@@ -339,30 +364,14 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
   }, [branchId]);
 
   useEffect(() => {
-    const q = variantSearch.trim();
-    if (q.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    inventoryService
-      .getCatalog({ search: q, branchId: branchId || undefined, isActive: true, page: 1, limit: 8 })
-      .then((data) => {
-        if (!cancelled) setSuggestions(catalogRows(data));
-      })
-      .catch(() => {
-        if (!cancelled) setSuggestions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId, variantSearch]);
-
-  useEffect(() => {
-    const name = supplierItems.find((s) => s.id === supplierId)?.name || supplierSearch;
-    setSupplierSnapshot(buildSupplierSnapshot(supplierId, name, paymentTerms, footerEmailOverride || undefined));
-    const rec = supplierItems.find((s) => s.id === supplierId);
-    if (rec?.email && !footerEmailOverride) setSendEmail(rec.email);
+    const rec =
+      supplierItems.find((s) => s.id === supplierId) ||
+      supplierItems.find((s) => s.name.toLowerCase() === supplierSearch.trim().toLowerCase());
+    const name = rec?.name || supplierSearch;
+    const sid = rec?.id || supplierId;
+    setSupplierSnapshot(
+      buildSupplierSnapshot(sid, name, paymentTerms, footerEmailOverride || undefined, rec)
+    );
   }, [supplierId, supplierSearch, supplierItems, paymentTerms, footerEmailOverride]);
 
   const branchNameById = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
@@ -386,22 +395,11 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       .slice(0, 5);
   }, [supplierItems]);
 
-  const filterSuppliers = useCallback((list: SupplierRecord[], query: string) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        s.gstin.toLowerCase().includes(q)
-    );
-  }, []);
-
   const resolvedSupplierId = useMemo(() => {
     if (supplierId.trim()) return supplierId.trim();
     const name = supplierSearch.trim();
     if (!name) return '';
-    return `sup-${stableHash(name)}`;
+    return resolveSupplierIdFromName(name);
   }, [supplierId, supplierSearch]);
 
   const openDraftForSupplier = useMemo(() => {
@@ -433,11 +431,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     return { subtotal, totalDiscount, totalTax, grandTotal: linesSum + freight, freight, linesSum };
   }, [lines, shippingFreight]);
 
-  const footerStats = useMemo(() => {
-    const totalQty = lines.reduce((s, l) => s + Number(l.quantityOrdered || 0), 0);
-    return { totalItems: lines.length, totalQty, grandTotal: orderTotals.grandTotal };
-  }, [lines, orderTotals.grandTotal]);
-
   const isDeliveryUrgent = useMemo(() => {
     if (!expectedDeliveryDate) return false;
     const d = new Date(`${expectedDeliveryDate}T12:00:00`);
@@ -446,9 +439,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     const diff = (d.getTime() - today.getTime()) / 86400000;
     return diff >= 0 && diff <= 2;
   }, [expectedDeliveryDate]);
-
-  const supplierEmail = footerEmailOverride.trim() || supplierSnapshot.email?.trim() || '';
-  const hasSupplierEmail = Boolean(supplierEmail && supplierEmail !== '—');
 
   const hasFormData = Boolean(
     supplierId ||
@@ -460,7 +450,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       shippingFreight > 0
   );
 
-  const canSend = Boolean(resolvedSupplierId && lines.length > 0);
   const canConfirm = Boolean(resolvedSupplierId && lines.length > 0 && expectedDeliveryDate);
 
   const showToast = (msg: string) => {
@@ -469,7 +458,7 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
   };
 
   const rowFromCatalog = useCallback((row: CatalogVariantRow): DraftLine => {
-    const price = row.costPrice ?? row.sellingPrice ?? 0;
+    const fallbackUnit = 'pcs';
     return {
       variantId: row.variantId,
       itemId: row.productId,
@@ -477,29 +466,82 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       variantName: row.variantName,
       sku: row.sku,
       quantityOrdered: 1,
-      unitId: 'PCS',
-      expectedPrice: Number(price) || 0,
+      unitId: fallbackUnit,
+      unitOptions: [{ unitCode: fallbackUnit, factorToBase: 1 }],
+      expectedPrice: catalogCostPrice(row),
       taxPercent: 0,
       discountPercent: 0,
     };
   }, []);
 
+  const enrichLineFromInventory = useCallback(
+    async (
+      line: DraftLine,
+      catalogRow?: CatalogVariantRow,
+      options?: { keepExpectedPrice?: boolean }
+    ): Promise<DraftLine> => {
+      try {
+        return await enrichPurchaseLine(line, catalogRow, options);
+      } catch {
+        return line;
+      }
+    },
+    []
+  );
+
   const addVariant = useCallback(
-    (row: CatalogVariantRow) => {
+    async (row: CatalogVariantRow) => {
+      const variantId = row.variantId;
+      let incremented = false;
       setLines((prev) => {
-        const i = prev.findIndex((l) => l.variantId === row.variantId);
-        if (i >= 0) {
-          const next = [...prev];
-          next[i] = { ...next[i], quantityOrdered: next[i].quantityOrdered + 1 };
-          return next;
-        }
-        return [...prev, rowFromCatalog(row)];
+        const i = prev.findIndex((l) => l.variantId === variantId);
+        if (i < 0) return prev;
+        incremented = true;
+        const next = [...prev];
+        next[i] = { ...next[i], quantityOrdered: next[i].quantityOrdered + 1 };
+        return next;
       });
       setVariantSearch('');
-      setSuggestions([]);
+      if (incremented) {
+        focusLineQty(variantId);
+        return;
+      }
+      const enriched = await enrichLineFromInventory(rowFromCatalog(row), row);
+      setLines((prev) => {
+        if (prev.some((l) => l.variantId === variantId)) return prev;
+        return [...prev, enriched];
+      });
+      focusLineQty(variantId);
     },
-    [rowFromCatalog]
+    [enrichLineFromInventory, focusLineQty, rowFromCatalog]
   );
+
+  useEffect(() => {
+    if (!lineFocusTarget) return;
+    const { variantId, field } = lineFocusTarget;
+    if (!lines.some((l) => l.variantId === variantId)) return;
+
+    const refMap = field === 'qty' ? qtyInputRefs : priceInputRefs;
+    let attempts = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const el = refMap.current.get(variantId);
+      if (el) {
+        el.focus();
+        el.select();
+        setLineFocusTarget(null);
+        return;
+      }
+      attempts += 1;
+      if (attempts < 12) {
+        raf = window.requestAnimationFrame(tryFocus);
+      } else {
+        setLineFocusTarget(null);
+      }
+    };
+    raf = window.requestAnimationFrame(tryFocus);
+    return () => window.cancelAnimationFrame(raf);
+  }, [lineFocusTarget, lines]);
 
   const updateLine = (variantId: string, patch: Partial<DraftLine>) => {
     setLines((prev) => prev.map((l) => (l.variantId === variantId ? { ...l, ...patch } : l)));
@@ -509,42 +551,57 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     setLines((prev) => prev.filter((l) => l.variantId !== variantId));
   };
 
-  const pickSupplier = useCallback((s: SupplierRecord) => {
-    setSupplierId(s.id);
-    setSupplierSearch(s.name);
-    setDismissOpenPoAlert(false);
-    if (s.email) setSendEmail(s.email);
-    const term = PAYMENT_TERM_OPTIONS.find((o) => o.label === s.paymentTermsLabel)?.value;
-    if (term) setPaymentTerms(term);
-  }, []);
+  const pickSupplier = useCallback(
+    (s: SupplierRecord) => {
+      setSupplierId(s.id);
+      setSupplierSearch(s.name);
+      setDismissOpenPoAlert(false);
+      const term = PAYMENT_TERM_OPTIONS.find((o) => o.label === s.paymentTermsLabel)?.value;
+      if (term) setPaymentTerms(term);
+      focusDeliveryLocation();
+    },
+    [focusDeliveryLocation]
+  );
 
   const onSupplierValueChange = (v: string) => {
     setSupplierSearch(v);
     const exact = supplierItems.find((s) => s.name.toLowerCase() === v.trim().toLowerCase());
-    if (exact) setSupplierId(exact.id);
-    else if (!supplierItems.some((s) => s.id === supplierId && s.name === v)) setSupplierId('');
+    if (exact) {
+      setSupplierId(exact.id);
+      focusDeliveryLocation();
+    } else if (!supplierItems.some((s) => s.id === supplierId && s.name === v)) setSupplierId('');
   };
 
   const handlePartySaved = useCallback(
-    (party: { id: string; name: string; gstin: string; email: string; paymentTermsLabel: string }) => {
-      const record: SupplierRecord = {
-        id: party.id,
-        name: party.name,
-        gstin: party.gstin,
-        email: party.email,
-        paymentTermsLabel: party.paymentTermsLabel,
-      };
-      setExtraParties((prev) => [...prev, record]);
-      pickSupplier(record);
-      setPartyDraftName('');
+    (party: { id: string; name: string; gstin: string; email: string; phone?: string; paymentTermsLabel: string }) => {
+      void (async () => {
+        try {
+          const record = await saveSupplier({
+            name: party.name,
+            gstin: party.gstin !== '—' ? party.gstin : undefined,
+            email: party.email || undefined,
+            phone: party.phone,
+            paymentTerms: paymentLabelToValue(party.paymentTermsLabel),
+          });
+          pickSupplier(record);
+          setPartyDraftName('');
+        } catch {
+          showToast('Could not save supplier');
+        }
+      })();
     },
-    [pickSupplier]
+    [pickSupplier, saveSupplier, showToast]
   );
 
   const validateFields = (mode: 'draft' | 'send' | 'confirm'): boolean => {
     const errs: FieldErrors = {};
     if (!resolvedSupplierId) errs.supplier = 'Select or enter a supplier';
     if (mode !== 'draft') {
+      if (lines.some((l) => !l.quantityOrdered || l.quantityOrdered <= 0)) {
+        showToast('Each line needs a quantity greater than zero.');
+        setSubmitted(true);
+        return false;
+      }
       if (!lines.length) {
         setSubmitted(true);
         return false;
@@ -569,7 +626,7 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       mimeType: a.mimeType,
       size: a.size,
     }));
-    const snap = buildSupplierSnapshot(resolvedSupplierId, supplierSearch, paymentTerms, footerEmailOverride || sendEmail);
+    const snap = buildSupplierSnapshot(resolvedSupplierId, supplierSearch, paymentTerms, footerEmailOverride || undefined);
     return {
       supplierId: resolvedSupplierId,
       supplierName:
@@ -627,36 +684,6 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     }
   };
 
-  const handleSaveDraft = async () => {
-    if (!resolvedSupplierId) {
-      setFieldErrors({ supplier: 'Select or enter a supplier to save a draft' });
-      setSubmitted(true);
-      return;
-    }
-    const order = await persistOrder('draft');
-    if (order) {
-      showToast(`Draft saved — ${order.poNumber}`);
-      onSaved(order, 'draft');
-    }
-  };
-
-  const openSendDrawer = () => {
-    if (!canSend) return;
-    const name = supplierSearch || supplierDirectory.find((s) => s.id === supplierId)?.name || 'Supplier';
-    setSendSubject(`Purchase Order ${poNumber} — ${name}`);
-    setSendEmail(supplierEmail || sendEmail);
-    setSendDrawerOpen(true);
-  };
-
-  const handleSend = async () => {
-    const order = await persistOrder('send');
-    if (order) {
-      setSendDrawerOpen(false);
-      showToast(`PO sent to ${sendEmail || 'supplier'}`);
-      onSaved(order, 'send');
-    }
-  };
-
   const handleConfirm = async () => {
     const order = await persistOrder('confirm');
     if (order) {
@@ -666,114 +693,10 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
     }
   };
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (hasFormData) setDiscardOpen(true);
     else onCancel();
-  };
-
-  const importCsv = async (file: File | null) => {
-    if (!file) return;
-    const text = await file.text();
-    const rawLines = text.split(/\r?\n/).filter((l) => l.trim());
-    if (rawLines.length < 2) {
-      showToast('CSV must include a header row and at least one data row.');
-      if (csvInputRef.current) csvInputRef.current.value = '';
-      return;
-    }
-    const header = parseCsvLine(rawLines[0]).map((h) => h.toLowerCase().replace(/\s+/g, ''));
-    const col = (name: string) => header.indexOf(name);
-    const idxVariant = col('variantid');
-    const idxSku = col('sku');
-    const idxQty = col('qty') >= 0 ? col('qty') : col('quantity');
-    const idxUnit = col('unit');
-    const idxPrice = col('unitprice') >= 0 ? col('unitprice') : col('price');
-    const idxTax = col('taxpercent') >= 0 ? col('taxpercent') : col('tax');
-    const idxDisc = col('discountpercent') >= 0 ? col('discountpercent') : col('discount');
-    const errors: string[] = [];
-    const newLines: DraftLine[] = [];
-
-    for (let r = 1; r < rawLines.length; r += 1) {
-      const cells = parseCsvLine(rawLines[r]);
-      if (!cells.some((c) => c)) continue;
-      try {
-        const variantId = idxVariant >= 0 ? cells[idxVariant]?.trim() : '';
-        const sku = idxSku >= 0 ? cells[idxSku]?.trim() : '';
-        const qty = Math.max(0.000001, Number(idxQty >= 0 ? cells[idxQty] : '1') || 1);
-        const unit = idxUnit >= 0 ? cells[idxUnit]?.trim() || 'PCS' : 'PCS';
-        const price = idxPrice >= 0 ? Math.max(0, Number(cells[idxPrice]) || 0) : 0;
-        const taxP = idxTax >= 0 ? clampPct(Number(cells[idxTax]) || 0) : 0;
-        const discP = idxDisc >= 0 ? clampPct(Number(cells[idxDisc]) || 0) : 0;
-
-        if (variantId && isMongoId(variantId)) {
-          const v = await inventoryService.getVariantById(variantId);
-          const item = await inventoryService.getItemById(v.itemId);
-          newLines.push({
-            variantId: v.id,
-            itemId: v.itemId,
-            productName: item.name,
-            variantName: v.name,
-            sku: v.sku || v.code,
-            quantityOrdered: qty,
-            unitId: unit,
-            expectedPrice: price,
-            taxPercent: taxP,
-            discountPercent: discP,
-          });
-        } else if (sku) {
-          const rows = catalogRows(
-            await inventoryService.getCatalog({
-              search: sku,
-              branchId: branchId || undefined,
-              isActive: true,
-              page: 1,
-              limit: 20,
-            })
-          );
-          const match = rows.find((x) => x.sku.toLowerCase() === sku.toLowerCase()) || rows[0];
-          if (!match) {
-            errors.push(`Row ${r + 1}: no match for SKU "${sku}"`);
-            continue;
-          }
-          const base = rowFromCatalog(match);
-          newLines.push({ ...base, quantityOrdered: qty, unitId: unit, expectedPrice: price || base.expectedPrice, taxPercent: taxP, discountPercent: discP });
-        } else {
-          errors.push(`Row ${r + 1}: provide variantId or sku`);
-        }
-      } catch (e) {
-        errors.push(`Row ${r + 1}: ${e instanceof Error ? e.message : 'failed'}`);
-      }
-    }
-
-    if (newLines.length) {
-      setLines((prev) => {
-        const byId = new Map(prev.map((l) => [l.variantId, { ...l }]));
-        for (const nl of newLines) {
-          const ex = byId.get(nl.variantId);
-          if (ex) {
-            byId.set(nl.variantId, {
-              ...ex,
-              quantityOrdered: ex.quantityOrdered + nl.quantityOrdered,
-              unitId: nl.unitId || ex.unitId,
-              expectedPrice: nl.expectedPrice || ex.expectedPrice,
-              taxPercent: nl.taxPercent,
-              discountPercent: nl.discountPercent,
-            });
-          } else {
-            byId.set(nl.variantId, nl);
-          }
-        }
-        return [...byId.values()];
-      });
-    }
-    if (errors.length) showToast(errors.slice(0, 3).join(' · '));
-    if (csvInputRef.current) csvInputRef.current.value = '';
-  };
-
-  const sendDisabledReason = !resolvedSupplierId
-    ? 'Select a supplier'
-    : lines.length === 0
-      ? 'Add at least one line item'
-      : '';
+  }, [hasFormData, onCancel]);
 
   const confirmDisabledReason = !resolvedSupplierId
     ? 'Select a supplier'
@@ -782,6 +705,151 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
       : !expectedDeliveryDate
         ? 'Set expected delivery date'
         : '';
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === 'Enter') {
+        if (partyDrawerOpen || discardOpen || busy || confirmOpen) return;
+        if (!canConfirm) {
+          e.preventDefault();
+          if (confirmDisabledReason) showToast(confirmDisabledReason);
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        setConfirmOpen(true);
+        return;
+      }
+      if (e.key !== 'Escape') return;
+      if (partyDrawerOpen) {
+        e.preventDefault();
+        setPartyDrawerOpen(false);
+        return;
+      }
+      if (confirmOpen) {
+        e.preventDefault();
+        setConfirmOpen(false);
+        return;
+      }
+      if (discardOpen) {
+        e.preventDefault();
+        setDiscardOpen(false);
+        return;
+      }
+
+      const active = document.activeElement;
+
+      if (isSupplierSearchInput(active)) {
+        if (isComboboxListOpen(active)) {
+          supplierListOpenRef.current = false;
+          setSupplierListOpen(false);
+          return;
+        }
+        supplierListOpenRef.current = false;
+        setSupplierListOpen(false);
+        e.preventDefault();
+        handleBack();
+        return;
+      }
+
+      if (isVariantSearchInput(active)) {
+        if (isComboboxListOpen(active)) {
+          variantListOpenRef.current = false;
+          setVariantListOpen(false);
+          return;
+        }
+        variantListOpenRef.current = false;
+        setVariantListOpen(false);
+        e.preventDefault();
+        focusExpectedDelivery();
+        return;
+      }
+
+      e.preventDefault();
+      if (isActivePriceInput()) {
+        const vid = [...priceInputRefs.current.entries()].find(([, el]) => el === active)?.[0];
+        if (vid) focusLineQty(vid);
+        else focusVariantSearch();
+        return;
+      }
+      if (isActiveQtyInput()) {
+        focusVariantSearch();
+        return;
+      }
+      if (active === expectedDeliveryRef.current) {
+        focusDeliveryLocation();
+        return;
+      }
+      if (active === deliveryLocationRef.current) {
+        focusSupplierSearch();
+        return;
+      }
+      handleBack();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    busy,
+    canConfirm,
+    confirmDisabledReason,
+    confirmOpen,
+    discardOpen,
+    focusDeliveryLocation,
+    focusExpectedDelivery,
+    focusLineQty,
+    focusSupplierSearch,
+    focusVariantSearch,
+    handleBack,
+    isActivePriceInput,
+    isActiveQtyInput,
+    isSupplierSearchInput,
+    isVariantSearchInput,
+    partyDrawerOpen,
+    supplierListOpen,
+    variantListOpen,
+  ]);
+
+  const confirmDialogMessage = useMemo(
+    () =>
+      `Confirm ${poNumber} with ${supplierSearch.trim() || 'supplier'} for ${formatInr(orderTotals.grandTotal)}?`,
+    [orderTotals.grandTotal, poNumber, supplierSearch]
+  );
+
+  const navbarConfirmActions = useMemo(
+    () => (
+      <div className="po-create-navbar-confirm">
+        {confirmDisabledReason ? (
+          <Tooltip content={`${confirmDisabledReason} (Ctrl+Enter)`} position="bottom">
+            <span>
+              <Button type="button" variant="primary" disabled>
+                Confirm order
+              </Button>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Ctrl+Enter" position="bottom">
+            <span>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy || !canConfirm}
+              >
+                Confirm order
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+      </div>
+    ),
+    [busy, canConfirm, confirmDisabledReason]
+  );
+
+  useEffect(() => {
+    onNavbarTrailingChange?.(navbarConfirmActions);
+    return () => onNavbarTrailingChange?.(null);
+  }, [navbarConfirmActions, onNavbarTrailingChange]);
 
   return (
     <div className="po-create">
@@ -829,10 +897,12 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
               showRequired={submitted && !supplierId}
               placeholder="Search by supplier name or GST number"
               error={fieldErrors.supplier}
+              inputRef={supplierSearchRef}
               value={supplierSearch}
               selectedId={supplierId || null}
               onValueChange={onSupplierValueChange}
               onSelect={pickSupplier}
+              onOpenChange={handleSupplierOpenChange}
               items={supplierItems}
               recentItems={recentSuppliers}
               getItemId={(s) => s.id}
@@ -873,14 +943,19 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                 Deliver to
               </label>
               <select
+                ref={deliveryLocationRef}
                 id="po-delivery-location"
                 className={`po-create-select${fieldErrors.deliveryLocation ? ' po-create-select--error' : ''}`}
                 value={deliveryLocationId}
-                onChange={(e) => setDeliveryLocationId(e.target.value)}
+                onChange={(e) => applyDeliveryLocation(e.target.value)}
               >
                 <option value="">Select location</option>
                 {locationOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
+                  <option
+                    key={o.value}
+                    value={o.value}
+                    onMouseDown={() => applyDeliveryLocation(o.value)}
+                  >
                     {o.label}
                   </option>
                 ))}
@@ -896,6 +971,7 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                 Expected delivery
               </label>
               <input
+                ref={expectedDeliveryRef}
                 id="po-expected-delivery"
                 type="date"
                 className={`po-create-input${fieldErrors.expectedDelivery ? ' po-create-input--error' : ''}`}
@@ -904,6 +980,11 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                 onChange={(e) => {
                   setExpectedDeliveryDate(e.target.value);
                   setUrgentHintDismissed(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  focusVariantSearch();
                 }}
                 title={expectedDeliveryDate ? formatDateIn(expectedDeliveryDate) : 'DD / MM / YYYY'}
               />
@@ -983,46 +1064,33 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
 
         <section className="po-create-card" aria-labelledby="po-create-lines-title">
           <div className="po-create-toolbar">
-            <div className="po-create-toolbar__search">
-              <Input
-                value={variantSearch}
-                onChange={(e) => setVariantSearch(e.target.value)}
-                placeholder="Type at least 2 characters"
-              />
-              {suggestions.length > 0 ? (
-                <div className="po-create-suggestions">
-                  {suggestions.map((s) => (
-                    <button key={s.variantId} type="button" className="po-create-suggestion" onClick={() => addVariant(s)}>
-                      <strong>{s.productName}</strong> — {s.variantName}
-                      <span className="po-create-suggestion__meta"> ({s.sku})</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <Button type="button" variant="secondary" onClick={() => suggestions[0] && addVariant(suggestions[0])} disabled={!suggestions.length}>
-              Add item
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => csvInputRef.current?.click()}>
-              Import CSV
-            </Button>
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => void importCsv(e.target.files?.[0] || null)} />
+            <ProductSearchCombobox
+              mode="catalog"
+              branchId={branchId}
+              className="po-create-toolbar__search"
+              value={variantSearch}
+              onValueChange={setVariantSearch}
+              onSelect={addVariant}
+              inputRef={variantSearchRef}
+              onOpenChange={handleVariantOpenChange}
+              comboboxAriaLabel="Search products to add to purchase order"
+            />
           </div>
 
           <div className="po-create-table-wrap">
             <table className="po-create-table">
               <thead>
                 <tr>
-                  {['Product / variant', 'SKU', 'Qty', 'Unit', 'Unit price', 'Tax %', 'Discount %', 'Line total', ''].map((h) => (
-                    <th key={h || 'actions'}>{h}</th>
+                  {['Product / variant', 'Qty', 'Unit', 'Unit price', 'Total'].map((h) => (
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 ? (
                   <tr>
-                    <td colSpan={9} style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
-                      No items yet. Search above or import a CSV.
+                    <td colSpan={5} style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                      No items yet. Search above to add products.
                     </td>
                   </tr>
                 ) : (
@@ -1034,9 +1102,10 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                           <div className="po-create-product-cell__name">
                             {line.productName} — {line.variantName}
                           </div>
-                          <div className="po-create-product-cell__sku">{line.sku}</div>
+                          {line.sku ? (
+                            <div className="po-create-product-cell__sku">{line.sku}</div>
+                          ) : null}
                         </td>
-                        <td>{line.sku}</td>
                         <td>
                           <div className="po-create-qty">
                             <Button
@@ -1044,74 +1113,96 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
                               variant="secondary"
                               size="sm"
                               onClick={() =>
-                                updateLine(line.variantId, {
-                                  quantityOrdered: Math.max(0.000001, Number(line.quantityOrdered) - 1),
-                                })
+                                decrementQtyForLine(line.variantId, line.quantityOrdered, updateLine, removeLine)
                               }
                             >
                               −
                             </Button>
                             <Input
+                              ref={(el) => {
+                                if (el) qtyInputRefs.current.set(line.variantId, el);
+                                else qtyInputRefs.current.delete(line.variantId);
+                              }}
                               label=""
-                              type="number"
-                              min={0.000001}
-                              step="any"
-                              value={line.quantityOrdered}
-                              onChange={(e) =>
+                              type="text"
+                              inputMode="decimal"
+                              className="po-create-num-input"
+                              value={quantityInputValue(line.quantityOrdered)}
+                              onFocus={selectInputOnFocus}
+                              onChange={(e) => {
+                                const parsed = parseDecimalInput(e.target.value);
                                 updateLine(line.variantId, {
-                                  quantityOrdered: Math.max(0.000001, Number(e.target.value) || 0.000001),
-                                })
-                              }
+                                  quantityOrdered: parsed == null ? 0 : Math.max(0, parsed),
+                                });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return;
+                                e.preventDefault();
+                                const parsed = parseDecimalInput(e.currentTarget.value);
+                                if (parsed == null || parsed <= 0) {
+                                  removeLine(line.variantId);
+                                  focusVariantSearch();
+                                  return;
+                                }
+                                updateLine(line.variantId, { quantityOrdered: parsed });
+                                focusLinePrice(line.variantId);
+                              }}
                             />
                             <Button
                               type="button"
                               variant="secondary"
                               size="sm"
-                              onClick={() => updateLine(line.variantId, { quantityOrdered: Number(line.quantityOrdered) + 1 })}
+                              onClick={() =>
+                                updateLine(line.variantId, {
+                                  quantityOrdered: Math.max(0, Number(line.quantityOrdered) || 0) + 1,
+                                })
+                              }
                             >
                               +
                             </Button>
                           </div>
                         </td>
                         <td>
-                          <Input label="" value={line.unitId} onChange={(e) => updateLine(line.variantId, { unitId: e.target.value })} />
-                        </td>
-                        <td>
-                          <Input
+                          <Select
                             label=""
-                            type="number"
-                            min={0}
-                            step="any"
-                            value={line.expectedPrice}
-                            onChange={(e) => updateLine(line.variantId, { expectedPrice: Math.max(0, Number(e.target.value) || 0) })}
+                            className="po-create-unit-select"
+                            value={line.unitId}
+                            onChange={(e) => updateLine(line.variantId, { unitId: e.target.value })}
+                            options={(line.unitOptions.length
+                              ? line.unitOptions
+                              : [{ unitCode: line.unitId || 'pcs', factorToBase: 1 }]
+                            ).map((u) => ({
+                              value: u.unitCode,
+                              label: u.unitCode.toUpperCase(),
+                            }))}
                           />
                         </td>
                         <td>
                           <Input
+                            ref={(el) => {
+                              if (el) priceInputRefs.current.set(line.variantId, el);
+                              else priceInputRefs.current.delete(line.variantId);
+                            }}
                             label=""
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={line.taxPercent}
-                            onChange={(e) => updateLine(line.variantId, { taxPercent: clampPct(Number(e.target.value) || 0) })}
-                          />
-                        </td>
-                        <td>
-                          <Input
-                            label=""
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={line.discountPercent}
-                            onChange={(e) => updateLine(line.variantId, { discountPercent: clampPct(Number(e.target.value) || 0) })}
+                            type="text"
+                            inputMode="decimal"
+                            className="po-create-num-input"
+                            value={priceInputValue(line.expectedPrice)}
+                            onFocus={selectInputOnFocus}
+                            onChange={(e) => {
+                              const parsed = parseDecimalInput(e.target.value);
+                              updateLine(line.variantId, {
+                                expectedPrice: parsed == null ? 0 : Math.max(0, parsed),
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return;
+                              e.preventDefault();
+                              focusVariantSearch();
+                            }}
                           />
                         </td>
                         <td>{formatInr(lineTotal)}</td>
-                        <td>
-                          <Button type="button" variant="secondary" size="sm" onClick={() => removeLine(line.variantId)}>
-                            Remove
-                          </Button>
-                        </td>
                       </tr>
                     );
                   })
@@ -1180,103 +1271,20 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
         </section>
       </div>
 
-      <footer className="po-create-footer">
-        <div className="po-create-footer__stats">
-          <span>Items: {footerStats.totalItems}</span>
-          <span>Qty: {footerStats.totalQty}</span>
-          <span>Grand total: {formatInr(footerStats.grandTotal)}</span>
-        </div>
-
-        <div className="po-create-footer__email">
-          {resolvedSupplierId ? (
-            hasSupplierEmail ? (
-              <>
-                <span>Will send to:</span>
-                {footerEmailEditing ? (
-                  <input
-                    className="po-create-footer__email-input"
-                    value={footerEmailOverride || supplierEmail}
-                    onChange={(e) => setFooterEmailOverride(e.target.value)}
-                    onBlur={() => setFooterEmailEditing(false)}
-                    autoFocus
-                  />
-                ) : (
-                  <>
-                    <span className="po-create-footer__email-value">{supplierEmail}</span>
-                    <button
-                      type="button"
-                      className="po-create-footer__email-edit"
-                      aria-label="Edit supplier email for this PO"
-                      onClick={() => setFooterEmailEditing(true)}
-                    >
-                      ✎
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
-              <span className="po-create-footer__email-warn">
-                No supplier email on file{' '}
-                <button type="button" className="po-create-hint-link" onClick={() => setFooterEmailEditing(true)}>
-                  Add email
-                </button>
-              </span>
-            )
-          ) : null}
-        </div>
-
-        <div className="po-create-footer__actions">
-          <Button type="button" variant="ghost" onClick={handleBack} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => void handleSaveDraft()} disabled={busy}>
-            Save draft
-          </Button>
-          {sendDisabledReason ? (
-            <Tooltip content={sendDisabledReason} position="top">
-              <span className="po-create-footer__btn-wrap">
-                <Button type="button" variant="secondary" onClick={openSendDrawer} disabled>
-                  Send to supplier
-                </Button>
-              </span>
-            </Tooltip>
-          ) : (
-            <Button type="button" variant="secondary" onClick={openSendDrawer} disabled={busy}>
-              Send to supplier
-            </Button>
-          )}
-          <div className="po-create-footer__btn-wrap">
-            {confirmDisabledReason ? (
-              <Tooltip content={confirmDisabledReason} position="top">
-                <span>
-                  <Button type="button" variant="primary" disabled>
-                    Confirm order
-                  </Button>
-                </span>
-              </Tooltip>
-            ) : (
-              <Button type="button" variant="primary" onClick={() => setConfirmOpen(true)} disabled={busy || !canConfirm}>
-                Confirm order
-              </Button>
-            )}
-            {confirmOpen ? (
-              <div className="po-create-confirm-popover" role="dialog" aria-label="Confirm purchase order">
-                <p>
-                  Confirm {poNumber} with {supplierSearch || 'supplier'} for {formatInr(footerStats.grandTotal)}?
-                </p>
-                <div className="po-create-confirm-popover__actions">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setConfirmOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="button" variant="primary" size="sm" onClick={() => void handleConfirm()} disabled={busy}>
-                    Yes, confirm →
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </footer>
+      <ConfirmDialog
+        isOpen={confirmOpen}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void handleConfirm()}
+        title="Confirm purchase order"
+        message={confirmDialogMessage}
+        confirmLabel={busy ? 'Confirming…' : 'Yes, confirm'}
+        cancelLabel="Cancel"
+        variant="info"
+        showVariantNotice={false}
+        initialFocus="confirm"
+        closeOnOverlayClick={!busy}
+        closeOnEscape={!busy}
+      />
 
       <ConfirmDialog
         isOpen={discardOpen}
@@ -1291,6 +1299,7 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
         cancelLabel="Keep editing"
         variant="danger"
         showVariantNotice={false}
+        initialFocus="confirm"
       />
 
       <QuickAddPartyDrawer
@@ -1300,47 +1309,25 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({
         paymentTermOptions={PAYMENT_TERM_OPTIONS}
         existingParties={supplierItems}
         onSaved={handlePartySaved}
+        persistParty={async (party) => {
+          const record = await saveSupplier({
+            name: party.name,
+            gstin: party.gstin !== '—' ? party.gstin : undefined,
+            email: party.email || undefined,
+            phone: party.phone,
+            paymentTerms: paymentLabelToValue(party.paymentTermsLabel),
+          });
+          return {
+            id: record.id,
+            name: record.name,
+            gstin: record.gstin,
+            email: record.email,
+            phone: record.phone,
+            paymentTermsLabel: record.paymentTermsLabel,
+          };
+        }}
       />
 
-      <SideDrawer isOpen={sendDrawerOpen} onClose={() => setSendDrawerOpen(false)} title="Send to supplier" width="520px">
-        <div className="po-create-send-preview">
-          <div>
-            <Input label="To" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />
-            <Input label="Subject" value={sendSubject} onChange={(e) => setSendSubject(e.target.value)} />
-          </div>
-          <div className="po-create-send-preview__block">
-            <h3>Purchase order preview</h3>
-            <p>
-              <strong>{poNumber}</strong> · {supplierSearch || 'Supplier'}
-            </p>
-            <p>Expected delivery: {expectedDeliveryDate ? formatDateIn(expectedDeliveryDate) : '—'}</p>
-            <p>Deliver to: {locationOptions.find((o) => o.value === deliveryLocationId)?.label || '—'}</p>
-            <p>Items: {footerStats.totalItems} · Qty: {footerStats.totalQty}</p>
-            <p>
-              <strong>Grand total: {formatInr(footerStats.grandTotal)}</strong>
-            </p>
-            {lines.length > 0 ? (
-              <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-                {lines.slice(0, 8).map((l) => (
-                  <li key={l.variantId}>
-                    {l.productName} — {l.variantName} × {l.quantityOrdered}
-                  </li>
-                ))}
-                {lines.length > 8 ? <li>…and {lines.length - 8} more</li> : null}
-              </ul>
-            ) : null}
-            {supplierMessage ? <p style={{ marginTop: 8 }}>Note: {supplierMessage}</p> : null}
-          </div>
-        </div>
-        <div className="po-create-send-drawer-actions">
-          <Button type="button" variant="secondary" onClick={() => setSendDrawerOpen(false)}>
-            Cancel
-          </Button>
-          <Button type="button" variant="primary" onClick={() => void handleSend()} disabled={busy || !sendEmail.trim()}>
-            Send now →
-          </Button>
-        </div>
-      </SideDrawer>
     </div>
   );
 };

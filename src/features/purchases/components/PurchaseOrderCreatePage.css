@@ -1,5 +1,4 @@
 .po-create {
-  --po-footer-h: 56px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -37,7 +36,7 @@
 .po-create-scroll {
   flex: 1;
   overflow: auto;
-  padding: 0 var(--spacing-md) calc(var(--po-footer-h) + var(--spacing-lg));
+  padding: 0 var(--spacing-md) var(--spacing-lg);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
@@ -88,6 +87,12 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.po-create-navbar-confirm {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
 .po-create-details-fields {
@@ -380,6 +385,24 @@
   gap: var(--spacing-xs);
 }
 
+.po-create-qty .po-create-num-input {
+  min-width: 4.5rem;
+}
+
+.po-create-num-input .input {
+  text-align: right;
+}
+
+.po-create-unit-select.select-group {
+  margin: 0;
+  min-width: 5.5rem;
+}
+
+.po-create-unit-select .select {
+  min-height: 30px;
+  width: 100%;
+}
+
 .po-create-product-cell__name {
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
@@ -447,89 +470,11 @@
   cursor: pointer;
 }
 
-.po-create-footer {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  height: var(--po-footer-h);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: var(--spacing-xl);
-  padding: 0 var(--spacing-2xl);
-  background: var(--color-bg-primary);
-  border-top: 0.5px solid var(--color-border);
-}
-
-.po-create-footer__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xl);
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
-}
-
-.po-create-footer__email {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: var(--font-size-small);
-  color: var(--color-text-tertiary);
-  min-width: 0;
-}
-
-.po-create-footer__email-value {
-  color: var(--color-text-primary);
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.po-create-footer__email-edit {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  padding: var(--spacing-xs);
-  font-size: 14px;
-}
-
-.po-create-footer__email-input {
-  min-width: 10rem;
-  max-width: 14rem;
-  min-height: 28px;
-  padding: 2px var(--spacing-sm);
-  border: 0.5px solid var(--color-border);
-  border-radius: var(--border-radius);
-  font-size: var(--font-size-small);
-}
-
-.po-create-footer__email-warn {
-  color: #b45309;
-  font-size: var(--font-size-small);
-}
-
-.po-create-footer__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-md);
-  justify-content: flex-end;
-}
-
-.po-create-footer__btn-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
 .po-create-confirm-popover {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 30;
+  top: calc(100% + 8px);
+  z-index: 35;
   width: min(320px, 90vw);
   padding: var(--spacing-lg);
   border: 0.5px solid var(--color-border);
@@ -564,45 +509,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.po-create-send-preview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xl);
-  font-size: var(--font-size-small);
-  color: var(--color-text-primary);
-}
-
-.po-create-send-preview__block {
-  border: 0.5px solid var(--color-border);
-  border-radius: var(--border-radius);
-  padding: var(--spacing-lg);
-  background: var(--color-bg-secondary);
-}
-
-.po-create-send-preview h3 {
-  margin: 0 0 var(--spacing-md);
-  font-size: var(--font-size-base);
-}
-
-.po-create-send-drawer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-md);
-  margin-top: var(--spacing-xl);
-  padding-top: var(--spacing-xl);
-  border-top: 0.5px solid var(--color-border);
-}
-
-@media (max-width: 1279px) {
-  .po-create-footer {
-    grid-template-columns: 1fr auto;
-  }
-
-  .po-create-footer__email {
-    display: none;
-  }
-}
-
 @media (max-width: 900px) {
   .po-create-details-fields {
     flex-wrap: wrap;
@@ -620,10 +526,6 @@
     gap: 8px;
   }
 
-  .po-create-urgent-toggle {
-    margin-left: auto;
-  }
-
   .po-create-details-fields {
     flex-direction: column;
     align-items: stretch;
@@ -635,14 +537,4 @@
     max-width: none;
   }
 
-  .po-create-footer {
-    grid-template-columns: 1fr;
-    height: auto;
-    min-height: var(--po-footer-h);
-    padding: var(--spacing-md);
-  }
-
-  .po-create-footer__actions {
-    justify-content: stretch;
-  }
 }

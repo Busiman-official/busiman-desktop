@@ -102,6 +102,7 @@ export type PosOrderLinesPayloadLine = {
   posGstInclusive?: boolean;
   posLineNotes?: string;
   posHsn?: string;
+  serialNumbers?: string[];
 };
 
 /**
@@ -126,6 +127,7 @@ export function linesForCheckoutPayload(lines: PosCartLine[], defaultGstPercent:
       ...(l.gstInclusive === false ? { posGstInclusive: false } : {}),
       ...(notes ? { posLineNotes: notes } : {}),
       ...(hsn ? { posHsn: hsn } : {}),
+      ...(l.serialNumbers?.length ? { serialNumbers: l.serialNumbers } : {}),
     };
   });
 }

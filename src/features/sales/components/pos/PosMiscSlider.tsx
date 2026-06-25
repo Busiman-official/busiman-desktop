@@ -82,7 +82,7 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
   const [scrollState, setScrollState] = useState({ left: false, right: false });
 
   const load = useCallback(async () => {
-    if (!salesPointId || !branchId) {
+    if (!branchId) {
       setChips([]);
       return;
     }
@@ -100,7 +100,7 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [branchId, salesPointId]);
+  }, [branchId]);
 
   useEffect(() => {
     void load();
@@ -121,11 +121,11 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
       el.removeEventListener('scroll', update as EventListener);
       window.removeEventListener('resize', update);
     };
-  }, [chips.length, loading, salesPointId, branchId]);
+  }, [chips.length, loading, branchId]);
 
   const handlePick = useCallback(
     async (chip: MiscVariantChip) => {
-      if (!salesPointId || disabled) return;
+      if (!branchId || disabled) return;
       setActiveVariantId(chip.variant.id);
       try {
         await onActivateProduct(chip.item, [chip.variant]);
@@ -133,10 +133,10 @@ export const PosMiscSlider: React.FC<PosMiscSliderProps> = ({
         setActiveVariantId(null);
       }
     },
-    [disabled, onActivateProduct, salesPointId]
+    [disabled, onActivateProduct, branchId]
   );
 
-  if (!salesPointId || !branchId || (!loading && chips.length === 0)) {
+  if (!branchId || (!loading && chips.length === 0)) {
     return null;
   }
 

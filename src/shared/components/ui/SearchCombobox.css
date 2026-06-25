@@ -17,6 +17,17 @@
   color: var(--color-error);
 }
 
+.search-combobox__field {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.search-combobox__field .search-combobox__input {
+  flex: 1;
+  min-width: 0;
+}
+
 .search-combobox__input {
   width: 100%;
   min-height: 30px;

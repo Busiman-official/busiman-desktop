@@ -315,7 +315,7 @@ export const GlobalSearchProvider: React.FC<GlobalSearchProviderProps> = ({ chil
     [flattenedResults, selectSearchResult]
   );
 
-  // Global keyboard shortcut (Ctrl+K / Cmd+K) — disabled on Sales POS (see PosShell)
+  // Global keyboard shortcut (Ctrl+K / Cmd+K) — disabled on Sales/Purchase counter (see PosShell, ReceiptShell)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+K or Cmd+K

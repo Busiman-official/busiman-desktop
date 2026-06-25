@@ -6,6 +6,10 @@ import {
 } from '@/services/inventory.service';
 import { resolveInventoryBehavior } from '@/features/inventory/constants/productCatalog';
 
+export function isMongoObjectId(value: string | null | undefined): boolean {
+  return typeof value === 'string' && /^[a-f\d]{24}$/i.test(value.trim());
+}
+
 export interface PosResolvedLineMeta {
   variantId: string;
   itemId: string;
@@ -135,9 +139,10 @@ export function buildLineMetaFromItemVariant(
 
 /** Resolve a variant id (e.g. from an order line) to POS line meta for cart hydration. */
 export async function resolveVariantIdForPos(variantId: string): Promise<PosResolvedLineMeta | null> {
-  if (!variantId?.trim()) return null;
+  const id = variantId?.trim();
+  if (!isMongoObjectId(id)) return null;
   try {
-    const variant = await inventoryService.getVariantById(variantId.trim());
+    const variant = await inventoryService.getVariantById(id!);
     const item = await inventoryService.getItemById(variant.itemId);
     return buildLineMetaFromItemVariant(item, variant);
   } catch {
