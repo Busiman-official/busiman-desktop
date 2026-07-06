@@ -32,23 +32,25 @@ export const VoipSection: React.FC<VoipSectionProps> = ({
   const [sipExtension, setSipExtension] = useState('');
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [editingExtension, setEditingExtension] = useState(false);
+  const [newExtension, setNewExtension] = useState('');
 
   useEffect(() => {
-    if (hasExtension || !canEdit || !employee.isActive) return;
+    if (!canEdit || !employee.isActive) return;
     let cancelled = false;
     void (async () => {
       try {
         const [status, next] = await Promise.all([
           voipService.getConfigStatus(),
-          voipService.getNextExtension(),
+          hasExtension ? Promise.resolve(null) : voipService.getNextExtension(),
         ]);
         if (cancelled) return;
         setServerConfigured(status.configured);
         if (status.configured && status.extensionRangeStart != null && status.extensionRangeEnd != null) {
           setRangeHint(`${status.extensionRangeStart}–${status.extensionRangeEnd}`);
         }
-        if (next.extension) {
-          setSipExtension(next.extension);
+        if (next?.suggestedExtension) {
+          setSipExtension(next.suggestedExtension);
         }
       } catch {
         if (!cancelled) setServerConfigured(false);
@@ -78,6 +80,42 @@ export const VoipSection: React.FC<VoipSectionProps> = ({
       await onUpdate({ resetVoipPassword: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to reset SIP password';
+      setLocalError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStartEditExtension = () => {
+    setNewExtension(employee.sipExtension ?? '');
+    setEditingExtension(true);
+    setLocalError(null);
+  };
+
+  const handleCancelEditExtension = () => {
+    setEditingExtension(false);
+    setNewExtension('');
+    setLocalError(null);
+    onUnsavedChange(false);
+  };
+
+  const handleNewExtensionChange = (value: string) => {
+    setNewExtension(value.replace(/\D/g, ''));
+    onUnsavedChange(true);
+    setLocalError(null);
+  };
+
+  const handleSaveExtension = async () => {
+    const trimmed = newExtension.trim();
+    if (!trimmed || trimmed === employee.sipExtension) return;
+    setSaving(true);
+    setLocalError(null);
+    try {
+      await onUpdate({ sipExtension: trimmed });
+      setEditingExtension(false);
+      onUnsavedChange(false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to change SIP extension';
       setLocalError(message);
     } finally {
       setSaving(false);
@@ -116,7 +154,18 @@ export const VoipSection: React.FC<VoipSectionProps> = ({
             <div className="voip-info-grid">
               <div className="voip-field">
                 <label className="field-label">SIP Extension</label>
-                <div className="field-value read-only">{employee.sipExtension}</div>
+                {editingExtension ? (
+                  <Input
+                    label=""
+                    type="text"
+                    name="newSipExtension"
+                    value={newExtension}
+                    onChange={(e) => handleNewExtensionChange(e.target.value)}
+                    disabled={saving}
+                  />
+                ) : (
+                  <div className="field-value read-only">{employee.sipExtension}</div>
+                )}
               </div>
               <div className="voip-field">
                 <label className="field-label">Status</label>
@@ -125,21 +174,60 @@ export const VoipSection: React.FC<VoipSectionProps> = ({
                 </div>
               </div>
             </div>
-            <p className="voip-hint">
-              Reset updates FreePBX and applies config automatically (no manual Apply Config in
-              FreePBX). If reset fails, ensure the API app has scopes gql:core and gql:framework.
-              Employee must logout/login and reopen Phone after reset.
-            </p>
+            {editingExtension ? (
+              <small className="voip-hint">
+                {rangeHint ? `Valid range: ${rangeHint}. ` : ''}
+                Changing the extension creates a new one on FreePBX with a new SIP password and
+                removes the old extension. Employee must logout/login and reopen Phone afterward.
+              </small>
+            ) : (
+              <p className="voip-hint">
+                Reset updates FreePBX and applies config automatically (no manual Apply Config in
+                FreePBX). If reset fails, ensure the API app has scopes gql:core and gql:framework.
+                Employee must logout/login and reopen Phone after reset.
+              </p>
+            )}
             {canEdit && employee.voipEnabled && employee.isActive ? (
               <div className="voip-actions">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={saving}
-                  onClick={() => void handleResetPassword()}
-                >
-                  {saving ? 'Resetting SIP password…' : 'Reset SIP password'}
-                </Button>
+                {editingExtension ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      disabled={saving || !newExtension.trim() || newExtension.trim() === employee.sipExtension}
+                      onClick={() => void handleSaveExtension()}
+                    >
+                      {saving ? 'Saving…' : 'Save extension'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={saving}
+                      onClick={handleCancelEditExtension}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={saving}
+                      onClick={handleStartEditExtension}
+                    >
+                      Edit extension
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={saving}
+                      onClick={() => void handleResetPassword()}
+                    >
+                      {saving ? 'Resetting SIP password…' : 'Reset SIP password'}
+                    </Button>
+                  </>
+                )}
               </div>
             ) : null}
           </>
