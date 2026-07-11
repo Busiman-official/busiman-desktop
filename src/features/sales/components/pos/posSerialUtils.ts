@@ -1,7 +1,8 @@
 import type { PosCartLine } from './usePosCart';
+import { normalizeSerialNumber, serialNumbersEqual } from '../../../inventory/utils/serialNumber';
 
 export function normalizePosSerial(value: string): string {
-  return value.replace(/[\r\n\t]/g, '').trim().toUpperCase();
+  return normalizeSerialNumber(value.replace(/[\r\n\t]/g, ''));
 }
 
 export function serialCountRequired(line: PosCartLine): number {

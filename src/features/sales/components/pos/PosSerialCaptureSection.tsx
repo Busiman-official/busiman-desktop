@@ -179,12 +179,12 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
   };
 
   const filteredAvailable = useMemo(() => {
-    const q = listFilter.trim().toUpperCase();
+    const q = listFilter.trim();
     return available.filter((s) => {
-      const u = normalizePosSerial(s.serialNumber);
-      if (pickedSet.has(u) || otherSet.has(u)) return false;
+      const normalized = normalizePosSerial(s.serialNumber);
+      if (pickedSet.has(normalized) || otherSet.has(normalized)) return false;
       if (!q) return true;
-      return u.includes(q);
+      return normalized.includes(q);
     });
   }, [available, listFilter, otherSet, pickedSet]);
 

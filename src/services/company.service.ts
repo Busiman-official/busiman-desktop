@@ -5,6 +5,24 @@
 import { api } from './api';
 import { extractApiData } from '@/utils/api';
 
+export interface CompanyBankAccount {
+  id: string;
+  label?: string;
+  accountHolderName?: string;
+  accountNumber?: string;
+  bankName?: string;
+  branch?: string;
+  ifsc?: string;
+  isPrimary?: boolean;
+}
+
+export interface CompanyUpiId {
+  id: string;
+  label?: string;
+  upiId: string;
+  isPrimary?: boolean;
+}
+
 export interface CompanyProfile {
   displayName: string;
   legalName?: string;
@@ -19,6 +37,8 @@ export interface CompanyProfile {
   bankName?: string;
   bankBranch?: string;
   bankIfsc?: string;
+  bankAccounts?: CompanyBankAccount[];
+  upiIds?: CompanyUpiId[];
   logoUrl?: string | null;
   updatedAt?: string;
   updatedBy?: string;
@@ -38,6 +58,8 @@ export interface UpdateCompanyRequest {
   bankName?: string;
   bankBranch?: string;
   bankIfsc?: string;
+  bankAccounts?: CompanyBankAccount[];
+  upiIds?: CompanyUpiId[];
   // logo is sent as multipart/form-data file when present
 }
 
@@ -58,9 +80,12 @@ class CompanyService {
     if (logoFile) {
       const formData = new FormData();
       Object.entries(data).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          formData.append(key, String(value));
+        if (value === undefined || value === null) return;
+        if (key === 'bankAccounts' || key === 'upiIds') {
+          formData.append(key, JSON.stringify(value));
+          return;
         }
+        formData.append(key, String(value));
       });
       formData.append('file', logoFile);
 
@@ -89,5 +114,3 @@ class CompanyService {
 }
 
 export const companyService = new CompanyService();
-
-

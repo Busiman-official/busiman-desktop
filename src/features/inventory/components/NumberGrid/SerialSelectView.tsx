@@ -7,6 +7,7 @@ import { Input } from '@/shared/components/ui';
 import type { SerialResponse } from '@/services/inventory.service';
 import type { NumberGridResult } from './NumberGrid';
 import type { ValidationError } from '../../utils/numberGridUtils';
+import { normalizeSerialNumber, serialNumbersEqual } from '../../utils/serialNumber';
 
 export interface SerialSelectViewProps {
   expectedQuantity: number;
@@ -29,20 +30,20 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
     },
     ref
   ) => {
-    const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set(initialSelected.map((s) => s.toUpperCase())));
+    const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set(initialSelected.map(normalizeSerialNumber)));
     const [searchFilter, setSearchFilter] = useState('');
     const [focusedIndex, setFocusedIndex] = useState<number>(-1);
     const listContainerRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Map<number, HTMLLabelElement>>(new Map());
 
     useEffect(() => {
-      setSelectedSet(new Set(initialSelected.map((s) => s.toUpperCase())));
+      setSelectedSet(new Set(initialSelected.map(normalizeSerialNumber)));
     }, [initialSelected.join(',')]);
 
     const filtered = useMemo(() => {
-      const q = searchFilter.trim().toUpperCase();
+      const q = searchFilter.trim();
       if (!q) return availableSerials;
-      return availableSerials.filter((s) => s.serialNumber.toUpperCase().includes(q));
+      return availableSerials.filter((s) => s.serialNumber.includes(q));
     }, [availableSerials, searchFilter]);
 
     // Reset focus when filter changes
@@ -107,11 +108,11 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
     }, [result, onResultChange]);
 
     const toggle = (sn: string) => {
-      const u = sn.toUpperCase();
+      const normalized = normalizeSerialNumber(sn);
       setSelectedSet((prev) => {
         const next = new Set(prev);
-        if (next.has(u)) next.delete(u);
-        else next.add(u);
+        if (next.has(normalized)) next.delete(normalized);
+        else next.add(normalized);
         return next;
       });
     };
@@ -159,7 +160,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
             if (allowOverReceive || filtered.length <= expectedQuantity) {
-              const all = new Set(filtered.map((s) => s.serialNumber.toUpperCase()));
+              const all = new Set(filtered.map((s) => normalizeSerialNumber(s.serialNumber)));
               setSelectedSet(all);
             }
           }
@@ -175,7 +176,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
 
     const selectAll = useCallback(() => {
       if (allowOverReceive || filtered.length <= expectedQuantity) {
-        const all = new Set(filtered.map((s) => s.serialNumber.toUpperCase()));
+        const all = new Set(filtered.map((s) => normalizeSerialNumber(s.serialNumber)));
         setSelectedSet(all);
       }
     }, [filtered, allowOverReceive, expectedQuantity]);
@@ -186,7 +187,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
 
     const selectFirstN = useCallback(() => {
       if (expectedQuantity > 0) {
-        const firstN = filtered.slice(0, expectedQuantity).map((s) => s.serialNumber.toUpperCase());
+        const firstN = filtered.slice(0, expectedQuantity).map((s) => normalizeSerialNumber(s.serialNumber));
         setSelectedSet(new Set(firstN));
       }
     }, [filtered, expectedQuantity]);
@@ -195,8 +196,8 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
       setSelectedSet((prev) => {
         const next = new Set<string>();
         filtered.forEach((s) => {
-          const u = s.serialNumber.toUpperCase();
-          if (!prev.has(u)) next.add(u);
+          const normalized = normalizeSerialNumber(s.serialNumber);
+          if (!prev.has(normalized)) next.add(normalized);
         });
         return next;
       });
@@ -270,8 +271,8 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
             aria-label="Available serial numbers"
           >
             {filtered.map((s, index) => {
-              const u = s.serialNumber.toUpperCase();
-              const checked = selectedSet.has(u);
+              const normalized = normalizeSerialNumber(s.serialNumber);
+              const checked = selectedSet.has(normalized);
               const isFocused = index === focusedIndex;
               return (
                 <label

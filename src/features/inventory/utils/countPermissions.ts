@@ -15,6 +15,10 @@ export function canApproveCount(role: string | undefined): boolean {
   return typeof role === 'string' && ROLES_CAN_APPROVE.includes(role);
 }
 
+export function canSelfApproveCount(role: string | undefined): boolean {
+  return role === UserRole.ADMIN;
+}
+
 /**
  * Employee can only delete counts they created. Other approver roles can delete any DRAFT/IN_PROGRESS in scope.
  */

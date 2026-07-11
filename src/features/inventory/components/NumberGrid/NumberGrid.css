@@ -206,6 +206,194 @@
   color: var(--color-error, #ef4444);
 }
 
+/* Serial GRID (one-step carry-forward spreadsheet) */
+.number-grid-serial-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.number-grid-grid-template-loading {
+  color: #888;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.number-grid-grid-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 16px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 4px;
+  color: #888;
+  font-size: 13px;
+}
+
+.number-grid-grid-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #e5e7eb;
+  border-top-color: var(--color-primary, #0066cc);
+  border-radius: 50%;
+  animation: number-grid-grid-spin 0.7s linear infinite;
+}
+
+@keyframes number-grid-grid-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .number-grid-grid-loading-spinner {
+    animation: none;
+  }
+}
+
+.number-grid-serial-grid-scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 4px;
+}
+
+.number-grid-serial-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.number-grid-serial-grid-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f5f5;
+}
+
+.number-grid-serial-grid-table th {
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #666;
+  border-bottom: 2px solid #e0e0e0;
+  white-space: nowrap;
+}
+
+.number-grid-serial-grid-table th.col-num,
+.number-grid-serial-grid-table th.col-actions {
+  width: 28px;
+}
+
+.number-grid-required-mark {
+  color: var(--color-error, #dc2626);
+}
+
+.number-grid-serial-grid-table td.cell {
+  padding: 0;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+  position: relative;
+}
+
+.number-grid-serial-grid-table td.cell-num {
+  padding: 4px 6px;
+  color: #888;
+  font-family: monospace;
+  text-align: right;
+  width: 28px;
+}
+
+.number-grid-serial-grid-table td.cell-actions {
+  width: 24px;
+  text-align: center;
+}
+
+.number-grid-grid-remove {
+  background: none;
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  color: #bbb;
+  padding: 2px 4px;
+}
+
+.number-grid-grid-remove:hover {
+  color: #c00;
+}
+
+.number-grid-grid-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 6px 8px;
+  font: inherit;
+  font-family: monospace;
+  color: inherit;
+}
+
+.number-grid-serial-grid-table select.number-grid-grid-input {
+  font-family: inherit;
+}
+
+.number-grid-grid-input:focus {
+  outline: none;
+  border-color: var(--color-primary, #0066cc);
+  box-shadow: inset 0 0 0 1px var(--color-primary, #0066cc);
+  background: white;
+}
+
+/* Carry-forward (untouched, inherited-from-row-above) cells: italic + left accent bar */
+.number-grid-grid-input.inherited {
+  font-style: italic;
+  color: #6b7280;
+}
+
+td.cell-inherited {
+  box-shadow: inset 3px 0 0 #cbd5e1;
+}
+
+.number-grid-grid-row.ghost .number-grid-grid-input {
+  color: #9ca3af;
+}
+
+.number-grid-grid-status {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0 2px;
+}
+
+.number-grid-grid-row.status-valid td.cell-serial,
+.number-grid-grid-row.status-new td.cell-serial {
+  box-shadow: inset 3px 0 0 #22c55e;
+}
+.number-grid-grid-row.status-new td.cell-serial {
+  box-shadow: inset 3px 0 0 #3b82f6;
+}
+.number-grid-grid-row.status-checking td.cell-serial {
+  box-shadow: inset 3px 0 0 #9ca3af;
+}
+.number-grid-grid-row.status-not_found td.cell-serial,
+.number-grid-grid-row.status-not_in_location td.cell-serial,
+.number-grid-grid-row.status-blocked td.cell-serial,
+.number-grid-grid-row.status-used td.cell-serial,
+.number-grid-grid-row.status-already_exists td.cell-serial,
+.number-grid-grid-row.status-duplicate td.cell-serial {
+  box-shadow: inset 3px 0 0 var(--color-error, #ef4444);
+  background: #fef2f2;
+}
+
 /* Serial SELECT */
 .number-grid-serial-select {
   display: flex;

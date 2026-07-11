@@ -21,6 +21,9 @@ export interface User {
   visibleDepartments?: string[];
   branchId?: string;
   branchDepartments?: string[];
+  /** Admin only: the branch they've selected to act on (Settings > Company > Branch Management). Unset = all branches, unfiltered. */
+  activeBranchId?: string;
+  activeBranchName?: string;
   phoneNumber?: string;
   address?: string;
   employeeId?: string;

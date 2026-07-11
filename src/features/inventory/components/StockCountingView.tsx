@@ -23,7 +23,7 @@ import { ConfirmDialog, Modal } from '@/shared/components/modals';
 import { Textarea } from '@/shared/components/ui';
 import { NumberGrid } from './NumberGrid';
 import { authStore } from '@/store/authStore';
-import { canApproveCount, canDeleteCount } from '../utils/countPermissions';
+import { canApproveCount, canDeleteCount, canSelfApproveCount } from '../utils/countPermissions';
 import './StockCountingView.css';
 
 type CountSegment = 'to_do' | 'to_approve' | 'pending' | 'done';
@@ -87,7 +87,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   const [scopeLoading, setScopeLoading] = useState(false);
 
   // Enter physical: line edits (lineNo -> { physicalQuantity?, varianceReason?, batchNumber?, serialNumbers?, manufacturingDate?, expiryDate? })
-  type LineEditPatch = { physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string };
+  type LineEditPatch = { physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; serialAttributes?: Record<string, Record<string, any>>; manufacturingDate?: string; expiryDate?: string };
   const [lineEdits, setLineEdits] = useState<Record<number, LineEditPatch>>({});
   const [bulkReason, setBulkReason] = useState('');
   const [savingLines, setSavingLines] = useState(false);
@@ -327,6 +327,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         (v.varianceReason != null && v.varianceReason !== '') ||
         (v.batchNumber != null && v.batchNumber !== '') ||
         (Array.isArray(v.serialNumbers) && v.serialNumbers.length > 0) ||
+        (v.serialAttributes != null && Object.keys(v.serialAttributes).length > 0) ||
         v.manufacturingDate != null ||
         v.expiryDate != null
       )
@@ -334,11 +335,12 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         const lineNo = parseInt(k, 10);
         if (Number.isNaN(lineNo)) return null;
         const serverLine = doc.lines?.find((line) => line.lineNo === lineNo);
-        const out: { lineNo: number; physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; manufacturingDate?: string; expiryDate?: string; expectedVersion?: number } = { lineNo };
+        const out: { lineNo: number; physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; serialAttributes?: Record<string, Record<string, any>>; manufacturingDate?: string; expiryDate?: string; expectedVersion?: number } = { lineNo };
         if (v.physicalQuantity != null) out.physicalQuantity = v.physicalQuantity;
         if (v.varianceReason != null && v.varianceReason !== '') out.varianceReason = v.varianceReason;
         if (v.batchNumber != null && v.batchNumber !== '') out.batchNumber = v.batchNumber;
         if (Array.isArray(v.serialNumbers) && v.serialNumbers.length > 0) out.serialNumbers = v.serialNumbers;
+        if (v.serialAttributes != null && Object.keys(v.serialAttributes).length > 0) out.serialAttributes = v.serialAttributes;
         if (v.manufacturingDate != null) out.manufacturingDate = v.manufacturingDate;
         if (v.expiryDate != null) out.expiryDate = v.expiryDate;
         if (serverLine?.lineVersion != null) out.expectedVersion = serverLine.lineVersion;
@@ -398,6 +400,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   };
   const getBatch = (line: CountLineDto) => { const e = getLineEdit(line.lineNo); return e.batchNumber !== undefined ? e.batchNumber : (line.batchNumber ?? ''); };
   const getSerials = (line: CountLineDto) => { const e = getLineEdit(line.lineNo); return e.serialNumbers !== undefined ? e.serialNumbers : (line.serialNumbers ?? []); };
+  const getSerialAttributes = (line: CountLineDto) => { const e = getLineEdit(line.lineNo); return e.serialAttributes !== undefined ? e.serialAttributes : line.serialAttributes; };
   const toDateValue = (d: string | Date | undefined) => (d ? (typeof d === 'string' ? d : new Date(d).toISOString().slice(0, 10)) : '');
   const getExpiry = (line: CountLineDto) => { const e = getLineEdit(line.lineNo); return e.expiryDate !== undefined ? e.expiryDate : toDateValue(line.expiryDate); };
   const getMfg = (line: CountLineDto) => { const e = getLineEdit(line.lineNo); return e.manufacturingDate !== undefined ? e.manufacturingDate : toDateValue(line.manufacturingDate); };
@@ -426,12 +429,14 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
           if (ph === undefined) return null;
           const batch = (getBatch(l) || '').trim() || undefined;
           const serials = getSerials(l);
+          const serialAttrs = getSerialAttributes(l);
           return {
             lineNo: l.lineNo,
             physicalQuantity: ph,
             varianceReason: (getVarianceReason(l) || '').trim() || undefined,
             batchNumber: batch,
             serialNumbers: serials?.length ? serials : undefined,
+            serialAttributes: serialAttrs && Object.keys(serialAttrs).length > 0 ? serialAttrs : undefined,
             manufacturingDate: getMfg(l) || undefined,
             expiryDate: getExpiry(l) || undefined,
             expectedVersion: l.lineVersion,
@@ -591,7 +596,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     approverDefaultSegmentChecked.current = true;
     inventoryService.listCounts({ status: CountStatus.SUBMITTED }).then((list) => {
       if (Array.isArray(list) && list.length > 0) setSegment('to_approve');
-    }).catch(() => {});
+    }).catch(() => { });
   }, [canApprove]);
 
   const emptyMessage =
@@ -610,11 +615,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         <div className="stock-counting-view-segments" style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginBottom: 8 }}>
           <div className="stock-counting-view-filters-container" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <div className="stock-counting-view-filters">
-          <Select
-            value={filters.countType ?? ''}
-            onChange={(e) => setFilters({ ...filters, countType: e.target.value })}
-            style={{ width: '140px' }}
-          >
+              <Select
+                value={filters.countType ?? ''}
+                onChange={(e) => setFilters({ ...filters, countType: e.target.value })}
+                style={{ width: '140px' }}
+              >
                 <option value="">All types</option>
                 {Object.values(CountType).map((t) => (
                   <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
@@ -895,7 +900,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     return (
       <Card className="stock-counting-view-enter counting-details">
         <div className="details-header">
-          <h2>Enter Physical – {doc.countNumber}</h2>
+          <h2>Enter Physical Stock</h2>
           <div className="details-actions">
             <Button variant="secondary" onClick={() => setViewMode('list')}>Back to list</Button>
             <Button variant="ghost" onClick={() => handleSaveLines(true)} disabled={savingLines} title="Save entered quantities and variance reasons">Save</Button>
@@ -912,12 +917,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             )}
           </div>
         </div>
-        <p className="form-hint">Enter what you physically see. For lines with a difference, a variance reason is required.</p>
-        <p className="form-hint">If an item has variants, count is required per variant. Variants represent unique versions of this item. Each variant has its own stock.</p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <Input value={bulkReason} onChange={(e) => setBulkReason(e.target.value)} placeholder="Bulk variance reason" />
-          <Button variant="ghost" onClick={applyBulkReasonToVarianceLines}>Apply to all variance lines</Button>
-        </div>
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
         <div className="counting-table">
@@ -931,8 +930,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                 <th>Variance</th>
                 <th>Variance reason</th>
                 <th title="Required for batch-tracked items when there is a variance">Batch</th>
-                <th title="Required for perishable batch-tracked items when there is a variance">Expiry</th>
-                <th title="For serial-tracked items: enter one serial per unit of variance">Serials</th>
               </tr>
             </thead>
             <tbody>
@@ -987,19 +984,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                               />
                             </td>
                             <td>
-                              {l.item?.requiresBatchTracking ? (
-                                v !== 0 ? (
-                                  <span className="stock-counting-view-tracking-cell">
-                                    <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'BATCH' })}>Enter batch</Button>
-                                    {(getBatch(l) || '').trim() ? <span className="stock-counting-view-tracking-summary">{(getBatch(l) || '').trim()}</span> : null}
-                                  </span>
-                                ) : '—'
-                              ) : '—'}
-                            </td>
-                            <td>
-                              {l.item?.isPerishable && l.item?.requiresBatchTracking ? (v !== 0 ? (getExpiry(l) || '—') : '—') : '—'}
-                            </td>
-                            <td>
                               {l.item?.requiresSerialTracking ? (
                                 v !== 0 ? (
                                   <span className="stock-counting-view-tracking-cell">
@@ -1045,19 +1029,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                           onBlur={() => { if (Object.keys(lineEdits).length > 0) handleSaveLines(); }}
                         />
                       </td>
-                      <td>
-                        {l.item?.requiresBatchTracking ? (
-                          v !== 0 ? (
-                            <span className="stock-counting-view-tracking-cell">
-                              <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'BATCH' })}>Enter batch</Button>
-                              {(getBatch(l) || '').trim() ? <span className="stock-counting-view-tracking-summary">{(getBatch(l) || '').trim()}</span> : null}
-                            </span>
-                          ) : '—'
-                        ) : '—'}
-                      </td>
-                      <td>
-                        {l.item?.isPerishable && l.item?.requiresBatchTracking ? (v !== 0 ? (getExpiry(l) || '—') : '—') : '—'}
-                      </td>
+                     
                       <td>
                         {l.item?.requiresSerialTracking ? (
                           v !== 0 ? (
@@ -1088,7 +1060,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     const showApproveReject =
       doc.status === CountStatus.SUBMITTED &&
       canApprove &&
-      !isSubmitter;
+      (!isSubmitter || canSelfApproveCount(user?.role));
     const showDelete =
       canEdit &&
       user &&
@@ -1245,10 +1217,13 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             variantId={ngLineForGrid.variantId}
             expectedQuantity={expectedQty}
             initialSerialNumbers={numberGridForLine.tracking === 'SERIAL' ? getSerials(ngLineForGrid) : []}
+            initialSerialAttributes={numberGridForLine.tracking === 'SERIAL' ? getSerialAttributes(ngLineForGrid) : undefined}
             initialBatchRows={numberGridForLine.tracking === 'BATCH' ? [{ batchCode: getBatch(ngLineForGrid) || '', quantity: expectedQty, manufacturingDate: getMfg(ngLineForGrid) || '', expiryDate: getExpiry(ngLineForGrid) || '' }] : []}
             existingSerialsInDoc={[]}
             allowOverReceive={false}
             allowPartial={false}
+            useSerialGrid={numberGridForLine.tracking === 'SERIAL'}
+            itemName={ngLineForGrid.item?.name}
             industryFlags={toIndustryFlags(ngLineForGrid.item)}
             fetchAvailableForBatch={undefined}
             locationId={doc.locationId}
@@ -1257,7 +1232,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             singleBatchMode={numberGridForLine.tracking === 'BATCH'}
             onApply={(result) => {
               if (numberGridForLine.tracking === 'SERIAL') {
-                setLineEdit(numberGridForLine.lineNo, { serialNumbers: result.finalSerialList });
+                setLineEdit(numberGridForLine.lineNo, { serialNumbers: result.finalSerialList, serialAttributes: result.serialAttributes });
               } else {
                 setLineEdit(numberGridForLine.lineNo, {
                   batchNumber: result.finalBatchList[0]?.batchCode || undefined,

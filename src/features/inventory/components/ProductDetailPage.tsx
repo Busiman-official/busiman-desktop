@@ -206,15 +206,23 @@ export const ProductDetailPage: React.FC = () => {
 
   const displaySku = itemDisplaySku(item, variants);
   const overviewIndustryFlags = ((): IndustryFlags => {
-    if (item.industryFlags) return item.industryFlags;
     const ic = item.industryClassification;
-    return {
+    const base: IndustryFlags = item.industryFlags ?? {
       industryType: ic?.industryType ?? IndustryType.FMCG,
       isHighValue: ic?.isHighValue ?? false,
       isPerishable: false,
-      requiresBatchTracking: variants.some((v) => v.trackBatchOverride),
-      requiresSerialTracking: variants.some((v) => v.trackSerialOverride),
+      requiresBatchTracking: false,
+      requiresSerialTracking: false,
       hasExpiryDate: false,
+    };
+    return {
+      ...base,
+      requiresBatchTracking: Boolean(
+        base.requiresBatchTracking || variants.some((v) => v.trackBatchOverride),
+      ),
+      requiresSerialTracking: Boolean(
+        base.requiresSerialTracking || variants.some((v) => v.trackSerialOverride),
+      ),
     };
   })();
 

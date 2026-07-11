@@ -10,7 +10,9 @@ import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import type { MovementType, IndustryFlags } from '@/services/inventory.service';
 import type { SerialResponse } from '@/services/inventory.service';
 import type { BatchRow, ValidationError, SerialValidationItem } from '../../utils/numberGridUtils';
+import { serialNumbersEqual } from '../../utils/serialNumber';
 import { SerialInputView } from './SerialInputView';
+import { SerialGridInputView } from './SerialGridInputView';
 import { SerialSelectView } from './SerialSelectView';
 import { BatchInputView } from './BatchInputView';
 import './NumberGrid.css';
@@ -21,6 +23,8 @@ export interface NumberGridResult {
   derivedQuantity: number;
   validationErrors: ValidationError[];
   serialStatuses?: SerialValidationItem[];
+  /** Per-serial custom attribute values (Warranty expiry, Grade, Notes, etc.), keyed by serial number then field key. */
+  serialAttributes?: Record<string, Record<string, any>>;
   isValid: boolean;
 }
 
@@ -49,6 +53,8 @@ export interface NumberGridProps {
   toLocationId?: string;
   expectedQuantity: number;
   initialSerialNumbers?: string[];
+  /** SERIAL + INPUT + useSerialGrid only: per-serial attribute values to re-hydrate on reopen. */
+  initialSerialAttributes?: Record<string, Record<string, any>>;
   initialBatchRows?: BatchRow[];
   existingSerialsInDoc?: string[];
   availableSerials?: SerialResponse[];
@@ -56,6 +62,10 @@ export interface NumberGridProps {
   allowPartial?: boolean;
   /** When true (count flow): BatchInputView uses one row only, hide Add/Remove. */
   singleBatchMode?: boolean;
+  /** When true (SERIAL + INPUT only): render the one-step carry-forward spreadsheet grid (SerialGridInputView) instead of the legacy textarea+list, resolving and showing the item/variant's SerialAttributeTemplate as extra columns. */
+  useSerialGrid?: boolean;
+  /** Shown as the modal header title when provided (falls back to "Serial numbers"/"Batch details"). */
+  itemName?: string;
   industryFlags: IndustryFlags;
   fetchAvailableForBatch?: (itemId: string, locationId: string, batchCode: string) => Promise<number>;
   onApply: (result: NumberGridResult) => void;
@@ -76,12 +86,15 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
   toLocationId,
   expectedQuantity,
   initialSerialNumbers = [],
+  initialSerialAttributes,
   initialBatchRows = [],
   existingSerialsInDoc = [],
   availableSerials = [],
   allowOverReceive = false,
   allowPartial = false,
   singleBatchMode,
+  useSerialGrid = false,
+  itemName,
   industryFlags,
   fetchAvailableForBatch,
   onApply,
@@ -97,6 +110,10 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
   const historyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const errorRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const clearGridRef = useRef<(() => void) | null>(null);
+  const registerClearAll = useCallback((fn: () => void) => {
+    clearGridRef.current = fn;
+  }, []);
 
   const handleResultChange = useCallback(
     (r: NumberGridResult) => {
@@ -156,7 +173,8 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [result, onApply, onCancel]);
 
-  const title = trackingType === 'SERIAL' ? 'Serial numbers' : 'Batch details';
+  const title = itemName || (trackingType === 'SERIAL' ? 'Serial numbers' : 'Batch details');
+  const isSerialGridActive = mode === 'INPUT' && trackingType === 'SERIAL' && useSerialGrid;
   const blockingErrs = result.validationErrors.filter((e) => e.blocking);
 
   const hasUnsavedChanges =
@@ -196,15 +214,21 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
     if (!isOpen) return;
 
     const onKey = (e: KeyboardEvent) => {
-      // Ctrl+Z / Cmd+Z: Undo
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      }
-      // Ctrl+Y / Cmd+Y or Ctrl+Shift+Z: Redo
-      if (((e.ctrlKey || e.metaKey) && e.key === 'y') || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        handleRedo();
+      // SerialGridInputView owns its own row-array Undo/Redo (Ctrl+Z/Y) when active, to avoid desyncing
+      // its internal grid state from this shell's derived-result history.
+      if (useSerialGrid && trackingType === 'SERIAL' && mode === 'INPUT') {
+        // fall through to other shortcuts below (Ctrl+S/K/?), skip Undo/Redo
+      } else {
+        // Ctrl+Z / Cmd+Z: Undo
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          handleUndo();
+        }
+        // Ctrl+Y / Cmd+Y or Ctrl+Shift+Z: Redo
+        if (((e.ctrlKey || e.metaKey) && e.key === 'y') || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z')) {
+          e.preventDefault();
+          handleRedo();
+        }
       }
       // Ctrl+S / Cmd+S: Apply (alternative to Ctrl+Enter)
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -228,12 +252,30 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, result, handleUndo, handleRedo, onApply, onCancel]);
+  }, [isOpen, result, handleUndo, handleRedo, onApply, onCancel, useSerialGrid, trackingType, mode]);
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg" className="number-grid-modal">
       <div className="number-grid-body">
-        {mode === 'INPUT' && trackingType === 'SERIAL' && (
+        {mode === 'INPUT' && trackingType === 'SERIAL' && useSerialGrid && (
+          <SerialGridInputView
+            ref={firstInputRef}
+            movementType={movementType}
+            itemId={itemId}
+            variantId={variantId}
+            fromLocationId={fromLocationId}
+            toLocationId={toLocationId}
+            expectedQuantity={expectedQuantity}
+            initialSerialNumbers={initialSerialNumbers}
+            initialSerialAttributes={initialSerialAttributes}
+            existingSerialsInDoc={existingSerialsInDoc}
+            allowOverReceive={allowOverReceive}
+            allowPartial={allowPartial}
+            onResultChange={handleResultChange}
+            registerClearAll={registerClearAll}
+          />
+        )}
+        {mode === 'INPUT' && trackingType === 'SERIAL' && !useSerialGrid && (
           <SerialInputView
             ref={firstInputRef}
             movementType={movementType}
@@ -345,7 +387,9 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
                         <div>
                           <span>{err.message.split(':')[0]}: </span>
                           {serialMatch[1].split(', ').map((serial, i) => {
-                            const serialIndex = result.finalSerialList.findIndex((s) => s.toUpperCase() === serial.trim().toUpperCase());
+                            const serialIndex = result.finalSerialList.findIndex((s) =>
+                              serialNumbersEqual(s, serial.trim())
+                            );
                             return serialIndex >= 0 ? (
                               <button
                                 key={i}
@@ -405,26 +449,40 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
         </div>
         <div className="number-grid-actions">
           <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleUndo}
-              disabled={historyIndex <= 0}
-              title="Undo (Ctrl+Z)"
-              aria-label="Undo last change"
-            >
-              ↶ Undo
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleRedo}
-              disabled={historyIndex >= history.length - 1}
-              title="Redo (Ctrl+Y)"
-              aria-label="Redo last undone change"
-            >
-              ↷ Redo
-            </Button>
+            {isSerialGridActive ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => clearGridRef.current?.()}
+                title="Clear all rows"
+                aria-label="Clear all rows"
+              >
+                Clear All
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleUndo}
+                  disabled={historyIndex <= 0}
+                  title="Undo (Ctrl+Z)"
+                  aria-label="Undo last change"
+                >
+                  ↶ Undo
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRedo}
+                  disabled={historyIndex >= history.length - 1}
+                  title="Redo (Ctrl+Y)"
+                  aria-label="Redo last undone change"
+                >
+                  ↷ Redo
+                </Button>
+              </>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -436,9 +494,11 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
             </Button>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <Button variant="ghost" onClick={handleClose} aria-label="Cancel and close">
-              Cancel
-            </Button>
+            {!isSerialGridActive && (
+              <Button variant="ghost" onClick={handleClose} aria-label="Cancel and close">
+                Cancel
+              </Button>
+            )}
             <Button
               variant="primary"
               onClick={() => {
@@ -475,7 +535,22 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
                   <div><kbd>?</kbd> or <kbd>Ctrl+/</kbd> - Show this help</div>
                 </div>
               </div>
-              {trackingType === 'SERIAL' && mode === 'INPUT' && (
+              {trackingType === 'SERIAL' && mode === 'INPUT' && useSerialGrid && (
+                <div>
+                  <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>Serial Grid</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
+                    <div><kbd>Enter</kbd> (in Serial column) - Commit row, move to next</div>
+                    <div><kbd>Arrow Keys</kbd> - Navigate cells</div>
+                    <div><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> - Next / previous cell</div>
+                    <div><kbd>Backspace</kbd> (empty last row) - Move to row above</div>
+                    <div><kbd>Ctrl+D</kbd> - Fill cell value down the column</div>
+                    <div><kbd>Ctrl+Home</kbd> / <kbd>Ctrl+End</kbd> - Jump to first / last cell</div>
+                    <div><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> - Undo / Redo grid changes</div>
+                    <div>Paste a multi-line/tab block to fill multiple rows and columns</div>
+                  </div>
+                </div>
+              )}
+              {trackingType === 'SERIAL' && mode === 'INPUT' && !useSerialGrid && (
                 <div>
                   <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>Serial Input</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>

@@ -25,7 +25,7 @@ import { MovementManagement } from '@/features/inventory/components/MovementMana
 import { InventoryReports } from '@/features/inventory/components/InventoryReports';
 
 import { InventorySettings } from '@/features/inventory/components/InventorySettings';
-
+import { EmployeeKitsPanel } from '@/features/inventory/components/EmployeeKitsPanel';
 import { useGlobalSearch } from '@/features/inventory/components/GlobalSearch';
 
 import { SerialDetailPanel } from '@/features/inventory/components/SerialDetailPanel';
@@ -44,22 +44,15 @@ import './InventoryPage.css';
 
 
 
-type InventoryTab = 'items' | 'locations' | 'movements' | 'reports' | 'settings';
-
-
+type InventoryTab = 'items' | 'locations' | 'movements' | 'reports' | 'settings' | 'employeeKits';
 
 const INVENTORY_TAB_DEFS: readonly SalesTabDef[] = [
-
   { id: 'items', label: 'Products' },
-
   { id: 'locations', label: 'Locations' },
-
   { id: 'movements', label: 'Movements' },
-
+  { id: 'employeeKits', label: 'Employee Kits' },
   { id: 'reports', label: 'Reports' },
-
   { id: 'settings', label: 'Settings' },
-
 ] as const;
 
 
@@ -631,6 +624,8 @@ export const InventoryPage: React.FC = () => {
         )}
 
         {activeTab === 'movements' && <MovementManagement />}
+
+        {activeTab === 'employeeKits' && <EmployeeKitsPanel />}
 
         {activeTab === 'reports' && <InventoryReports />}
 

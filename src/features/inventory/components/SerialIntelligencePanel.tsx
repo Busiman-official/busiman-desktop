@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { normalizeSerialNumber } from '../utils/serialNumber';
 import { useSearchParams } from 'react-router-dom';
 import {
   inventoryService,
@@ -98,7 +99,7 @@ export const SerialIntelligencePanel: React.FC<SerialIntelligencePanelProps> = (
       // Auto-select first result if search query matches
       if (searchQuery.trim() && data.length > 0) {
         const matching = data.find((s) =>
-          s.serialNumber.toUpperCase().includes(searchQuery.trim().toUpperCase())
+          s.serialNumber.includes(searchQuery.trim())
         );
         if (matching) {
           setFocusedIndex(data.indexOf(matching));

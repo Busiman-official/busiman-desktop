@@ -4,6 +4,7 @@
  */
 
 import { MovementType, type IndustryFlags } from '@/services/inventory.service';
+import { normalizeSerialNumber } from './serialNumber';
 
 export interface BatchRow {
   batchCode: string;
@@ -26,7 +27,7 @@ export interface ValidationError {
 export function parseSerialInput(text: string): string[] {
   return text
     .split(/[\n,\t;]+/)
-    .map((s) => s.trim().toUpperCase())
+    .map((s) => normalizeSerialNumber(s))
     .filter(Boolean);
 }
 
@@ -42,7 +43,7 @@ export function parsePastedData(pastedText: string): string[] {
   if (trimmed.includes('\t')) {
     return trimmed
       .split('\n')
-      .flatMap((line) => line.split('\t').map((cell) => cell.trim().toUpperCase()))
+      .flatMap((line) => line.split('\t').map((cell) => normalizeSerialNumber(cell)))
       .filter(Boolean);
   }
 
@@ -60,13 +61,13 @@ export function parsePastedData(pastedText: string): string[] {
           if (char === '"') {
             inQuotes = !inQuotes;
           } else if (char === ',' && !inQuotes) {
-            cells.push(current.trim().toUpperCase());
+            cells.push(normalizeSerialNumber(current));
             current = '';
           } else {
             current += char;
           }
         }
-        cells.push(current.trim().toUpperCase());
+        cells.push(normalizeSerialNumber(current));
         return cells;
       })
       .filter(Boolean);
@@ -128,7 +129,7 @@ export function validateSerialsSync(
   allowPartial: boolean
 ): ValidationError[] {
   const errs: ValidationError[] = [];
-  const docSet = new Set(existingInDoc.map((s) => s.toUpperCase()));
+  const docSet = new Set(existingInDoc.map((s) => normalizeSerialNumber(s)));
 
   const dupes = getDuplicateSerials(serials);
   if (dupes.length > 0) {
@@ -139,7 +140,7 @@ export function validateSerialsSync(
     });
   }
 
-  const inDoc = serials.filter((s) => docSet.has(s.toUpperCase()));
+  const inDoc = serials.filter((s) => docSet.has(normalizeSerialNumber(s)));
   if (inDoc.length > 0) {
     errs.push({
       type: 'global',

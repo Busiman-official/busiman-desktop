@@ -296,6 +296,8 @@ export interface AttributeField {
   type: 'string' | 'number' | 'date' | 'select';
   required: boolean;
   options?: string[];
+  /** Pre-filled value for the first row of a serial-entry grid (subsequent rows carry-forward from the row above). For type 'select' must be one of `options`. */
+  defaultValue?: string;
 }
 
 export interface SerialAttributeTemplate {
@@ -1108,6 +1110,7 @@ class InventoryService {
     toLocation?: { id: string; code: string; name: string };
     quantity: number;
     status: string;
+    user?: { id: string; name: string; email: string };
   }>> {
     const response = await api.get(`/inventory/serials/${serialNumber}/history`);
     return extractApiData(response);
@@ -1195,6 +1198,7 @@ class InventoryService {
         varianceReason?: string;
         batchNumber?: string;
         serialNumbers?: string[];
+        serialAttributes?: Record<string, Record<string, any>>;
         manufacturingDate?: string;
         expiryDate?: string;
         expectedVersion?: number;
@@ -1569,6 +1573,7 @@ export interface CountLineDto {
   physicalEntered?: boolean;
   batchNumber?: string;
   serialNumbers?: string[];
+  serialAttributes?: Record<string, Record<string, any>>;
   manufacturingDate?: string;
   expiryDate?: string;
   lineVersion?: number;

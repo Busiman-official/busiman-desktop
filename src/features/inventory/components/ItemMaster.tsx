@@ -94,15 +94,24 @@ function rowSku(item: InventoryItem): string {
 }
 
 function detailIndustryFlags(item: InventoryItem): IndustryFlags {
-  if (item.industryFlags) return item.industryFlags;
   const ic = item.industryClassification;
-  return {
+  const base: IndustryFlags = item.industryFlags ?? {
     industryType: ic?.industryType ?? IndustryType.FMCG,
     isHighValue: ic?.isHighValue ?? false,
     isPerishable: false,
-    requiresBatchTracking: item.variantTracking?.batch ?? false,
-    requiresSerialTracking: item.variantTracking?.serial ?? false,
+    requiresBatchTracking: false,
+    requiresSerialTracking: false,
     hasExpiryDate: false,
+  };
+  // Master industryFlags intentionally store tracking as false; OR in variant-level flags.
+  return {
+    ...base,
+    requiresBatchTracking: Boolean(
+      base.requiresBatchTracking || item.variantTracking?.batch,
+    ),
+    requiresSerialTracking: Boolean(
+      base.requiresSerialTracking || item.variantTracking?.serial,
+    ),
   };
 }
 

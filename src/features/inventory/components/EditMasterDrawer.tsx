@@ -77,8 +77,14 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
         })),
     );
 
-    setRequiresBatchTracking(Boolean(item.industryFlags?.requiresBatchTracking ?? item.variantTracking?.batch ?? false));
-    setRequiresSerialTracking(Boolean(item.industryFlags?.requiresSerialTracking ?? item.variantTracking?.serial ?? false));
+    // Product industryFlags keep tracking false by design; effective flags live on variants
+    // (variantTracking) and must win when industryFlags.requires* is explicitly false.
+    setRequiresBatchTracking(
+      Boolean(item.industryFlags?.requiresBatchTracking || item.variantTracking?.batch),
+    );
+    setRequiresSerialTracking(
+      Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial),
+    );
     setHasExpiryDate(Boolean(item.industryFlags?.hasExpiryDate ?? false));
 
     setImages(mapItemImages(item));

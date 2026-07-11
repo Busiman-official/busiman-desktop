@@ -284,8 +284,13 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
   const removeOptionFromField = (index: number, optionIndex: number) => {
     const field = fields[index];
     if (field.type === 'select' && field.options) {
+      const removedOption = field.options[optionIndex];
       const options = field.options.filter((_, i) => i !== optionIndex);
-      updateField(index, { options });
+      const updates: Partial<AttributeField> = { options };
+      if (field.defaultValue === removedOption) {
+        updates.defaultValue = undefined;
+      }
+      updateField(index, updates);
     }
   };
 
@@ -498,7 +503,7 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                   value={field.type}
                   onChange={(e) => {
                     const type = e.target.value as AttributeField['type'];
-                    const updates: Partial<AttributeField> = { type };
+                    const updates: Partial<AttributeField> = { type, defaultValue: undefined };
                     if (type !== 'select') {
                       updates.options = undefined;
                     } else if (!field.options) {
@@ -523,6 +528,17 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                   Required
                 </label>
               </div>
+              {field.type !== 'select' && (
+                <div className="field-input">
+                  <label>Default value</label>
+                  <Input
+                    type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+                    value={field.defaultValue || ''}
+                    onChange={(e) => updateField(index, { defaultValue: e.target.value || undefined })}
+                    placeholder="Pre-filled on the first row"
+                  />
+                </div>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -561,6 +577,24 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                       }}
                     />
                   </div>
+                </div>
+                <div className="field-input" style={{ marginTop: 8 }}>
+                  <label>Default value</label>
+                  <Select
+                    value={field.defaultValue || ''}
+                    onChange={(e) => updateField(index, { defaultValue: e.target.value || undefined })}
+                    disabled={!field.options || field.options.length === 0}
+                  >
+                    <option value="">None</option>
+                    {(field.options || []).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </Select>
+                  {(!field.options || field.options.length === 0) && (
+                    <small className="form-help">Add options above to pick a default.</small>
+                  )}
                 </div>
               </div>
             )}
