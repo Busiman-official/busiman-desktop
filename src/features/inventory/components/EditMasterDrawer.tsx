@@ -51,6 +51,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
   const [requiresBatchTracking, setRequiresBatchTracking] = useState(false);
   const [requiresSerialTracking, setRequiresSerialTracking] = useState(false);
   const [hasExpiryDate, setHasExpiryDate] = useState(false);
+  const [serviceable, setServiceable] = useState(false);
 
   const [industryType, setIndustryType] = useState<IndustryType>(IndustryType.FMCG);
 
@@ -86,6 +87,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
       Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial),
     );
     setHasExpiryDate(Boolean(item.industryFlags?.hasExpiryDate ?? false));
+    setServiceable(Boolean(item.serviceable));
 
     setImages(mapItemImages(item));
     setError(null);
@@ -142,6 +144,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
         category: normalizedCategory,
         productType,
         isMisc,
+        serviceable,
         itemType: behavior.itemType,
         unitOfMeasure: baseUnit,
         unitConfig: {
@@ -390,6 +393,15 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
                     aria-label="Mark as Misc"
                   />
                   Mark as Misc
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                  <Checkbox
+                    checked={serviceable}
+                    onChange={(e) => setServiceable(e.target.checked)}
+                    aria-label="Serviceable"
+                  />
+                  Serviceable
                 </label>
               </div>
             </div>

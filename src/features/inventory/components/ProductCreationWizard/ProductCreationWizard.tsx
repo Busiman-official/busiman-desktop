@@ -91,6 +91,8 @@ export interface WizardFormState {
   requiresSerialTracking: boolean;
   hasExpiryDate: boolean;
   isHighValue: boolean;
+  /** Whether this product can be booked for after-sales service/repair. Defaults false. */
+  serviceable: boolean;
   shelfLifeDays: string;
   batchFormatExample: string;
   serialFormatPattern: string;
@@ -141,6 +143,7 @@ export const getInitialFormState = (): WizardFormState => ({
   requiresSerialTracking: false,
   hasExpiryDate: false,
   isHighValue: false,
+  serviceable: false,
   shelfLifeDays: '',
   batchFormatExample: '',
   serialFormatPattern: '',
@@ -475,6 +478,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
             trackBatchOverride: payload.variantPatch.trackBatchOverride,
             isActive: payload.variantPatch.isActive,
             isDiscontinued: payload.variantPatch.isDiscontinued,
+            serviceable: payload.variantPatch.serviceable,
             weightOverride: payload.variantPatch.weightOverride,
             dimensionsOverride: payload.variantPatch.dimensionsOverride,
             packSize: payload.variantPatch.packSize,
@@ -791,6 +795,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         allowBackorder: row.allowBackorder,
         trackSerialOverride: row.trackSerialOverride ?? (behavior.trackingAllowed ? requiresSerial : undefined),
         trackBatchOverride: row.trackBatchOverride ?? (behavior.trackingAllowed ? requiresBatch : undefined),
+        serviceable: row.serviceable ?? formData.serviceable,
         weightOverride: row.weightOverride,
         dimensionsOverride: row.dimensionsOverride,
         packSize: row.packSize,
@@ -807,6 +812,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
       category: formData.category.trim() || undefined,
       productType: behavior.productType,
       isMisc: behavior.isMisc,
+      serviceable: formData.serviceable,
       unitOfMeasure: masterUom,
       unitConversions: unitConversions.length ? unitConversions : undefined,
       unitConfig,
@@ -1393,6 +1399,14 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                         />
                         Mark as Misc
                       </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                        <Checkbox
+                          checked={formData.serviceable}
+                          onChange={(e) => setField('serviceable', e.target.checked)}
+                          aria-label="Serviceable"
+                        />
+                        Serviceable
+                      </label>
                     </div>
                     <p className="wizard-summary-label" style={{ margin: '6px 0 0', fontSize: 11, color: '#64748b' }}>
                       Batch and serial tracking cannot both be enabled — selecting one turns the other off.
@@ -1772,6 +1786,14 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     />
                     High Value Item
                   </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                    <Checkbox
+                      checked={formData.serviceable}
+                      onChange={(e) => setField('serviceable', e.target.checked)}
+                      aria-label="Serviceable"
+                    />
+                    Serviceable
+                  </label>
                 </div>
                 <p className="wizard-summary-label" style={{ margin: '6px 0 0', fontSize: 11, color: '#64748b' }}>
                   Batch and serial tracking cannot both be enabled — selecting one turns the other off.
@@ -1782,6 +1804,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                   {formData.requiresSerialTracking && <Badge variant="neutral">Serial</Badge>}
                   {formData.hasExpiryDate && <Badge variant="neutral">Expiry</Badge>}
                   {formData.isHighValue && <Badge variant="neutral">High Value</Badge>}
+                  {formData.serviceable && <Badge variant="neutral">Serviceable</Badge>}
                 </div>
                 {(formData.requiresBatchTracking || formData.requiresSerialTracking) && (
                   <p style={{ margin: '6px 0 0', fontSize: 11, color: '#666' }}>
@@ -2006,6 +2029,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                   formData.requiresSerialTracking && 'Serial',
                   formData.hasExpiryDate && 'Expiry',
                   formData.isHighValue && 'High value',
+                  formData.serviceable && 'Serviceable',
                 ]
                   .filter(Boolean)
                   .join(', ') || '—'}

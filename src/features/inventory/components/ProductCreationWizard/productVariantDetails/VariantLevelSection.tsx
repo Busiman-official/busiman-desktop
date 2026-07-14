@@ -3,7 +3,7 @@
  */
 
 import { memo, useCallback } from 'react';
-import { Input, Select } from '@/shared/components/ui';
+import { Checkbox, Input, Select } from '@/shared/components/ui';
 import { ImageUpload } from '@/shared/components/ui';
 import type { WizardVariantImage } from '../variantGridModel';
 import { type VariantUnitOption } from '../variantGridUnits';
@@ -30,6 +30,8 @@ export type VariantLevelSectionProps = {
   packSize?: number;
   unitsPerBox?: number;
   shelfLifeDaysOverride?: number;
+  /** Whether this specific variant can be booked for after-sales service/repair. Defaults to the master's setting. */
+  serviceable: boolean;
   defaults: {
     costPrice?: number;
     sellingPrice?: number;
@@ -59,6 +61,7 @@ export type VariantLevelSectionProps = {
   onPackSizeChange: (value: number | undefined) => void;
   onUnitsPerBoxChange: (value: number | undefined) => void;
   onShelfLifeDaysOverrideChange: (value: number | undefined) => void;
+  onServiceableChange: (value: boolean) => void;
   /** Wizard-style add variant: HSN in variant fields; optional auto SKU preview only. */
   showHsnInVariantFields?: boolean;
 };
@@ -84,6 +87,7 @@ function VariantLevelSectionInner({
   packSize,
   unitsPerBox,
   shelfLifeDaysOverride,
+  serviceable,
   defaults,
   onVariantNameChange,
   onBarcodeChange,
@@ -103,6 +107,7 @@ function VariantLevelSectionInner({
   onPackSizeChange,
   onUnitsPerBoxChange,
   onShelfLifeDaysOverrideChange,
+  onServiceableChange,
   showHsnInVariantFields = false,
 }: VariantLevelSectionProps) {
   const handleReorderPrimary = useCallback(
@@ -178,6 +183,16 @@ function VariantLevelSectionInner({
               onChange={(e) => onUnitOfMeasureChange(e.target.value)}
               aria-label="Variant unit"
             />
+          </div>
+          <div className="product-variant-details-field">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
+              <Checkbox
+                checked={serviceable}
+                onChange={(e) => onServiceableChange(e.target.checked)}
+                aria-label="Serviceable"
+              />
+              Serviceable
+            </label>
           </div>
         </div>
         {showHsnInVariantFields ? (

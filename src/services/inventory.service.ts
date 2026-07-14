@@ -107,6 +107,8 @@ export interface InventoryItem {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  /** Whether this product can be booked for after-sales service/repair. */
+  serviceable?: boolean;
   barcode?: string;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
@@ -185,6 +187,8 @@ export interface InventoryVariant {
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
   isDiscontinued?: boolean;
+  /** Whether this specific variant can be booked for after-sales service/repair. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -235,6 +239,8 @@ export interface CreateVariantRequest {
   trackBatchOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -273,6 +279,8 @@ export interface UpdateVariantRequest {
   trackBatchOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -328,6 +336,7 @@ export interface CatalogVariantRow {
   sellingPrice?: number;
   costPrice?: number;
   stockOnHand?: number;
+  serviceable?: boolean;
 }
 
 export interface PaginatedCatalogResponse {
@@ -360,6 +369,8 @@ export interface CreateInventoryVariantLine {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -384,6 +395,7 @@ export interface CreateInventoryItemRequest {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  serviceable?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
   unitConfig?: UnitConfig;
@@ -416,6 +428,7 @@ export interface UpdateInventoryItemRequest {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  serviceable?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
   unitConfig?: UnitConfig;
@@ -691,6 +704,7 @@ class InventoryService {
     excludeNonStock?: boolean;
     itemType?: ItemType;
     isMisc?: boolean;
+    serviceable?: boolean;
     includeInactiveVariants?: boolean;
     page?: number;
     limit?: number;
@@ -705,6 +719,8 @@ class InventoryService {
     if (params?.itemType) q.append('itemType', params.itemType);
     if (params?.isMisc === true) q.append('isMisc', 'true');
     if (params?.isMisc === false) q.append('isMisc', 'false');
+    if (params?.serviceable === true) q.append('serviceable', 'true');
+    if (params?.serviceable === false) q.append('serviceable', 'false');
     if (params?.includeInactiveVariants) q.append('includeInactiveVariants', 'true');
     if (params?.page !== undefined) q.append('page', String(params.page));
     if (params?.limit !== undefined) q.append('limit', String(params.limit));

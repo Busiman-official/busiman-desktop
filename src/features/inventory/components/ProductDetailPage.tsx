@@ -447,6 +447,10 @@ export const ProductDetailPage: React.FC = () => {
                   <span className="overview-label">Expiry Date:</span>
                   <span className="overview-value">{overviewIndustryFlags.hasExpiryDate ? 'Yes' : 'No'}</span>
                 </div>
+                <div className="overview-item">
+                  <span className="overview-label">Serviceable:</span>
+                  <span className="overview-value">{item.serviceable ? 'Yes' : 'No'}</span>
+                </div>
               </Card>
 
             </div>
@@ -496,6 +500,10 @@ export const ProductDetailPage: React.FC = () => {
                   <span className="variant-detail-value">Yes</span>
                 </div>
               )}
+              <div className="variant-detail-item">
+                <span className="variant-detail-label">Serviceable:</span>
+                <span className="variant-detail-value">{selectedVariant.serviceable ? 'Yes' : 'No'}</span>
+              </div>
             </div>
           </Card>
         )}

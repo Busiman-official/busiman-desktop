@@ -184,6 +184,7 @@ function inventoryVariantToWizardRow(v: InventoryVariant): WizardVariantRow {
     trackBatchOverride: v.trackBatchOverride,
     isActive: v.isActive,
     isDiscontinued: v.isDiscontinued,
+    serviceable: v.serviceable,
     weightOverride: v.weightOverride,
     dimensionsOverride: v.dimensionsOverride,
     packSize: v.packSize,
@@ -223,6 +224,7 @@ function variantPatchToUpdateRequest(
     trackBatchOverride: patch.trackBatchOverride,
     isActive: patch.isActive,
     isDiscontinued: patch.isDiscontinued,
+    serviceable: patch.serviceable,
     weightOverride: patch.weightOverride,
     dimensionsOverride: patch.dimensionsOverride,
     packSize: patch.packSize,
@@ -241,6 +243,7 @@ function inventoryVariantsToWizardRows(
     value: v.code || "",
     name: v.name || "",
     hsn: v.hsn,
+    serviceable: v.serviceable,
   }));
 }
 
@@ -281,6 +284,7 @@ function variantPatchToCreateRequest(
     trackBatchOverride: patch.trackBatchOverride,
     isActive: patch.isActive ?? true,
     isDiscontinued: patch.isDiscontinued,
+    serviceable: patch.serviceable,
     weightOverride: patch.weightOverride,
     dimensionsOverride: patch.dimensionsOverride,
     packSize: patch.packSize,
