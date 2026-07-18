@@ -306,6 +306,8 @@ export interface AttributeField {
   options?: string[];
   /** Pre-filled value for the first row of a serial-entry grid (subsequent rows carry-forward from the row above). For type 'select' must be one of `options`. */
   defaultValue?: string;
+  /** Type 'date' only: server resolves defaultValue to the current date on every fetch instead of a fixed stored date. */
+  defaultToday?: boolean;
 }
 
 export interface SerialAttributeTemplate {

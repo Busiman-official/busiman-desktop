@@ -985,12 +985,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                             </td>
                             <td>
                               {l.item?.requiresSerialTracking ? (
-                                v !== 0 ? (
-                                  <span className="stock-counting-view-tracking-cell">
-                                    <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'SERIAL' })}>Enter serials</Button>
-                                    {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
-                                  </span>
-                                ) : '—'
+                                <span className="stock-counting-view-tracking-cell">
+                                  <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'SERIAL' })}>Enter serials</Button>
+                                  {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
+                                </span>
                               ) : '—'}
                             </td>
                           </tr>
@@ -1032,12 +1030,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                      
                       <td>
                         {l.item?.requiresSerialTracking ? (
-                          v !== 0 ? (
-                            <span className="stock-counting-view-tracking-cell">
-                              <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'SERIAL' })}>Enter serials</Button>
-                              {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
-                            </span>
-                          ) : '—'
+                          <span className="stock-counting-view-tracking-cell">
+                            <Button variant="ghost" size="sm" onClick={() => setNumberGridForLine({ lineNo: l.lineNo, tracking: 'SERIAL' })}>Enter serials</Button>
+                            {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
+                          </span>
                         ) : '—'}
                       </td>
                     </tr>
@@ -1220,8 +1216,10 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             initialSerialAttributes={numberGridForLine.tracking === 'SERIAL' ? getSerialAttributes(ngLineForGrid) : undefined}
             initialBatchRows={numberGridForLine.tracking === 'BATCH' ? [{ batchCode: getBatch(ngLineForGrid) || '', quantity: expectedQty, manufacturingDate: getMfg(ngLineForGrid) || '', expiryDate: getExpiry(ngLineForGrid) || '' }] : []}
             existingSerialsInDoc={[]}
-            allowOverReceive={false}
-            allowPartial={false}
+            // Counting is discovery, not fulfillment — the physical count IS whatever you
+            // scan, so serial entry shouldn't be locked to a qty pre-typed before opening this.
+            allowOverReceive={numberGridForLine.tracking === 'SERIAL' ? true : false}
+            allowPartial={numberGridForLine.tracking === 'SERIAL' ? true : false}
             useSerialGrid={numberGridForLine.tracking === 'SERIAL'}
             itemName={ngLineForGrid.item?.name}
             industryFlags={toIndustryFlags(ngLineForGrid.item)}
@@ -1232,7 +1230,17 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
             singleBatchMode={numberGridForLine.tracking === 'BATCH'}
             onApply={(result) => {
               if (numberGridForLine.tracking === 'SERIAL') {
-                setLineEdit(numberGridForLine.lineNo, { serialNumbers: result.finalSerialList, serialAttributes: result.serialAttributes });
+                // Physical qty is derived from however many serials were actually entered —
+                // no need to pre-set/fix it up manually before or after scanning. Direction
+                // (adding vs. removing stock) is whatever it was when the sheet was opened
+                // (v < 0 means we were already removing).
+                const direction = v < 0 ? -1 : 1;
+                const physicalQuantity = ngLineForGrid.systemQuantity + direction * result.finalSerialList.length;
+                setLineEdit(numberGridForLine.lineNo, {
+                  serialNumbers: result.finalSerialList,
+                  serialAttributes: result.serialAttributes,
+                  physicalQuantity,
+                });
               } else {
                 setLineEdit(numberGridForLine.lineNo, {
                   batchNumber: result.finalBatchList[0]?.batchCode || undefined,
