@@ -33,6 +33,7 @@ function toIndustryFlags(item: CountLineDto['item']): IndustryFlags {
     isPerishable: item?.isPerishable ?? false,
     requiresBatchTracking: item?.requiresBatchTracking ?? false,
     requiresSerialTracking: item?.requiresSerialTracking ?? false,
+    serialOptional: item?.serialOptional ?? false,
     hasExpiryDate: !!(item?.isPerishable && item?.requiresBatchTracking),
     isHighValue: false,
     industryType: IndustryType.WAREHOUSE,
@@ -412,7 +413,14 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     if (v !== 0 && (getVarianceReason(l) || '').trim().length === 0) return false;
     if (v !== 0) {
       if (l.item?.requiresBatchTracking && !(getBatch(l) || '').trim()) return false;
-      if (l.item?.requiresSerialTracking) { const s = getSerials(l) ?? []; if (s.length !== Math.abs(v)) return false; }
+      if (l.item?.requiresSerialTracking && !l.item?.serialOptional) {
+        const s = getSerials(l) ?? [];
+        if (s.length !== Math.abs(v)) return false;
+      } else if (l.item?.requiresSerialTracking && l.item?.serialOptional) {
+        // Optional: however many were scanned is fine (0..variance) — the rest is bare quantity.
+        const s = getSerials(l) ?? [];
+        if (s.length > Math.abs(v)) return false;
+      }
       if (l.item?.isPerishable && l.item?.requiresBatchTracking && !getExpiry(l)) return false;
     }
     return true;

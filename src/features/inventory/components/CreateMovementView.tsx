@@ -536,6 +536,15 @@ export const CreateMovementView: React.FC<CreateMovementViewProps> = ({
         if (line.batchNumber) {
           set('error', 'Batch number cannot be provided for serial-tracked items');
         }
+      } else if (trackingType === 'SERIAL_OPTIONAL') {
+        // 0..quantity serials allowed, not required, not forced equal.
+        const q = line.quantity || 0;
+        const serials = line.serialNumbers ?? [];
+        if (serials.length > q) set('error', `Serial count (${serials.length}) cannot exceed quantity (${q})`);
+        else if (serials.length !== new Set(serials).size) set('error', 'Duplicate serials');
+        if (line.batchNumber) {
+          set('error', 'Batch number cannot be provided for serial-tracked items');
+        }
       } else {
         // NONE tracking: no batch or serial should be provided
         if (line.batchNumber) {

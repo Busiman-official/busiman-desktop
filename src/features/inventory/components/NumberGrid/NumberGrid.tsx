@@ -60,6 +60,9 @@ export interface NumberGridProps {
   availableSerials?: SerialResponse[];
   allowOverReceive?: boolean;
   allowPartial?: boolean;
+  /** SELECT mode only, SERIAL_OPTIONAL items: lets the user assign a brand-new serial to a
+   * previously-bare unit as it leaves ("serialize at exit"), alongside picking from the pool. */
+  allowNewSerial?: boolean;
   /** When true (count flow): BatchInputView uses one row only, hide Add/Remove. */
   singleBatchMode?: boolean;
   /** When true (SERIAL + INPUT only): render the one-step carry-forward spreadsheet grid (SerialGridInputView) instead of the legacy textarea+list, resolving and showing the item/variant's SerialAttributeTemplate as extra columns. */
@@ -92,6 +95,7 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
   availableSerials = [],
   allowOverReceive = false,
   allowPartial = false,
+  allowNewSerial = false,
   singleBatchMode,
   useSerialGrid = false,
   itemName,
@@ -299,6 +303,7 @@ export const NumberGrid: React.FC<NumberGridProps> = ({
             initialSelected={initialSerialNumbers}
             allowOverReceive={allowOverReceive}
             allowPartial={allowPartial}
+            allowNewSerial={allowNewSerial}
             onResultChange={handleResultChange}
           />
         )}

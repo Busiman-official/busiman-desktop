@@ -213,6 +213,7 @@ export const ProductDetailPage: React.FC = () => {
       isPerishable: false,
       requiresBatchTracking: false,
       requiresSerialTracking: false,
+      serialOptional: false,
       hasExpiryDate: false,
     };
     return {
@@ -222,6 +223,9 @@ export const ProductDetailPage: React.FC = () => {
       ),
       requiresSerialTracking: Boolean(
         base.requiresSerialTracking || variants.some((v) => v.trackSerialOverride),
+      ),
+      serialOptional: Boolean(
+        base.serialOptional || variants.some((v) => v.serialOptionalOverride),
       ),
     };
   })();

@@ -89,6 +89,8 @@ export interface WizardFormState {
   isPerishable: boolean;
   requiresBatchTracking: boolean;
   requiresSerialTracking: boolean;
+  /** Only meaningful when requiresSerialTracking is true. */
+  serialOptional: boolean;
   hasExpiryDate: boolean;
   isHighValue: boolean;
   /** Whether this product can be booked for after-sales service/repair. Defaults false. */
@@ -106,6 +108,7 @@ const defaultIndustryFlags: IndustryFlags = {
   isPerishable: false,
   requiresBatchTracking: false,
   requiresSerialTracking: false,
+  serialOptional: false,
   hasExpiryDate: false,
   isHighValue: false,
   industryType: IndustryType.ELECTRONICS,
@@ -141,6 +144,7 @@ export const getInitialFormState = (): WizardFormState => ({
   isPerishable: false,
   requiresBatchTracking: false,
   requiresSerialTracking: false,
+  serialOptional: false,
   hasExpiryDate: false,
   isHighValue: false,
   serviceable: false,
@@ -239,6 +243,9 @@ function serializeProductDraft(step: number, form: WizardFormState): string {
 function normalizeExclusiveTrackingFlags(data: WizardFormState): void {
   if (data.requiresBatchTracking && data.requiresSerialTracking) {
     data.requiresSerialTracking = false;
+  }
+  if (data.serialOptional && !data.requiresSerialTracking) {
+    data.serialOptional = false;
   }
 }
 
@@ -347,6 +354,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         next.isHighValue = true;
         next.requiresBatchTracking = false;
         next.requiresSerialTracking = false;
+        next.serialOptional = false;
         next.hasExpiryDate = false;
       }
       return next;
@@ -628,30 +636,20 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
   }, [fieldErrors]);
 
   /** Batch and serial tracking are mutually exclusive (server: validateIndustryFlags). */
-  const setRequiresBatchTracking = useCallback((checked: boolean) => {
+  /** None / required (mandatory serial on every movement) / optional (quantity-tracked at
+   * receipt, serial attached later — typically at sale/service dispatch). */
+  const setSerialTrackingMode = useCallback((mode: 'none' | 'required' | 'optional') => {
     setFormData((prev) => ({
       ...prev,
-      requiresBatchTracking: checked,
-      ...(checked ? { requiresSerialTracking: false } : {}),
-    }));
-    setFieldErrors((prev) => {
-      const next = { ...prev };
-      delete next.requiresBatchTracking;
-      if (checked) delete next.requiresSerialTracking;
-      return next;
-    });
-  }, []);
-
-  const setRequiresSerialTracking = useCallback((checked: boolean) => {
-    setFormData((prev) => ({
-      ...prev,
-      requiresSerialTracking: checked,
-      ...(checked ? { requiresBatchTracking: false } : {}),
+      requiresSerialTracking: mode !== 'none',
+      serialOptional: mode === 'optional',
+      ...(mode !== 'none' ? { requiresBatchTracking: false } : {}),
     }));
     setFieldErrors((prev) => {
       const next = { ...prev };
       delete next.requiresSerialTracking;
-      if (checked) delete next.requiresBatchTracking;
+      delete next.serialOptional;
+      if (mode !== 'none') delete next.requiresBatchTracking;
       return next;
     });
   }, []);
@@ -669,6 +667,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         : {
           requiresBatchTracking: false,
           requiresSerialTracking: false,
+          serialOptional: false,
           hasExpiryDate: false,
         }),
     }));
@@ -823,6 +822,7 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
         isPerishable: formData.isPerishable,
         requiresBatchTracking: behavior.trackingAllowed ? requiresBatch : false,
         requiresSerialTracking: behavior.trackingAllowed ? requiresSerial : false,
+        serialOptional: behavior.trackingAllowed && requiresSerial ? formData.serialOptional : false,
         hasExpiryDate: behavior.trackingAllowed ? formData.hasExpiryDate : false,
         isHighValue: formData.isHighValue,
       },
@@ -1363,25 +1363,24 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     <span className="wizard-summary-label" style={{ display: 'block', margin: '12px 0 6px' }}>
                       Tracking & Handling
                     </span>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                        <Checkbox
-                          checked={formData.requiresBatchTracking}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label htmlFor="wizard-serial-mode-master" style={{ fontSize: 11, color: '#64748b' }}>
+                          Serial tracking
+                        </label>
+                        <Select
+                          id="wizard-serial-mode-master"
+                          value={!formData.requiresSerialTracking ? 'none' : formData.serialOptional ? 'optional' : 'required'}
                           disabled={!resolvedBehavior.trackingAllowed}
-                          onChange={(e) => setRequiresBatchTracking(e.target.checked)}
-                          aria-label="Track batch number"
-                        />
-                        Track batch number
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                        <Checkbox
-                          checked={formData.requiresSerialTracking}
-                          disabled={!resolvedBehavior.trackingAllowed}
-                          onChange={(e) => setRequiresSerialTracking(e.target.checked)}
-                          aria-label="Track serial number"
-                        />
-                        Track serial number
-                      </label>
+                          onChange={(e) => setSerialTrackingMode(e.target.value as 'none' | 'required' | 'optional')}
+                          aria-label="Serial tracking"
+                          style={{ fontSize: 12, height: 28 }}
+                        >
+                          <option value="none">Not tracked</option>
+                          <option value="required">Required (every unit)</option>
+                          <option value="optional">Optional (assign at sale/dispatch)</option>
+                        </Select>
+                      </div>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                         <Checkbox
                           checked={formData.hasExpiryDate}
@@ -1751,24 +1750,23 @@ export const ProductCreationWizard: React.FC<ProductCreationWizardProps> = ({
                     />
                     Perishable
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                    <Checkbox
-                      checked={formData.requiresBatchTracking}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <label htmlFor="wizard-serial-mode-flags" style={{ fontSize: 11, color: '#64748b' }}>
+                      Serial tracking
+                    </label>
+                    <Select
+                      id="wizard-serial-mode-flags"
+                      value={!formData.requiresSerialTracking ? 'none' : formData.serialOptional ? 'optional' : 'required'}
                       disabled={!resolvedBehavior.trackingAllowed}
-                      onChange={(e) => setRequiresBatchTracking(e.target.checked)}
-                      aria-label="Track batch number"
-                    />
-                    Track batch number
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                    <Checkbox
-                      checked={formData.requiresSerialTracking}
-                      disabled={!resolvedBehavior.trackingAllowed}
-                      onChange={(e) => setRequiresSerialTracking(e.target.checked)}
-                      aria-label="Track serial number"
-                    />
-                    Track serial number
-                  </label>
+                      onChange={(e) => setSerialTrackingMode(e.target.value as 'none' | 'required' | 'optional')}
+                      aria-label="Serial tracking"
+                      style={{ fontSize: 12, height: 28 }}
+                    >
+                      <option value="none">Not tracked</option>
+                      <option value="required">Required (every unit)</option>
+                      <option value="optional">Optional (assign at sale/dispatch)</option>
+                    </Select>
+                  </div>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                     <Checkbox
                       checked={formData.hasExpiryDate}

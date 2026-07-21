@@ -50,6 +50,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
 
   const [requiresBatchTracking, setRequiresBatchTracking] = useState(false);
   const [requiresSerialTracking, setRequiresSerialTracking] = useState(false);
+  const [serialOptional, setSerialOptional] = useState(false);
   const [hasExpiryDate, setHasExpiryDate] = useState(false);
   const [serviceable, setServiceable] = useState(false);
 
@@ -86,6 +87,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
     setRequiresSerialTracking(
       Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial),
     );
+    setSerialOptional(Boolean(item.industryFlags?.serialOptional));
     setHasExpiryDate(Boolean(item.industryFlags?.hasExpiryDate ?? false));
     setServiceable(Boolean(item.serviceable));
 
@@ -103,12 +105,21 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
     if (!resolvedBehavior.trackingAllowed) {
       setRequiresBatchTracking(false);
       setRequiresSerialTracking(false);
+      setSerialOptional(false);
       setHasExpiryDate(false);
     } else if (requiresBatchTracking && requiresSerialTracking) {
       // Shouldn't happen with our UI, but keep server-consistent.
       setRequiresSerialTracking(false);
+    } else if (serialOptional && !requiresSerialTracking) {
+      setSerialOptional(false);
     }
-  }, [resolvedBehavior.trackingAllowed, requiresBatchTracking, requiresSerialTracking]);
+  }, [resolvedBehavior.trackingAllowed, requiresBatchTracking, requiresSerialTracking, serialOptional]);
+
+  const setSerialTrackingMode = (mode: 'none' | 'required' | 'optional') => {
+    setRequiresSerialTracking(mode !== 'none');
+    setSerialOptional(mode === 'optional');
+    if (mode !== 'none') setRequiresBatchTracking(false);
+  };
 
   const categoryPreset = useMemo(() => getPresetForCategory(category), [category]);
 
@@ -165,6 +176,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
             false,
           requiresBatchTracking: behavior.trackingAllowed ? requiresBatchTracking : false,
           requiresSerialTracking: behavior.trackingAllowed ? requiresSerialTracking : false,
+          serialOptional: behavior.trackingAllowed && requiresSerialTracking ? serialOptional : false,
           hasExpiryDate: behavior.trackingAllowed ? hasExpiryDate : false,
         },
         images: images.length
@@ -335,38 +347,24 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
                   {resolvedBehavior.helperText}
                 </p>
               ) : null}
-              <p style={{ margin: '6px 0 0', fontSize: 11, color: '#64748b' }}>
-                Batch and serial tracking cannot both be enabled — selecting one turns the
-                other off.
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                  <Checkbox
-                    checked={requiresBatchTracking}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label htmlFor="edit-master-serial-mode" style={{ fontSize: 11, color: '#64748b' }}>
+                    Serial tracking
+                  </label>
+                  <Select
+                    id="edit-master-serial-mode"
+                    value={!requiresSerialTracking ? 'none' : serialOptional ? 'optional' : 'required'}
                     disabled={!resolvedBehavior.trackingAllowed}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setRequiresBatchTracking(checked);
-                      if (checked) setRequiresSerialTracking(false);
-                    }}
-                    aria-label="Track batch number"
-                  />
-                  Track batch number
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                  <Checkbox
-                    checked={requiresSerialTracking}
-                    disabled={!resolvedBehavior.trackingAllowed}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setRequiresSerialTracking(checked);
-                      if (checked) setRequiresBatchTracking(false);
-                    }}
-                    aria-label="Track serial number"
-                  />
-                  Track serial number
-                </label>
+                    onChange={(e) => setSerialTrackingMode(e.target.value as 'none' | 'required' | 'optional')}
+                    aria-label="Serial tracking"
+                    style={{ fontSize: 12, height: 28 }}
+                  >
+                    <option value="none">Not tracked</option>
+                    <option value="required">Required (every unit)</option>
+                    <option value="optional">Optional (assign at sale/dispatch)</option>
+                  </Select>
+                </div>
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                   <Checkbox
@@ -387,6 +385,7 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
                       if (checked) {
                         setRequiresBatchTracking(false);
                         setRequiresSerialTracking(false);
+                        setSerialOptional(false);
                         setHasExpiryDate(false);
                       }
                     }}

@@ -87,6 +87,8 @@ export interface IndustryFlags {
   isPerishable: boolean;
   requiresBatchTracking: boolean;
   requiresSerialTracking: boolean;
+  /** Only meaningful when requiresSerialTracking is true — serial can be attached later (at outbound), not required at receipt. */
+  serialOptional: boolean;
   hasExpiryDate: boolean;
   isHighValue: boolean;
   industryType: IndustryType;
@@ -186,6 +188,7 @@ export interface InventoryVariant {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isDiscontinued?: boolean;
   /** Whether this specific variant can be booked for after-sales service/repair. */
   serviceable?: boolean;
@@ -237,6 +240,7 @@ export interface CreateVariantRequest {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
   /** Defaults to the master's `serviceable` value when omitted. */
@@ -277,6 +281,7 @@ export interface UpdateVariantRequest {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
   /** Defaults to the master's `serviceable` value when omitted. */
@@ -371,6 +376,7 @@ export interface CreateInventoryVariantLine {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   /** Defaults to the master's `serviceable` value when omitted. */
   serviceable?: boolean;
   weightOverride?: number;
@@ -1580,7 +1586,7 @@ export interface CountLineDto {
   lineNo: number;
   itemId: string;
   variantId?: string;
-  item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; isPerishable?: boolean };
+  item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; serialOptional?: boolean; isPerishable?: boolean };
   variant?: { id: string; code: string; name: string };
   systemQuantity: number;
   /** Current on-hand at count location (for display: current − system) */
