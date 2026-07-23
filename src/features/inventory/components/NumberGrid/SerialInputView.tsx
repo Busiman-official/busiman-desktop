@@ -9,6 +9,7 @@ import { inventoryService } from '@/services/inventory.service';
 import type { NumberGridResult } from './NumberGrid';
 import type { SerialValidationItem, SerialValidationStatus } from '../../utils/numberGridUtils';
 import { parseSerialInput, getDuplicateSerials, validateSerialsSync, serialStatusToLabel, parsePastedData } from '../../utils/numberGridUtils';
+import { normalizeSerialNumber, serialNumbersEqual } from '../../utils/serialNumber';
 
 export interface SerialInputViewProps {
   movementType: string;
@@ -60,7 +61,7 @@ export const SerialInputView = forwardRef<HTMLTextAreaElement | null, SerialInpu
     const parsed = useMemo(() => parseSerialInput(serialInput), [serialInput]);
     const dupes = useMemo(() => getDuplicateSerials(parsed), [parsed]);
     const dupeSet = useMemo(() => new Set(dupes), [dupes]);
-    const docSet = useMemo(() => new Set(existingSerialsInDoc.map((s) => s.toUpperCase())), [existingSerialsInDoc]);
+    const docSet = useMemo(() => new Set(existingSerialsInDoc.map((s) => normalizeSerialNumber(s))), [existingSerialsInDoc]);
 
     const validationErrors = useMemo(
       () => validateSerialsSync(parsed, expectedQuantity, existingSerialsInDoc, allowOverReceive, allowPartial),
@@ -183,7 +184,7 @@ export const SerialInputView = forwardRef<HTMLTextAreaElement | null, SerialInpu
 
     const saveEdit = useCallback(() => {
       if (editingIndex === null) return;
-      const newValue = editingValue.trim().toUpperCase();
+      const newValue = normalizeSerialNumber(editingValue);
       if (newValue && newValue !== parsed[editingIndex]) {
         const newParsed = [...parsed];
         newParsed[editingIndex] = newValue;
@@ -395,7 +396,7 @@ export const SerialInputView = forwardRef<HTMLTextAreaElement | null, SerialInpu
                     const lines = serialInput.split('\n').filter(Boolean);
                     if (lines.length > 0) {
                       const lastLine = lines[lines.length - 1].trim();
-                      if (lastLine && !parsed.includes(lastLine.toUpperCase())) {
+                      if (lastLine && !parsed.some((existing) => serialNumbersEqual(existing, lastLine))) {
                         setSerialInput(serialInput + (serialInput.endsWith('\n') ? '' : '\n'));
                       }
                     }

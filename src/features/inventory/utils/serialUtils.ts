@@ -203,11 +203,14 @@ export function filterSerialsByItem(serials: SerialResponse[], itemId?: string):
 export function searchSerials(serials: SerialResponse[], query: string): SerialResponse[] {
   if (!query || query.trim().length === 0) return serials;
   
-  const searchLower = query.trim().toLowerCase();
-  
+  const q = query.trim();
+  if (!q) return serials;
+
+  const searchLower = q.toLowerCase();
+
   return serials.filter((serial) => {
-    // Search serial number
-    if (serial.serialNumber.toLowerCase().includes(searchLower)) return true;
+    // Serial numbers are case-sensitive (5w4f ≠ 5W4F)
+    if (serial.serialNumber.includes(q)) return true;
     
     // Search item name/SKU
     if (serial.item?.name?.toLowerCase().includes(searchLower)) return true;

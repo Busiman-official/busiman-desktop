@@ -94,15 +94,25 @@ function rowSku(item: InventoryItem): string {
 }
 
 function detailIndustryFlags(item: InventoryItem): IndustryFlags {
-  if (item.industryFlags) return item.industryFlags;
   const ic = item.industryClassification;
-  return {
+  const base: IndustryFlags = item.industryFlags ?? {
     industryType: ic?.industryType ?? IndustryType.FMCG,
     isHighValue: ic?.isHighValue ?? false,
     isPerishable: false,
-    requiresBatchTracking: item.variantTracking?.batch ?? false,
-    requiresSerialTracking: item.variantTracking?.serial ?? false,
+    requiresBatchTracking: false,
+    requiresSerialTracking: false,
+    serialOptional: false,
     hasExpiryDate: false,
+  };
+  // Master industryFlags intentionally store tracking as false; OR in variant-level flags.
+  return {
+    ...base,
+    requiresBatchTracking: Boolean(
+      base.requiresBatchTracking || item.variantTracking?.batch,
+    ),
+    requiresSerialTracking: Boolean(
+      base.requiresSerialTracking || item.variantTracking?.serial,
+    ),
   };
 }
 
@@ -175,6 +185,7 @@ function inventoryVariantToWizardRow(v: InventoryVariant): WizardVariantRow {
     trackBatchOverride: v.trackBatchOverride,
     isActive: v.isActive,
     isDiscontinued: v.isDiscontinued,
+    serviceable: v.serviceable,
     weightOverride: v.weightOverride,
     dimensionsOverride: v.dimensionsOverride,
     packSize: v.packSize,
@@ -214,6 +225,7 @@ function variantPatchToUpdateRequest(
     trackBatchOverride: patch.trackBatchOverride,
     isActive: patch.isActive,
     isDiscontinued: patch.isDiscontinued,
+    serviceable: patch.serviceable,
     weightOverride: patch.weightOverride,
     dimensionsOverride: patch.dimensionsOverride,
     packSize: patch.packSize,
@@ -232,6 +244,7 @@ function inventoryVariantsToWizardRows(
     value: v.code || "",
     name: v.name || "",
     hsn: v.hsn,
+    serviceable: v.serviceable,
   }));
 }
 
@@ -272,6 +285,7 @@ function variantPatchToCreateRequest(
     trackBatchOverride: patch.trackBatchOverride,
     isActive: patch.isActive ?? true,
     isDiscontinued: patch.isDiscontinued,
+    serviceable: patch.serviceable,
     weightOverride: patch.weightOverride,
     dimensionsOverride: patch.dimensionsOverride,
     packSize: patch.packSize,
@@ -574,19 +588,12 @@ export const ItemMaster: React.FC = () => {
 
         if (normalizedSubTab) {
           setItemSubTab(normalizedSubTab);
-      } else if (variantId) {
-          setItemSubTab("stock");
-        setSelectedVariantId(variantId);
         } else {
           setItemSubTab("stock");
         }
       }
 
-      if (variantId) {
-        setSelectedVariantId(variantId);
-      } else {
-        setSelectedVariantId(null);
-      }
+      setSelectedVariantId(variantId || null);
     } else {
       // If no itemId in URL, clear selection and return to list view
       setSelectedItemId(null);
@@ -616,12 +623,19 @@ export const ItemMaster: React.FC = () => {
     if (!urlItemId || viewMode !== "details") return;
     if (!selectedItem || selectedItem.id !== urlItemId || !selectedItem.hasVariants) return;
     setExpandedRows(new Set([urlItemId]));
-  }, [searchParams, viewMode, selectedItem]);
+    // Note: selectedItem is checked but not in deps to avoid loops when object reference changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, viewMode, selectedItem?.id, selectedItem?.hasVariants]);
 
   // Resolve selected variant from URL / defaults when item variants load; keep URL in sync on Stock tab
   useEffect(() => {
     if (searchParams.get("serialNumber")) return;
     if (!selectedItemId || !selectedItem) return;
+    // The URL-read effect (above) hasn't caught selectedItemId up to a fresh URL navigation
+    // yet (e.g. Global Search selecting a different item) — operating on selectedItemId here
+    // would read/write against the WRONG item and fight that effect for the itemId param,
+    // causing an infinite URL ping-pong ("Maximum update depth exceeded").
+    if (searchParams.get("itemId") !== selectedItemId) return;
 
     if (!selectedItem.hasVariants) {
       if (selectedVariantId !== null) {
@@ -679,8 +693,9 @@ export const ItemMaster: React.FC = () => {
       if (!variantIdsEqual(urlV, nextId)) {
         setSearchParams(
           (prev) => {
+            // Do not touch "itemId" here — it's already confirmed in sync with selectedItemId
+            // by the guard above; writing it from state was the source of the URL ping-pong.
             const p = new URLSearchParams(prev);
-            p.set("itemId", selectedItemId);
             p.set("variantId", nextId!);
             return p;
           },

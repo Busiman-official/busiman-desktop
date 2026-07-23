@@ -48,6 +48,7 @@ export type ProductVariantDetailsDrawerApplyPayload = {
       | 'trackBatchOverride'
       | 'isActive'
       | 'isDiscontinued'
+      | 'serviceable'
       | 'weightOverride'
       | 'dimensionsOverride'
       | 'packSize'
@@ -116,6 +117,7 @@ export function ProductVariantDetailsDrawer({
   const [trackBatchOverride] = useState<boolean | undefined>(initialVariantRow?.trackBatchOverride);
   const [isActive] = useState<boolean | undefined>(initialVariantRow?.isActive);
   const [isDiscontinued] = useState<boolean | undefined>(initialVariantRow?.isDiscontinued);
+  const [serviceable, setServiceable] = useState<boolean>(initialVariantRow?.serviceable ?? false);
   const [weightOverride, setWeightOverride] = useState<number | undefined>(initialVariantRow?.weightOverride);
   const [dimensionsOverride, setDimensionsOverride] = useState<WizardVariantRow['dimensionsOverride']>(
     initialVariantRow?.dimensionsOverride ? { ...initialVariantRow.dimensionsOverride } : undefined
@@ -162,6 +164,7 @@ export function ProductVariantDetailsDrawer({
       packSize: normalizeOptionalNumber(packSize),
       unitsPerBox: normalizeOptionalNumber(unitsPerBox),
       shelfLifeDaysOverride: normalizeOptionalNumber(shelfLifeDaysOverride),
+      serviceable,
     };
     const base = {
       name: (initialVariantRow.name ?? '').trim(),
@@ -184,6 +187,7 @@ export function ProductVariantDetailsDrawer({
       packSize: normalizeOptionalNumber(initialVariantRow.packSize),
       unitsPerBox: normalizeOptionalNumber(initialVariantRow.unitsPerBox),
       shelfLifeDaysOverride: normalizeOptionalNumber(initialVariantRow.shelfLifeDaysOverride),
+      serviceable: initialVariantRow.serviceable ?? false,
     };
     return JSON.stringify(same) !== JSON.stringify(base);
   }, [
@@ -207,6 +211,7 @@ export function ProductVariantDetailsDrawer({
     packSize,
     unitsPerBox,
     shelfLifeDaysOverride,
+    serviceable,
     hsn,
   ]);
 
@@ -246,6 +251,7 @@ export function ProductVariantDetailsDrawer({
       trackBatchOverride,
       isActive,
       isDiscontinued,
+      serviceable,
       weightOverride,
       dimensionsOverride:
         dimensionsOverride && (dimensionsOverride.length != null || dimensionsOverride.width != null || dimensionsOverride.height != null)
@@ -277,6 +283,7 @@ export function ProductVariantDetailsDrawer({
     trackBatchOverride,
     isActive,
     isDiscontinued,
+    serviceable,
     weightOverride,
     dimensionsOverride,
     packSize,
@@ -333,6 +340,7 @@ export function ProductVariantDetailsDrawer({
                 packSize={packSize}
                 unitsPerBox={unitsPerBox}
                 shelfLifeDaysOverride={shelfLifeDaysOverride}
+                serviceable={serviceable}
                 defaults={defaults}
                 onVariantNameChange={setVariantName}
                 onBarcodeChange={setBarcode}
@@ -352,6 +360,7 @@ export function ProductVariantDetailsDrawer({
                 onPackSizeChange={setPackSize}
                 onUnitsPerBoxChange={setUnitsPerBox}
                 onShelfLifeDaysOverrideChange={setShelfLifeDaysOverride}
+                onServiceableChange={setServiceable}
               />
             </>
           )}

@@ -9,6 +9,7 @@ import { UserRole } from '@/types';
 import { SalesModuleHeader } from '@/features/sales/components/SalesModuleHeader';
 import { IndicatorRipple } from '@/features/sales/components/indicator_ripple';
 import { usePendingApprovalsCount } from '../hooks/usePendingApprovalsCount';
+import { canApproveAttendance } from '../utils/attendanceAccess';
 import {
   defaultTabForRole,
   TAB_APPROVALS,
@@ -31,9 +32,11 @@ export const AttendanceLayout: React.FC = () => {
   const isEmployeeDetail = Boolean(employeeDetailMatch);
 
   const role = user?.role ?? UserRole.EMPLOYEE;
-  const visibleTabs = useMemo(() => tabsForRole(role), [role]);
-  const canApprove =
-    role === UserRole.MANAGER || role === UserRole.HR || role === UserRole.ADMIN;
+  const visibleTabs = useMemo(
+    () => tabsForRole(role, user?.branchDepartments),
+    [role, user?.branchDepartments]
+  );
+  const canApprove = canApproveAttendance(role, user?.branchDepartments);
   const { hasPending } = usePendingApprovalsCount(canApprove);
 
   const headerTabs = useMemo(() => {

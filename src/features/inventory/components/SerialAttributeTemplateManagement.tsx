@@ -284,8 +284,13 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
   const removeOptionFromField = (index: number, optionIndex: number) => {
     const field = fields[index];
     if (field.type === 'select' && field.options) {
+      const removedOption = field.options[optionIndex];
       const options = field.options.filter((_, i) => i !== optionIndex);
-      updateField(index, { options });
+      const updates: Partial<AttributeField> = { options };
+      if (field.defaultValue === removedOption) {
+        updates.defaultValue = undefined;
+      }
+      updateField(index, updates);
     }
   };
 
@@ -297,6 +302,28 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
     } else {
       return 'Branch-specific';
     }
+  };
+
+  const getTemplateCopyLabel = (template: SerialAttributeTemplate): string => {
+    const scope = getScopeLabel(template);
+    const target = template.itemId
+      ? items.find((i) => i.id === template.itemId)?.name || template.itemId
+      : null;
+    const fieldCount = `${template.fields.length} field${template.fields.length === 1 ? '' : 's'}`;
+    return target ? `${scope} — ${target} (${fieldCount})` : `${scope} (${fieldCount})`;
+  };
+
+  const handleCopyFromTemplate = (templateId: string) => {
+    const source = templates.find((t) => t.id === templateId);
+    if (!source) return;
+    if (fields.length > 0) {
+      const proceed = window.confirm(
+        `Replace the ${fields.length} field${fields.length === 1 ? '' : 's'} already added with the ${source.fields.length} field${source.fields.length === 1 ? '' : 's'} from this template?`
+      );
+      if (!proceed) return;
+    }
+    setFields(source.fields.map((f) => ({ ...f, options: f.options ? [...f.options] : undefined })));
+    setEditingFieldIndex(null);
   };
 
   const renderList = () => (
@@ -466,9 +493,28 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
       <div className="form-group">
         <div className="fields-header">
           <label>Fields *</label>
-          <Button variant="secondary" size="sm" onClick={addField}>
-            Add Field
-          </Button>
+          <div className="fields-header-actions">
+            {templates.length > 0 && (
+              <Select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) handleCopyFromTemplate(e.target.value);
+                }}
+              >
+                <option value="">Copy fields from another template...</option>
+                {templates
+                  .filter((t) => t.id !== selectedTemplateId)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {getTemplateCopyLabel(t)}
+                    </option>
+                  ))}
+              </Select>
+            )}
+            <Button variant="secondary" size="sm" onClick={addField}>
+              Add Field
+            </Button>
+          </div>
         </div>
         {fields.length === 0 && (
           <div className="empty-fields">No fields added. Click "Add Field" to add one.</div>
@@ -498,7 +544,7 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                   value={field.type}
                   onChange={(e) => {
                     const type = e.target.value as AttributeField['type'];
-                    const updates: Partial<AttributeField> = { type };
+                    const updates: Partial<AttributeField> = { type, defaultValue: undefined, defaultToday: undefined };
                     if (type !== 'select') {
                       updates.options = undefined;
                     } else if (!field.options) {
@@ -523,6 +569,42 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                   Required
                 </label>
               </div>
+              {field.type !== 'select' && field.type !== 'date' && (
+                <div className="field-input">
+                  <label>Default value</label>
+                  <Input
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    value={field.defaultValue || ''}
+                    onChange={(e) => updateField(index, { defaultValue: e.target.value || undefined })}
+                    placeholder="Pre-filled on the first row"
+                  />
+                </div>
+              )}
+              {field.type === 'date' && (
+                <div className="field-input">
+                  <label>Default value</label>
+                  <Input
+                    type="date"
+                    value={field.defaultValue || ''}
+                    disabled={field.defaultToday}
+                    onChange={(e) => updateField(index, { defaultValue: e.target.value || undefined })}
+                    placeholder="Pre-filled on the first row"
+                  />
+                  <label className="field-checkbox-inline">
+                    <input
+                      type="checkbox"
+                      checked={!!field.defaultToday}
+                      onChange={(e) =>
+                        updateField(index, {
+                          defaultToday: e.target.checked,
+                          defaultValue: e.target.checked ? undefined : field.defaultValue,
+                        })
+                      }
+                    />
+                    Always use today&apos;s date
+                  </label>
+                </div>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -561,6 +643,24 @@ export const SerialAttributeTemplateManagement: React.FC = () => {
                       }}
                     />
                   </div>
+                </div>
+                <div className="field-input" style={{ marginTop: 8 }}>
+                  <label>Default value</label>
+                  <Select
+                    value={field.defaultValue || ''}
+                    onChange={(e) => updateField(index, { defaultValue: e.target.value || undefined })}
+                    disabled={!field.options || field.options.length === 0}
+                  >
+                    <option value="">None</option>
+                    {(field.options || []).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </Select>
+                  {(!field.options || field.options.length === 0) && (
+                    <small className="form-help">Add options above to pick a default.</small>
+                  )}
                 </div>
               </div>
             )}

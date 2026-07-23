@@ -62,6 +62,8 @@ export interface WizardVariantRow {
   trackBatchOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
+  /** Whether this specific variant can be booked for after-sales service/repair. Defaults to the master's setting. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -187,6 +189,7 @@ export function normalizeVariantRows(raw: unknown, productDefaultUnit = 'pcs'): 
       ...(normalizeBoolean(o.trackBatchOverride) != null ? { trackBatchOverride: normalizeBoolean(o.trackBatchOverride) } : {}),
       ...(normalizeBoolean(o.isActive) != null ? { isActive: normalizeBoolean(o.isActive) } : {}),
       ...(normalizeBoolean(o.isDiscontinued) != null ? { isDiscontinued: normalizeBoolean(o.isDiscontinued) } : {}),
+      ...(normalizeBoolean(o.serviceable) != null ? { serviceable: normalizeBoolean(o.serviceable) } : {}),
       ...(normalizeNumber(o.weightOverride) != null ? { weightOverride: normalizeNumber(o.weightOverride) } : {}),
       ...(dimensionsOverride ? { dimensionsOverride } : {}),
       ...(normalizeNumber(o.packSize) != null ? { packSize: normalizeNumber(o.packSize) } : {}),

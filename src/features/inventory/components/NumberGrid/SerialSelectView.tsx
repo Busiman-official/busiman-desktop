@@ -7,6 +7,7 @@ import { Input } from '@/shared/components/ui';
 import type { SerialResponse } from '@/services/inventory.service';
 import type { NumberGridResult } from './NumberGrid';
 import type { ValidationError } from '../../utils/numberGridUtils';
+import { normalizeSerialNumber, serialNumbersEqual } from '../../utils/serialNumber';
 
 export interface SerialSelectViewProps {
   expectedQuantity: number;
@@ -14,6 +15,9 @@ export interface SerialSelectViewProps {
   initialSelected: string[];
   allowOverReceive: boolean;
   allowPartial: boolean;
+  /** SERIAL_OPTIONAL outbound (issue/transfer): lets the user assign a brand-new serial to a
+   * previously-bare unit as it leaves ("serialize at exit"), alongside picking from the pool. */
+  allowNewSerial?: boolean;
   onResultChange: (r: NumberGridResult) => void;
 }
 
@@ -25,24 +29,36 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
       initialSelected,
       allowOverReceive,
       allowPartial,
+      allowNewSerial,
       onResultChange,
     },
     ref
   ) => {
-    const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set(initialSelected.map((s) => s.toUpperCase())));
+    const availableSet = useMemo(
+      () => new Set(availableSerials.map((s) => normalizeSerialNumber(s.serialNumber))),
+      [availableSerials]
+    );
+    const [selectedSet, setSelectedSet] = useState<Set<string>>(
+      () => new Set(initialSelected.map(normalizeSerialNumber).filter((sn) => availableSet.has(sn)))
+    );
+    const [newlyAssigned, setNewlyAssigned] = useState<string[]>(
+      () => initialSelected.map(normalizeSerialNumber).filter((sn) => !availableSet.has(sn))
+    );
+    const [newSerialInput, setNewSerialInput] = useState('');
+    const [newSerialError, setNewSerialError] = useState<string | null>(null);
     const [searchFilter, setSearchFilter] = useState('');
     const [focusedIndex, setFocusedIndex] = useState<number>(-1);
     const listContainerRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Map<number, HTMLLabelElement>>(new Map());
 
     useEffect(() => {
-      setSelectedSet(new Set(initialSelected.map((s) => s.toUpperCase())));
+      setSelectedSet(new Set(initialSelected.map(normalizeSerialNumber)));
     }, [initialSelected.join(',')]);
 
     const filtered = useMemo(() => {
-      const q = searchFilter.trim().toUpperCase();
+      const q = searchFilter.trim();
       if (!q) return availableSerials;
-      return availableSerials.filter((s) => s.serialNumber.toUpperCase().includes(q));
+      return availableSerials.filter((s) => s.serialNumber.includes(q));
     }, [availableSerials, searchFilter]);
 
     // Reset focus when filter changes
@@ -70,12 +86,12 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
       }
     }, [focusedIndex, filtered.length]);
 
-    const finalList = useMemo(() => Array.from(selectedSet), [selectedSet]);
+    const finalList = useMemo(() => [...Array.from(selectedSet), ...newlyAssigned], [selectedSet, newlyAssigned]);
     const n = finalList.length;
 
     const validationErrors = useMemo((): ValidationError[] => {
       const errs: ValidationError[] = [];
-      if (n === 0 && expectedQuantity > 0) {
+      if (n === 0 && expectedQuantity > 0 && !allowPartial) {
         errs.push({ type: 'global', message: 'Select at least one serial', blocking: true });
       } else if (n > 0) {
         if (!allowOverReceive && n > expectedQuantity) {
@@ -107,11 +123,11 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
     }, [result, onResultChange]);
 
     const toggle = (sn: string) => {
-      const u = sn.toUpperCase();
+      const normalized = normalizeSerialNumber(sn);
       setSelectedSet((prev) => {
         const next = new Set(prev);
-        if (next.has(u)) next.delete(u);
-        else next.add(u);
+        if (next.has(normalized)) next.delete(normalized);
+        else next.add(normalized);
         return next;
       });
     };
@@ -159,7 +175,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
             if (allowOverReceive || filtered.length <= expectedQuantity) {
-              const all = new Set(filtered.map((s) => s.serialNumber.toUpperCase()));
+              const all = new Set(filtered.map((s) => normalizeSerialNumber(s.serialNumber)));
               setSelectedSet(all);
             }
           }
@@ -175,7 +191,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
 
     const selectAll = useCallback(() => {
       if (allowOverReceive || filtered.length <= expectedQuantity) {
-        const all = new Set(filtered.map((s) => s.serialNumber.toUpperCase()));
+        const all = new Set(filtered.map((s) => normalizeSerialNumber(s.serialNumber)));
         setSelectedSet(all);
       }
     }, [filtered, allowOverReceive, expectedQuantity]);
@@ -186,7 +202,7 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
 
     const selectFirstN = useCallback(() => {
       if (expectedQuantity > 0) {
-        const firstN = filtered.slice(0, expectedQuantity).map((s) => s.serialNumber.toUpperCase());
+        const firstN = filtered.slice(0, expectedQuantity).map((s) => normalizeSerialNumber(s.serialNumber));
         setSelectedSet(new Set(firstN));
       }
     }, [filtered, expectedQuantity]);
@@ -195,12 +211,32 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
       setSelectedSet((prev) => {
         const next = new Set<string>();
         filtered.forEach((s) => {
-          const u = s.serialNumber.toUpperCase();
-          if (!prev.has(u)) next.add(u);
+          const normalized = normalizeSerialNumber(s.serialNumber);
+          if (!prev.has(normalized)) next.add(normalized);
         });
         return next;
       });
     }, [filtered]);
+
+    const addNewSerial = useCallback(() => {
+      const normalized = normalizeSerialNumber(newSerialInput);
+      if (!normalized) return;
+      if (availableSet.has(normalized) || selectedSet.has(normalized)) {
+        setNewSerialError('Already exists in the pool — select it above instead.');
+        return;
+      }
+      if (newlyAssigned.some((sn) => serialNumbersEqual(sn, normalized))) {
+        setNewSerialError('Already added.');
+        return;
+      }
+      setNewlyAssigned((prev) => [...prev, normalized]);
+      setNewSerialInput('');
+      setNewSerialError(null);
+    }, [newSerialInput, availableSet, selectedSet, newlyAssigned]);
+
+    const removeNewSerial = useCallback((sn: string) => {
+      setNewlyAssigned((prev) => prev.filter((s) => s !== sn));
+    }, []);
 
     return (
       <div className="number-grid-serial-select">
@@ -270,8 +306,8 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
             aria-label="Available serial numbers"
           >
             {filtered.map((s, index) => {
-              const u = s.serialNumber.toUpperCase();
-              const checked = selectedSet.has(u);
+              const normalized = normalizeSerialNumber(s.serialNumber);
+              const checked = selectedSet.has(normalized);
               const isFocused = index === focusedIndex;
               return (
                 <label
@@ -299,6 +335,62 @@ export const SerialSelectView = forwardRef<HTMLInputElement | null, SerialSelect
             {filtered.length === 0 && <div className="number-grid-empty">No serials available</div>}
           </div>
         </div>
+        {allowNewSerial && (
+          <div className="number-grid-field">
+            <label>Assign new serial (unit leaving without one, tag it now)</label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <Input
+                value={newSerialInput}
+                onChange={(e) => { setNewSerialInput(e.target.value); setNewSerialError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addNewSerial();
+                  }
+                }}
+                placeholder="Scan or type a new serial number"
+              />
+              <button type="button" className="number-grid-action-btn" onClick={addNewSerial}>
+                Add
+              </button>
+            </div>
+            {newSerialError && (
+              <div className="number-grid-field-error" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '4px' }}>
+                {newSerialError}
+              </div>
+            )}
+            {newlyAssigned.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                {newlyAssigned.map((sn) => (
+                  <span
+                    key={sn}
+                    className="number-grid-serial-chip"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      background: '#ecfdf5',
+                      border: '1px solid #a7f3d0',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {sn}
+                    <button
+                      type="button"
+                      onClick={() => removeNewSerial(sn)}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', fontWeight: 700 }}
+                      aria-label={`Remove ${sn}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }

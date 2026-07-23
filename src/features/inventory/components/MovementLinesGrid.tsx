@@ -9,7 +9,7 @@ import { Button, Input, Select } from '@/shared/components/ui';
 import { confirmWithFocusRecovery } from '@/shared/utils/dialog';
 import { getNumberGridMode } from '../utils/numberGridUtils';
 import type { BatchRow } from '../utils/numberGridUtils';
-import { getTrackingType, type TrackingType } from '../utils/trackingUtils';
+import { getTrackingType, isSerialFamily, type TrackingType } from '../utils/trackingUtils';
 import { movementItemPickerLabel } from '../utils/itemDisplaySku';
 import { NumberGrid } from './NumberGrid';
 import './MovementLinesGrid.css';
@@ -295,13 +295,13 @@ function MovementLinesGridInner(
         return p.join(', ');
       }
       return '— Click to enter batch';
-    } else if (trackingType === 'SERIAL') {
+    } else if (isSerialFamily(trackingType)) {
       if (line.serialNumbers && line.serialNumbers.length > 0) {
         return `S: ${line.serialNumbers.length} serials`;
       }
-      return '— Click to enter serials';
+      return trackingType === 'SERIAL_OPTIONAL' ? '— Click to add serials (optional)' : '— Click to enter serials';
     }
-    
+
     // NONE tracking
     return '-';
   };
@@ -309,7 +309,7 @@ function MovementLinesGridInner(
   const getBatchSerialMode = (item: InventoryItem | undefined): 'batch' | 'serial' | null => {
     const t = getTrackingTypeForItem(item);
     if (t === 'BATCH') return 'batch';
-    if (t === 'SERIAL') return 'serial';
+    if (isSerialFamily(t)) return 'serial';
     return null;
   };
 
@@ -1034,6 +1034,8 @@ function MovementLinesGridInner(
         if (!ln || !it || !batchSerialMode) return null;
 
         const trackingType = batchSerialMode === 'batch' ? 'BATCH' : 'SERIAL';
+        const itemTrackingType = getTrackingTypeForItem(it);
+        const isSerialOptional = itemTrackingType === 'SERIAL_OPTIONAL';
         const { mode: inputMode } = getNumberGridMode(movementType, ln.quantity ?? 0);
         const locationId = inputMode === 'SELECT' ? (getEffectiveFromId(ln) || undefined) : undefined;
 
@@ -1062,13 +1064,19 @@ function MovementLinesGridInner(
             existingSerialsInDoc={existingSerialsInDoc}
             availableSerials={inputMode === 'SELECT' && trackingType === 'SERIAL' ? availableSerialsForSelect : []}
             allowOverReceive={false}
-            allowPartial={false}
+            allowPartial={isSerialOptional}
+            allowNewSerial={isSerialOptional && inputMode === 'SELECT'}
             industryFlags={(it.industryFlags ?? {}) as import('@/services/inventory.service').IndustryFlags}
             fetchAvailableForBatch={fetchAvailableForBatch}
             onApply={(r) => {
               const oldQty = ln.quantity || 0;
               if (trackingType === 'SERIAL') {
-                updateLine(idx, { serialNumbers: r.finalSerialList, quantity: r.derivedQuantity });
+                // SERIAL_OPTIONAL: quantity is set independently (bare + serialized units) —
+                // only mandatory SERIAL forces quantity to equal the serial count.
+                updateLine(idx, {
+                  serialNumbers: r.finalSerialList,
+                  ...(isSerialOptional ? {} : { quantity: r.derivedQuantity }),
+                });
               } else {
                 updateLine(idx, {
                   batchNumber: r.finalBatchList[0]?.batchCode,

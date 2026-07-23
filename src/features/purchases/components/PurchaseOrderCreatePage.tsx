@@ -1,12 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Input, Select, Textarea } from '@/shared/components/ui';
+import { useNavigate } from 'react-router-dom';
+import { Button, Input, SearchCombobox, Select, Textarea } from '@/shared/components/ui';
+import { Tooltip } from '@/shared/components/ui/Tooltip';
+import { ConfirmDialog } from '@/shared/components/modals/ConfirmDialog';
 import {
   inventoryService,
-  catalogRows,
   type CatalogVariantRow,
   type Location,
   LocationType,
 } from '@/services/inventory.service';
+import { ProductSearchCombobox } from '@/features/inventory/components/product-search';
+import { branchService } from '@/services/branch.service';
+import type { Branch } from '@/types';
 import {
   purchaseService,
   type PurchaseOrder,
@@ -14,6 +19,22 @@ import {
   type PurchaseOrderPriority,
   type PurchaseOrderSupplierContact,
 } from '@/services/purchase.service';
+import { QuickAddPartyDrawer } from './QuickAddPartyDrawer';
+import {
+  catalogCostPrice,
+  enrichPurchaseLine,
+  type PurchaseLineUnitOption,
+} from '../utils/purchaseLineUnits';
+import {
+  PAYMENT_TERM_OPTIONS,
+  buildSupplierSnapshot,
+  filterSuppliers,
+  formatInr,
+  paymentLabelToValue,
+  resolveSupplierIdFromName,
+  type SupplierRecord,
+} from '../utils/supplierDirectory';
+import { usePurchaseSupplierCatalog } from '../hooks/usePurchaseSupplierCatalog';
 import './PurchaseOrderCreatePage.css';
 
 type DraftLine = {
@@ -24,73 +45,81 @@ type DraftLine = {
   sku: string;
   quantityOrdered: number;
   unitId: string;
+  unitOptions: PurchaseLineUnitOption[];
   expectedPrice: number;
   taxPercent: number;
   discountPercent: number;
 };
 
+function selectInputOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.select();
+}
+
+function parseDecimalInput(raw: string): number | null {
+  const t = raw.trim();
+  if (t === '' || t === '-' || t === '.') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function quantityInputValue(qty: number): string {
+  if (!qty || qty <= 0) return '';
+  return String(qty);
+}
+
+function priceInputValue(price: number): string {
+  if (!price || price <= 0) return '';
+  return String(price);
+}
+
+function commitQtyForLine(
+  variantId: string,
+  raw: string,
+  updateLine: (variantId: string, patch: Partial<DraftLine>) => void,
+  removeLine: (variantId: string) => void
+): void {
+  const parsed = parseDecimalInput(raw);
+  if (parsed == null || parsed <= 0) {
+    removeLine(variantId);
+    return;
+  }
+  updateLine(variantId, { quantityOrdered: parsed });
+}
+
+function decrementQtyForLine(
+  variantId: string,
+  currentQty: number,
+  updateLine: (variantId: string, patch: Partial<DraftLine>) => void,
+  removeLine: (variantId: string) => void
+): void {
+  const next = Math.max(0, Number(currentQty) || 0) - 1;
+  if (next <= 0) {
+    removeLine(variantId);
+    return;
+  }
+  updateLine(variantId, { quantityOrdered: next });
+}
+
 type Props = {
   branchId?: string | null;
   supplierOptions: Array<{ id: string; name: string }>;
+  orderRows: PurchaseOrder[];
+  initialSupplierId?: string | null;
   onCancel: () => void;
-  onSaved: (order: PurchaseOrder) => void;
+  onSaved: (order: PurchaseOrder, mode: 'draft' | 'send' | 'confirm') => void;
+  /** Renders Confirm order (and popover) in the module navbar trailing slot. */
+  onNavbarTrailingChange?: (node: React.ReactNode | null) => void;
 };
 
-const PAYMENT_TERM_OPTIONS = [
-  { value: 'due_on_receipt', label: 'Due on receipt' },
-  { value: 'net_7', label: 'Net 7' },
-  { value: 'net_15', label: 'Net 15' },
-  { value: 'net_30', label: 'Net 30' },
-  { value: 'net_45', label: 'Net 45' },
-  { value: 'net_60', label: 'Net 60' },
-  { value: 'advance', label: 'Advance' },
-];
-
-function formatInr(n: number): string {
-  const v = Number.isFinite(n) ? n : 0;
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(v);
+function formatDateIn(v: string): string {
+  if (!v) return '';
+  const [y, m, d] = v.split('-');
+  if (!y || !m || !d) return v;
+  return `${d.padStart(2, '0')} / ${m.padStart(2, '0')} / ${y}`;
 }
 
-function stableHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
-function sanitizeEmailLocal(s: string): string {
-  return s.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 48) || 'vendor';
-}
-
-function buildSupplierSnapshot(
-  supplierId: string,
-  supplierName: string,
-  orderPaymentTerms: string
-): PurchaseOrderSupplierContact {
-  if (!supplierId.trim()) {
-    return {
-      contactPerson: '—',
-      phone: '—',
-      email: '—',
-      gstin: '—',
-      defaultPaymentTerms: orderPaymentTerms ? PAYMENT_TERM_OPTIONS.find((o) => o.value === orderPaymentTerms)?.label || orderPaymentTerms : '—',
-      outstandingDues: 0,
-    };
-  }
-  const h = stableHash(`${supplierId}|${supplierName}`);
-  const dues = h % 11 === 0 ? (h % 890_120) / 100 : 0;
-  const panish = ((h >>> 0) % 1e9).toString().padStart(9, '0').slice(0, 9);
-  const label = supplierName.trim() || supplierId;
-  return {
-    contactPerson: `Accounts — ${label}`.slice(0, 200),
-    phone: `+91 98${(h % 90_000_000).toString().padStart(8, '0')}`,
-    email: `${sanitizeEmailLocal(label)}.po@supplier.local`,
-    gstin: `22AAAAA${panish}A1Z5`.slice(0, 15),
-    defaultPaymentTerms:
-      PAYMENT_TERM_OPTIONS.find((o) => o.value === orderPaymentTerms)?.label || orderPaymentTerms || 'Net 30 days',
-    outstandingDues: dues,
-  };
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function clampPct(n: number): number {
@@ -111,57 +140,182 @@ function lineMath(qty: number, unitPrice: number, taxPct: number, discPct: numbe
   return { gross, discountAmt, taxAmt, lineTotal };
 }
 
-function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let inQ = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
-    if (ch === '"') {
-      inQ = !inQ;
-      continue;
-    }
-    if (ch === ',' && !inQ) {
-      out.push(cur.trim());
-      cur = '';
-      continue;
-    }
-    cur += ch;
-  }
-  out.push(cur.trim());
-  return out;
-}
-
-function isMongoId(s: string): boolean {
-  return /^[a-fA-F0-9]{24}$/.test(String(s).trim());
+function daysAgoLabel(ts: number): string {
+  const days = Math.max(0, Math.floor((Date.now() - ts) / 86400000));
+  if (days === 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
 }
 
 type LocalAttachment = { id: string; fileName: string; size?: number; mimeType?: string };
 
-export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOptions, onCancel, onSaved }) => {
+type FieldErrors = {
+  supplier?: string;
+  deliveryLocation?: string;
+  expectedDelivery?: string;
+};
+
+export const PurchaseOrderCreatePage: React.FC<Props> = ({
+  branchId,
+  supplierOptions,
+  orderRows,
+  initialSupplierId,
+  onCancel,
+  onSaved,
+  onNavbarTrailingChange,
+}) => {
+  const navigate = useNavigate();
   const [poNumber, setPoNumber] = useState('—');
+  const [savedOrderId, setSavedOrderId] = useState<string | null>(null);
   const [supplierId, setSupplierId] = useState('');
   const [supplierSearch, setSupplierSearch] = useState('');
-  const [supplierSnapshot, setSupplierSnapshot] = useState<PurchaseOrderSupplierContact>(buildSupplierSnapshot('', '', ''));
-  const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
+  const [extraParties, setExtraParties] = useState<SupplierRecord[]>([]);
+  const [partyDrawerOpen, setPartyDrawerOpen] = useState(false);
+  const [partyDraftName, setPartyDraftName] = useState('');
+  const [supplierSnapshot, setSupplierSnapshot] = useState<PurchaseOrderSupplierContact>(
+    buildSupplierSnapshot('', '', 'net_30')
+  );
+  const [paymentTerms, setPaymentTerms] = useState('net_30');
+  const [editContactOpen, setEditContactOpen] = useState(false);
+  const [orderDate] = useState(todayIso());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
   const [deliveryLocationId, setDeliveryLocationId] = useState('');
-  const [paymentTerms, setPaymentTerms] = useState('net_30');
   const [priority, setPriority] = useState<PurchaseOrderPriority>('normal');
-  const [internalNotes, setInternalNotes] = useState('');
   const [supplierMessage, setSupplierMessage] = useState('');
   const [shippingFreight, setShippingFreight] = useState(0);
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [knownOrders, setKnownOrders] = useState<PurchaseOrder[]>(orderRows);
   const [variantSearch, setVariantSearch] = useState('');
-  const [suggestions, setSuggestions] = useState<CatalogVariantRow[]>([]);
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [toast, setToast] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [lineFocusTarget, setLineFocusTarget] = useState<{ variantId: string; field: 'qty' | 'price' } | null>(
+    null
+  );
+  const [supplierListOpen, setSupplierListOpen] = useState(false);
+  const [variantListOpen, setVariantListOpen] = useState(false);
+  const supplierListOpenRef = useRef(false);
+  const variantListOpenRef = useRef(false);
+  const deliveryLocationRef = useRef<HTMLSelectElement>(null);
+  const expectedDeliveryRef = useRef<HTMLInputElement>(null);
+  const variantSearchRef = useRef<HTMLInputElement>(null);
+  const supplierSearchRef = useRef<HTMLInputElement>(null);
+  const qtyInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const priceInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  const focusDeliveryLocation = useCallback(() => {
+    window.requestAnimationFrame(() => deliveryLocationRef.current?.focus());
+  }, []);
+
+  const focusExpectedDelivery = useCallback(() => {
+    window.requestAnimationFrame(() => expectedDeliveryRef.current?.focus());
+  }, []);
+
+  const focusVariantSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = variantSearchRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+  }, []);
+
+  const focusSupplierSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = supplierSearchRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+  }, []);
+
+  const applyDeliveryLocation = useCallback(
+    (next: string) => {
+      setDeliveryLocationId(next);
+      if (next) focusExpectedDelivery();
+    },
+    [focusExpectedDelivery]
+  );
+
+  const focusLineQty = useCallback((variantId: string) => {
+    setLineFocusTarget({ variantId, field: 'qty' });
+  }, []);
+
+  const focusLinePrice = useCallback((variantId: string) => {
+    setLineFocusTarget({ variantId, field: 'price' });
+  }, []);
+
+  const isActiveQtyInput = useCallback((): boolean => {
+    const active = document.activeElement;
+    if (!active) return false;
+    for (const el of qtyInputRefs.current.values()) {
+      if (el === active) return true;
+    }
+    return false;
+  }, []);
+
+  const isActivePriceInput = useCallback((): boolean => {
+    const active = document.activeElement;
+    if (!active) return false;
+    for (const el of priceInputRefs.current.values()) {
+      if (el === active) return true;
+    }
+    return false;
+  }, []);
+
+  const isSupplierSearchInput = useCallback((el: Element | null): el is HTMLInputElement => {
+    if (!el || !(el instanceof HTMLInputElement)) return false;
+    return el === supplierSearchRef.current || el.id === 'po-supplier-search';
+  }, []);
+
+  const isVariantSearchInput = useCallback((el: Element | null): el is HTMLInputElement => {
+    if (!el || !(el instanceof HTMLInputElement)) return false;
+    return el === variantSearchRef.current;
+  }, []);
+
+  const isComboboxListOpen = (el: HTMLInputElement): boolean => el.getAttribute('aria-expanded') === 'true';
+
+  const handleSupplierOpenChange = useCallback((open: boolean) => {
+    supplierListOpenRef.current = open;
+    setSupplierListOpen(open);
+  }, []);
+
+  const handleVariantOpenChange = useCallback((open: boolean) => {
+    variantListOpenRef.current = open;
+    setVariantListOpen(open);
+  }, []);
+  const [footerEmailOverride, setFooterEmailOverride] = useState('');
+  const [dismissOpenPoAlert, setDismissOpenPoAlert] = useState(false);
+  const [urgentHintDismissed, setUrgentHintDismissed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const csvInputRef = useRef<HTMLInputElement>(null);
+  const { supplierDirectory, saveSupplier } = usePurchaseSupplierCatalog(branchId, knownOrders);
+
+  const supplierItems = useMemo(
+    () => [...supplierDirectory, ...extraParties],
+    [supplierDirectory, extraParties]
+  );
+
+  const initialSupplierAppliedRef = useRef(false);
 
   useEffect(() => {
+    if (initialSupplierAppliedRef.current) return;
+    const sid = initialSupplierId?.trim();
+    if (!sid) return;
+    const match = supplierItems.find((s) => s.id === sid);
+    if (match) {
+      setSupplierId(match.id);
+      setSupplierSearch(match.name);
+      initialSupplierAppliedRef.current = true;
+    }
+  }, [initialSupplierId, supplierItems]);
+
+  const refreshPoNumber = useCallback(() => {
     purchaseService
       .getNextPoNumber(branchId)
       .then((v) => setPoNumber(v.poNumber))
@@ -169,65 +323,92 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
   }, [branchId]);
 
   useEffect(() => {
+    refreshPoNumber();
+  }, [refreshPoNumber]);
+
+  useEffect(() => {
+    setKnownOrders(orderRows);
+    if (orderRows.length === 0 && branchId) {
+      purchaseService
+        .listOrders({ page: 1, pageSize: 100 }, branchId)
+        .then((data) => setKnownOrders(data.rows))
+        .catch(() => undefined);
+    }
+  }, [orderRows, branchId]);
+
+  useEffect(() => {
     let cancelled = false;
-    inventoryService
-      .getAllLocations({ branchId: branchId || undefined, isActive: true })
-      .then((rows) => {
-        if (!cancelled) setLocations(rows.filter((l) => l.isActive));
+    Promise.all([
+      inventoryService.getAllLocations({ branchId: branchId || undefined, isActive: true }),
+      branchService.getBranches({ isActive: true }),
+    ])
+      .then(([locRows, branchRows]) => {
+        if (cancelled) return;
+        const activeLocs = locRows.filter((l) => l.isActive);
+        setLocations(activeLocs);
+        setBranches(branchRows);
+        const wh = activeLocs.filter((l) => l.type === LocationType.WAREHOUSE);
+        const defaultLoc = (wh.length ? wh : activeLocs)[0];
+        if (defaultLoc && !deliveryLocationId) setDeliveryLocationId(defaultLoc.id);
       })
       .catch(() => {
-        if (!cancelled) setLocations([]);
+        if (!cancelled) {
+          setLocations([]);
+          setBranches([]);
+        }
       });
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- default location once
   }, [branchId]);
 
   useEffect(() => {
-    const q = variantSearch.trim();
-    if (q.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    inventoryService
-      .getCatalog({
-        search: q,
-        branchId: branchId || undefined,
-        isActive: true,
-        page: 1,
-        limit: 8,
-      })
-      .then((data) => {
-        if (!cancelled) setSuggestions(catalogRows(data));
-      })
-      .catch(() => {
-        if (!cancelled) setSuggestions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId, variantSearch]);
+    const rec =
+      supplierItems.find((s) => s.id === supplierId) ||
+      supplierItems.find((s) => s.name.toLowerCase() === supplierSearch.trim().toLowerCase());
+    const name = rec?.name || supplierSearch;
+    const sid = rec?.id || supplierId;
+    setSupplierSnapshot(
+      buildSupplierSnapshot(sid, name, paymentTerms, footerEmailOverride || undefined, rec)
+    );
+  }, [supplierId, supplierSearch, supplierItems, paymentTerms, footerEmailOverride]);
 
-  useEffect(() => {
-    const name = supplierOptions.find((s) => s.id === supplierId)?.name || supplierSearch;
-    setSupplierSnapshot(buildSupplierSnapshot(supplierId, name, paymentTerms));
-  }, [supplierId, supplierSearch, supplierOptions, paymentTerms]);
+  const branchNameById = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
 
   const locationOptions = useMemo(() => {
     const wh = locations.filter((l) => l.type === LocationType.WAREHOUSE);
     const list = wh.length ? wh : locations;
-    return list.map((l) => ({
-      value: l.id,
-      label: `${l.code} — ${l.name}`,
-    }));
-  }, [locations]);
+    return list.map((l) => {
+      const branchLabel = branchNameById.get(l.branchId) || 'Branch';
+      const city = branchLabel.split(/[,\-–]/)[0]?.trim() || branchLabel;
+      return {
+        value: l.id,
+        label: `${city} — ${l.name}`,
+      };
+    });
+  }, [locations, branchNameById]);
 
-  const filteredSuppliers = useMemo(() => {
-    const q = supplierSearch.trim().toLowerCase();
-    if (!q) return supplierOptions.slice(0, 12);
-    return supplierOptions.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)).slice(0, 12);
-  }, [supplierOptions, supplierSearch]);
+  const recentSuppliers = useMemo(() => {
+    return [...supplierItems]
+      .sort((a, b) => (b.lastOrderedAt || 0) - (a.lastOrderedAt || 0))
+      .slice(0, 5);
+  }, [supplierItems]);
+
+  const resolvedSupplierId = useMemo(() => {
+    if (supplierId.trim()) return supplierId.trim();
+    const name = supplierSearch.trim();
+    if (!name) return '';
+    return resolveSupplierIdFromName(name);
+  }, [supplierId, supplierSearch]);
+
+  const openDraftForSupplier = useMemo(() => {
+    const sid = supplierId.trim() || resolvedSupplierId;
+    if (!sid || dismissOpenPoAlert) return null;
+    return (
+      knownOrders.find((o) => o.status === 'draft' && o.supplierId === sid && o.id !== savedOrderId) || null
+    );
+  }, [supplierId, resolvedSupplierId, knownOrders, dismissOpenPoAlert, savedOrderId]);
 
   const orderTotals = useMemo(() => {
     let subtotal = 0;
@@ -247,19 +428,37 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
       linesSum += lineTotal;
     }
     const freight = Math.max(0, Number(shippingFreight) || 0);
-    const grandTotal = linesSum + freight;
-    return { subtotal, totalDiscount, totalTax, grandTotal, freight, linesSum };
+    return { subtotal, totalDiscount, totalTax, grandTotal: linesSum + freight, freight, linesSum };
   }, [lines, shippingFreight]);
 
-  const footerStats = useMemo(() => {
-    const totalItems = lines.length;
-    const totalQty = lines.reduce((s, l) => s + Number(l.quantityOrdered || 0), 0);
-    return { totalItems, totalQty, grandTotal: orderTotals.grandTotal };
-  }, [lines, orderTotals.grandTotal]);
+  const isDeliveryUrgent = useMemo(() => {
+    if (!expectedDeliveryDate) return false;
+    const d = new Date(`${expectedDeliveryDate}T12:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diff = (d.getTime() - today.getTime()) / 86400000;
+    return diff >= 0 && diff <= 2;
+  }, [expectedDeliveryDate]);
+
+  const hasFormData = Boolean(
+    supplierId ||
+      supplierSearch.trim() ||
+      lines.length ||
+      expectedDeliveryDate ||
+      supplierMessage.trim() ||
+      attachments.length ||
+      shippingFreight > 0
+  );
+
+  const canConfirm = Boolean(resolvedSupplierId && lines.length > 0 && expectedDeliveryDate);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 3200);
+  };
 
   const rowFromCatalog = useCallback((row: CatalogVariantRow): DraftLine => {
-    const unit = 'PCS';
-    const price = row.costPrice ?? row.sellingPrice ?? 0;
+    const fallbackUnit = 'pcs';
     return {
       variantId: row.variantId,
       itemId: row.productId,
@@ -267,33 +466,82 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
       variantName: row.variantName,
       sku: row.sku,
       quantityOrdered: 1,
-      unitId: unit,
-      expectedPrice: Number(price) || 0,
+      unitId: fallbackUnit,
+      unitOptions: [{ unitCode: fallbackUnit, factorToBase: 1 }],
+      expectedPrice: catalogCostPrice(row),
       taxPercent: 0,
       discountPercent: 0,
     };
   }, []);
 
-  const addVariant = useCallback(
-    (row: CatalogVariantRow) => {
-      setLines((prev) => {
-        const i = prev.findIndex((l) => l.variantId === row.variantId);
-        if (i >= 0) {
-          const next = [...prev];
-          next[i] = { ...next[i], quantityOrdered: next[i].quantityOrdered + 1 };
-          return next;
-        }
-        return [...prev, rowFromCatalog(row)];
-      });
-      setVariantSearch('');
-      setSuggestions([]);
+  const enrichLineFromInventory = useCallback(
+    async (
+      line: DraftLine,
+      catalogRow?: CatalogVariantRow,
+      options?: { keepExpectedPrice?: boolean }
+    ): Promise<DraftLine> => {
+      try {
+        return await enrichPurchaseLine(line, catalogRow, options);
+      } catch {
+        return line;
+      }
     },
-    [rowFromCatalog]
+    []
   );
 
-  const addFirstSuggestion = () => {
-    if (suggestions[0]) addVariant(suggestions[0]);
-  };
+  const addVariant = useCallback(
+    async (row: CatalogVariantRow) => {
+      const variantId = row.variantId;
+      let incremented = false;
+      setLines((prev) => {
+        const i = prev.findIndex((l) => l.variantId === variantId);
+        if (i < 0) return prev;
+        incremented = true;
+        const next = [...prev];
+        next[i] = { ...next[i], quantityOrdered: next[i].quantityOrdered + 1 };
+        return next;
+      });
+      setVariantSearch('');
+      if (incremented) {
+        focusLineQty(variantId);
+        return;
+      }
+      const enriched = await enrichLineFromInventory(rowFromCatalog(row), row);
+      setLines((prev) => {
+        if (prev.some((l) => l.variantId === variantId)) return prev;
+        return [...prev, enriched];
+      });
+      focusLineQty(variantId);
+    },
+    [enrichLineFromInventory, focusLineQty, rowFromCatalog]
+  );
+
+  useEffect(() => {
+    if (!lineFocusTarget) return;
+    const { variantId, field } = lineFocusTarget;
+    if (!lines.some((l) => l.variantId === variantId)) return;
+
+    const refMap = field === 'qty' ? qtyInputRefs : priceInputRefs;
+    let attempts = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const el = refMap.current.get(variantId);
+      if (el) {
+        el.focus();
+        el.select();
+        setLineFocusTarget(null);
+        return;
+      }
+      attempts += 1;
+      if (attempts < 12) {
+        raf = window.requestAnimationFrame(tryFocus);
+      } else {
+        setLineFocusTarget(null);
+      }
+    };
+    raf = window.requestAnimationFrame(tryFocus);
+    return () => window.cancelAnimationFrame(raf);
+  }, [lineFocusTarget, lines]);
 
   const updateLine = (variantId: string, patch: Partial<DraftLine>) => {
     setLines((prev) => prev.map((l) => (l.variantId === variantId ? { ...l, ...patch } : l)));
@@ -303,356 +551,529 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
     setLines((prev) => prev.filter((l) => l.variantId !== variantId));
   };
 
-  const pickSupplier = (s: { id: string; name: string }) => {
-    setSupplierId(s.id);
-    setSupplierSearch(s.name);
-  };
+  const pickSupplier = useCallback(
+    (s: SupplierRecord) => {
+      setSupplierId(s.id);
+      setSupplierSearch(s.name);
+      setDismissOpenPoAlert(false);
+      const term = PAYMENT_TERM_OPTIONS.find((o) => o.label === s.paymentTermsLabel)?.value;
+      if (term) setPaymentTerms(term);
+      focusDeliveryLocation();
+    },
+    [focusDeliveryLocation]
+  );
 
-  const onSupplierInputChange = (v: string) => {
+  const onSupplierValueChange = (v: string) => {
     setSupplierSearch(v);
-    const exact = supplierOptions.find((s) => s.name.toLowerCase() === v.trim().toLowerCase());
-    if (exact) setSupplierId(exact.id);
-    else if (!supplierOptions.some((s) => s.id === supplierId && s.name === v)) setSupplierId('');
+    const exact = supplierItems.find((s) => s.name.toLowerCase() === v.trim().toLowerCase());
+    if (exact) {
+      setSupplierId(exact.id);
+      focusDeliveryLocation();
+    } else if (!supplierItems.some((s) => s.id === supplierId && s.name === v)) setSupplierId('');
   };
 
-  const onFilesSelected = (list: FileList | null) => {
-    if (!list?.length) return;
-    const next: LocalAttachment[] = [];
-    for (let i = 0; i < list.length; i += 1) {
-      const f = list[i];
-      next.push({
-        id: `${f.name}-${f.size}-${Date.now()}-${i}`,
-        fileName: f.name,
-        size: f.size,
-        mimeType: f.type,
-      });
-    }
-    setAttachments((prev) => [...prev, ...next]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const removeAttachment = (id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
-  };
-
-  const importCsv = async (file: File | null) => {
-    if (!file) return;
-    setError(null);
-    const text = await file.text();
-    const rawLines = text.split(/\r?\n/).filter((l) => l.trim());
-    if (rawLines.length < 2) {
-      setError('CSV must include a header row and at least one data row.');
-      if (csvInputRef.current) csvInputRef.current.value = '';
-      return;
-    }
-    const header = parseCsvLine(rawLines[0]).map((h) => h.toLowerCase().replace(/\s+/g, ''));
-    const col = (name: string) => header.indexOf(name);
-    const idxVariant = col('variantid');
-    const idxSku = col('sku');
-    const idxQty = col('qty') >= 0 ? col('qty') : col('quantity');
-    const idxUnit = col('unit');
-    const idxPrice = col('unitprice') >= 0 ? col('unitprice') : col('price');
-    const idxTax = col('taxpercent') >= 0 ? col('taxpercent') : col('tax');
-    const idxDisc = col('discountpercent') >= 0 ? col('discountpercent') : col('discount');
-
-    const errors: string[] = [];
-    const newLines: DraftLine[] = [];
-
-    for (let r = 1; r < rawLines.length; r += 1) {
-      const cells = parseCsvLine(rawLines[r]);
-      if (!cells.some((c) => c)) continue;
-      try {
-        let variantId = idxVariant >= 0 ? cells[idxVariant]?.trim() : '';
-        const sku = idxSku >= 0 ? cells[idxSku]?.trim() : '';
-        const qtyRaw = idxQty >= 0 ? cells[idxQty] : '1';
-        const qty = Math.max(0.000001, Number(qtyRaw) || 1);
-        const unit = idxUnit >= 0 ? cells[idxUnit]?.trim() || 'PCS' : 'PCS';
-        const price = idxPrice >= 0 ? Math.max(0, Number(cells[idxPrice]) || 0) : 0;
-        const taxP = idxTax >= 0 ? clampPct(Number(cells[idxTax]) || 0) : 0;
-        const discP = idxDisc >= 0 ? clampPct(Number(cells[idxDisc]) || 0) : 0;
-
-        if (variantId && isMongoId(variantId)) {
-          const v = await inventoryService.getVariantById(variantId);
-          const item = await inventoryService.getItemById(v.itemId);
-          newLines.push({
-            variantId: v.id,
-            itemId: v.itemId,
-            productName: item.name,
-            variantName: v.name,
-            sku: v.sku || v.code,
-            quantityOrdered: qty,
-            unitId: unit,
-            expectedPrice: price,
-            taxPercent: taxP,
-            discountPercent: discP,
+  const handlePartySaved = useCallback(
+    (party: { id: string; name: string; gstin: string; email: string; phone?: string; paymentTermsLabel: string }) => {
+      void (async () => {
+        try {
+          const record = await saveSupplier({
+            name: party.name,
+            gstin: party.gstin !== '—' ? party.gstin : undefined,
+            email: party.email || undefined,
+            phone: party.phone,
+            paymentTerms: paymentLabelToValue(party.paymentTermsLabel),
           });
-        } else if (sku) {
-          const rows = catalogRows(
-            await inventoryService.getCatalog({
-              search: sku,
-              branchId: branchId || undefined,
-              isActive: true,
-              page: 1,
-              limit: 20,
-            })
-          );
-          const match = rows.find((x) => x.sku.toLowerCase() === sku.toLowerCase()) || rows[0];
-          if (!match) {
-            errors.push(`Row ${r + 1}: no catalog match for SKU "${sku}"`);
-            continue;
-          }
-          const base = rowFromCatalog(match);
-          newLines.push({
-            ...base,
-            quantityOrdered: qty,
-            unitId: unit,
-            expectedPrice: price || base.expectedPrice,
-            taxPercent: taxP,
-            discountPercent: discP,
-          });
-        } else {
-          errors.push(`Row ${r + 1}: provide variantId or sku`);
+          pickSupplier(record);
+          setPartyDraftName('');
+        } catch {
+          showToast('Could not save supplier');
         }
-      } catch (e) {
-        errors.push(`Row ${r + 1}: ${e instanceof Error ? e.message : 'failed'}`);
+      })();
+    },
+    [pickSupplier, saveSupplier, showToast]
+  );
+
+  const validateFields = (mode: 'draft' | 'send' | 'confirm'): boolean => {
+    const errs: FieldErrors = {};
+    if (!resolvedSupplierId) errs.supplier = 'Select or enter a supplier';
+    if (mode !== 'draft') {
+      if (lines.some((l) => !l.quantityOrdered || l.quantityOrdered <= 0)) {
+        showToast('Each line needs a quantity greater than zero.');
+        setSubmitted(true);
+        return false;
+      }
+      if (!lines.length) {
+        setSubmitted(true);
+        return false;
       }
     }
-
-    if (newLines.length) {
-      setLines((prev) => {
-        const byId = new Map(prev.map((l) => [l.variantId, { ...l }]));
-        for (const nl of newLines) {
-          const ex = byId.get(nl.variantId);
-          if (ex) {
-            byId.set(nl.variantId, {
-              ...ex,
-              quantityOrdered: ex.quantityOrdered + nl.quantityOrdered,
-              unitId: nl.unitId || ex.unitId,
-              expectedPrice: nl.expectedPrice || ex.expectedPrice,
-              taxPercent: nl.taxPercent,
-              discountPercent: nl.discountPercent,
-            });
-          } else {
-            byId.set(nl.variantId, nl);
-          }
-        }
-        return [...byId.values()];
-      });
+    if (mode === 'confirm') {
+      if (!expectedDeliveryDate) errs.expectedDelivery = 'Expected delivery date is required';
+      else if (expectedDeliveryDate < todayIso()) errs.expectedDelivery = 'Delivery date cannot be in the past';
+      if (!deliveryLocationId.trim()) errs.deliveryLocation = 'Select a delivery location';
     }
-
-    if (errors.length) setError(errors.slice(0, 5).join(' · '));
-    if (csvInputRef.current) csvInputRef.current.value = '';
+    if (expectedDeliveryDate && expectedDeliveryDate < todayIso()) {
+      errs.expectedDelivery = 'Delivery date cannot be in the past';
+    }
+    setFieldErrors(errs);
+    setSubmitted(true);
+    return Object.keys(errs).length === 0;
   };
 
-  const submit = async (mode: 'draft' | 'send' | 'confirm') => {
-    if (!supplierId.trim()) {
-      setError('Select a supplier from the directory or match an existing supplier name.');
-      return;
-    }
-    if (lines.length === 0) {
-      setError('Add at least one line item.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
+  const buildPayload = (mode: 'draft' | 'send' | 'confirm') => {
     const attachmentPayload: PurchaseOrderAttachment[] = attachments.map((a) => ({
       fileName: a.fileName,
       mimeType: a.mimeType,
       size: a.size,
     }));
+    const snap = buildSupplierSnapshot(resolvedSupplierId, supplierSearch, paymentTerms, footerEmailOverride || undefined);
+    return {
+      supplierId: resolvedSupplierId,
+      supplierName:
+        supplierSearch.trim() || supplierItems.find((s) => s.id === supplierId)?.name || supplierId.trim(),
+      supplierContactSnapshot: snap,
+      orderDate,
+      expectedDeliveryDate: expectedDeliveryDate || undefined,
+      deliveryLocationId: deliveryLocationId.trim() || undefined,
+      paymentTerms: paymentTerms || undefined,
+      priority,
+      shippingFreight: orderTotals.freight,
+      supplierMessage: supplierMessage.trim() || undefined,
+      attachments: attachmentPayload.length ? attachmentPayload : undefined,
+      lines: lines.map((l) => ({
+        variantId: l.variantId,
+        quantityOrdered: Number(l.quantityOrdered || 0),
+        unitId: l.unitId?.trim() || undefined,
+        expectedPrice: l.expectedPrice != null ? Number(l.expectedPrice) : undefined,
+        taxPercent: clampPct(l.taxPercent),
+        discountPercent: clampPct(l.discountPercent),
+      })),
+      confirm: mode === 'confirm',
+      submittedToSupplier: mode === 'send',
+    };
+  };
+
+  const persistOrder = async (mode: 'draft' | 'send' | 'confirm') => {
+    if (!validateFields(mode)) return null;
+    setBusy(true);
     try {
-      const created = await purchaseService.createOrder(
-        {
-          supplierId: supplierId.trim(),
-          supplierName: supplierSearch.trim() || supplierOptions.find((s) => s.id === supplierId)?.name || supplierId.trim(),
-          supplierContactSnapshot: supplierSnapshot,
-          orderDate,
-          expectedDeliveryDate: expectedDeliveryDate || undefined,
-          deliveryLocationId: deliveryLocationId.trim() || undefined,
-          paymentTerms: paymentTerms || undefined,
-          priority,
-          shippingFreight: orderTotals.freight,
-          internalNotes: internalNotes.trim() || undefined,
-          supplierMessage: supplierMessage.trim() || undefined,
-          attachments: attachmentPayload.length ? attachmentPayload : undefined,
-          lines: lines.map((l) => ({
-            variantId: l.variantId,
-            quantityOrdered: Number(l.quantityOrdered || 0),
-            unitId: l.unitId?.trim() || undefined,
-            expectedPrice: l.expectedPrice != null ? Number(l.expectedPrice) : undefined,
-            taxPercent: clampPct(l.taxPercent),
-            discountPercent: clampPct(l.discountPercent),
-          })),
-          confirm: mode === 'confirm',
-          submittedToSupplier: mode === 'send',
-        },
-        branchId
-      );
-      onSaved(created);
+      const body = buildPayload(mode);
+      let order: PurchaseOrder;
+      if (!savedOrderId) {
+        order = await purchaseService.createOrder(body, branchId);
+        setSavedOrderId(order.id);
+      } else {
+        const { confirm: _c, submittedToSupplier: _s, lines: bodyLines, ...updateRest } = body;
+        const updateBody = bodyLines?.length ? { ...updateRest, lines: bodyLines } : updateRest;
+        order = await purchaseService.updateOrder(savedOrderId, updateBody, branchId);
+        if (mode === 'confirm') {
+          order = await purchaseService.confirmOrder(savedOrderId, branchId);
+        }
+      }
+      setPoNumber(order.poNumber);
+      setKnownOrders((prev) => {
+        const rest = prev.filter((o) => o.id !== order.id);
+        return [order, ...rest];
+      });
+      return order;
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not create purchase order');
+      showToast(e instanceof Error ? e.message : 'Could not save purchase order');
+      return null;
     } finally {
       setBusy(false);
     }
   };
 
-  const dues = Number(supplierSnapshot.outstandingDues || 0);
+  const handleConfirm = async () => {
+    const order = await persistOrder('confirm');
+    if (order) {
+      setConfirmOpen(false);
+      showToast('PO confirmed successfully');
+      onSaved(order, 'confirm');
+    }
+  };
+
+  const handleBack = useCallback(() => {
+    if (hasFormData) setDiscardOpen(true);
+    else onCancel();
+  }, [hasFormData, onCancel]);
+
+  const confirmDisabledReason = !resolvedSupplierId
+    ? 'Select a supplier'
+    : lines.length === 0
+      ? 'Add at least one line item'
+      : !expectedDeliveryDate
+        ? 'Set expected delivery date'
+        : '';
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === 'Enter') {
+        if (partyDrawerOpen || discardOpen || busy || confirmOpen) return;
+        if (!canConfirm) {
+          e.preventDefault();
+          if (confirmDisabledReason) showToast(confirmDisabledReason);
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        setConfirmOpen(true);
+        return;
+      }
+      if (e.key !== 'Escape') return;
+      if (partyDrawerOpen) {
+        e.preventDefault();
+        setPartyDrawerOpen(false);
+        return;
+      }
+      if (confirmOpen) {
+        e.preventDefault();
+        setConfirmOpen(false);
+        return;
+      }
+      if (discardOpen) {
+        e.preventDefault();
+        setDiscardOpen(false);
+        return;
+      }
+
+      const active = document.activeElement;
+
+      if (isSupplierSearchInput(active)) {
+        if (isComboboxListOpen(active)) {
+          supplierListOpenRef.current = false;
+          setSupplierListOpen(false);
+          return;
+        }
+        supplierListOpenRef.current = false;
+        setSupplierListOpen(false);
+        e.preventDefault();
+        handleBack();
+        return;
+      }
+
+      if (isVariantSearchInput(active)) {
+        if (isComboboxListOpen(active)) {
+          variantListOpenRef.current = false;
+          setVariantListOpen(false);
+          return;
+        }
+        variantListOpenRef.current = false;
+        setVariantListOpen(false);
+        e.preventDefault();
+        focusExpectedDelivery();
+        return;
+      }
+
+      e.preventDefault();
+      if (isActivePriceInput()) {
+        const vid = [...priceInputRefs.current.entries()].find(([, el]) => el === active)?.[0];
+        if (vid) focusLineQty(vid);
+        else focusVariantSearch();
+        return;
+      }
+      if (isActiveQtyInput()) {
+        focusVariantSearch();
+        return;
+      }
+      if (active === expectedDeliveryRef.current) {
+        focusDeliveryLocation();
+        return;
+      }
+      if (active === deliveryLocationRef.current) {
+        focusSupplierSearch();
+        return;
+      }
+      handleBack();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    busy,
+    canConfirm,
+    confirmDisabledReason,
+    confirmOpen,
+    discardOpen,
+    focusDeliveryLocation,
+    focusExpectedDelivery,
+    focusLineQty,
+    focusSupplierSearch,
+    focusVariantSearch,
+    handleBack,
+    isActivePriceInput,
+    isActiveQtyInput,
+    isSupplierSearchInput,
+    isVariantSearchInput,
+    partyDrawerOpen,
+    supplierListOpen,
+    variantListOpen,
+  ]);
+
+  const confirmDialogMessage = useMemo(
+    () =>
+      `Confirm ${poNumber} with ${supplierSearch.trim() || 'supplier'} for ${formatInr(orderTotals.grandTotal)}?`,
+    [orderTotals.grandTotal, poNumber, supplierSearch]
+  );
+
+  const navbarConfirmActions = useMemo(
+    () => (
+      <div className="po-create-navbar-confirm">
+        {confirmDisabledReason ? (
+          <Tooltip content={`${confirmDisabledReason} (Ctrl+Enter)`} position="bottom">
+            <span>
+              <Button type="button" variant="primary" disabled>
+                Confirm order
+              </Button>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Ctrl+Enter" position="bottom">
+            <span>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy || !canConfirm}
+              >
+                Confirm order
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+      </div>
+    ),
+    [busy, canConfirm, confirmDisabledReason]
+  );
+
+  useEffect(() => {
+    onNavbarTrailingChange?.(navbarConfirmActions);
+    return () => onNavbarTrailingChange?.(null);
+  }, [navbarConfirmActions, onNavbarTrailingChange]);
 
   return (
     <div className="po-create">
-      <div className="po-create__viewport">
-        {error ? <div className="po-create-alert po-create-alert--error">{error}</div> : null}
+      {toast ? <div className="po-create-toast" role="status">{toast}</div> : null}
 
-        <section className="po-create-card" aria-labelledby="po-create-order-details">
-          <h2 id="po-create-order-details" className="po-create-card__title">
-            Order details
-          </h2>
-          <div className="po-create-grid-4">
-            <Input label="PO number" value={poNumber} readOnly className="po-create-field-grow" />
-            <Input label="Order date" type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="po-create-field-grow" />
-            <Input
-              label="Expected delivery date"
-              type="date"
-              value={expectedDeliveryDate}
-              onChange={(e) => setExpectedDeliveryDate(e.target.value)}
-              className="po-create-field-grow"
-            />
-            <Select
-              label="Warehouse / location"
-              placeholder="Select location"
-              value={deliveryLocationId}
-              onChange={(e) => setDeliveryLocationId(e.target.value)}
-              options={locationOptions}
-              className="po-create-field-grow"
-            />
-          </div>
-          <div className="po-create-row">
-            <Select
-              label="Payment terms"
-              value={paymentTerms}
-              onChange={(e) => setPaymentTerms(e.target.value)}
-              options={PAYMENT_TERM_OPTIONS}
-              className="po-create-field-grow"
-            />
-            <div className="po-create-priority">
-              <span className="po-create-priority__label">Priority</span>
-              <div className="po-create-priority__pills" role="group" aria-label="Order priority">
-                {(['low', 'normal', 'urgent'] as const).map((p) => (
+      <div className="po-create-scroll">
+        <section
+          className="po-create-card po-create-card--details-sticky"
+          aria-labelledby="po-order-details-eyebrow"
+        >
+          <div className="po-create-details-head">
+            <div className="po-create-details-head__left">
+              <span id="po-order-details-eyebrow" className="po-create-card__eyebrow">
+                Order details
+              </span>
+              <Tooltip content="Auto-generated. Click refresh to change." position="bottom">
+                <span className="po-create-po-chip">
+                  {poNumber}
                   <button
-                    key={p}
                     type="button"
-                    className={`po-create-pill${priority === p ? ' po-create-pill--active' : ''}`}
-                    onClick={() => setPriority(p)}
+                    className="po-create-po-chip__refresh"
+                    aria-label="Refresh PO number"
+                    onClick={() => refreshPoNumber()}
                   >
-                    {p === 'low' ? 'Low' : p === 'normal' ? 'Normal' : 'Urgent'}
+                    ↻
                   </button>
-                ))}
-              </div>
+                </span>
+              </Tooltip>
             </div>
+            <button
+              type="button"
+              className={`po-create-urgent-toggle${priority === 'urgent' ? ' po-create-urgent-toggle--active' : ''}`}
+              aria-pressed={priority === 'urgent'}
+              onClick={() => setPriority((p) => (p === 'urgent' ? 'normal' : 'urgent'))}
+            >
+              ⚑ Urgent
+            </button>
           </div>
-        </section>
 
-        <section className="po-create-card" aria-labelledby="po-create-supplier">
-          <h2 id="po-create-supplier" className="po-create-card__title">
-            Supplier
-          </h2>
-          <div className="po-create-grid-2">
-            <div>
-              <label className="input-label" htmlFor="po-supplier-search">
-                Supplier name
+          <div className="po-create-details-fields">
+            <SearchCombobox<SupplierRecord>
+              id="po-supplier-search"
+              className="po-create-field po-create-field--inline po-create-supplier-wrap"
+              label="Supplier"
+              showRequired={submitted && !supplierId}
+              placeholder="Search by supplier name or GST number"
+              error={fieldErrors.supplier}
+              inputRef={supplierSearchRef}
+              value={supplierSearch}
+              selectedId={supplierId || null}
+              onValueChange={onSupplierValueChange}
+              onSelect={pickSupplier}
+              onOpenChange={handleSupplierOpenChange}
+              items={supplierItems}
+              recentItems={recentSuppliers}
+              getItemId={(s) => s.id}
+              filterItems={filterSuppliers}
+              getSearchableText={(s) => `${s.name} ${s.id} ${s.gstin}`}
+              getItemLabel={(s) => s.name}
+              minSearchLength={2}
+              maxResults={6}
+              recentSectionLabel="Recent suppliers"
+              emptyMessage="No suppliers found"
+              createPolicy="empty-only"
+              createLabel={(q) => `Add supplier "${q}"`}
+              onCreateRequest={(q) => {
+                setPartyDraftName(q);
+                setPartyDrawerOpen(true);
+              }}
+              renderItem={(s) => (
+                <div className="po-party-option">
+                  <div className="po-party-option__top">
+                    <span className="po-party-option__name">{s.name}</span>
+                    <span className="po-party-option__gst">{s.gstin}</span>
+                  </div>
+                  <div className="po-party-option__meta">
+                    {s.lastOrderedAt != null
+                      ? `Last ordered: ${daysAgoLabel(s.lastOrderedAt)} · ${formatInr(s.lastOrderTotal ?? 0)}`
+                      : 'No previous orders'}
+                  </div>
+                </div>
+              )}
+            />
+
+            <div className="po-create-field po-create-field--inline">
+              <label
+                className="po-create-label"
+                htmlFor="po-delivery-location"
+                data-show-required={submitted && !deliveryLocationId ? 'true' : undefined}
+              >
+                Deliver to
+              </label>
+              <select
+                ref={deliveryLocationRef}
+                id="po-delivery-location"
+                className={`po-create-select${fieldErrors.deliveryLocation ? ' po-create-select--error' : ''}`}
+                value={deliveryLocationId}
+                onChange={(e) => applyDeliveryLocation(e.target.value)}
+              >
+                <option value="">Select location</option>
+                {locationOptions.map((o) => (
+                  <option
+                    key={o.value}
+                    value={o.value}
+                    onMouseDown={() => applyDeliveryLocation(o.value)}
+                  >
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="po-create-field po-create-field--inline po-create-field--date">
+              <label
+                className="po-create-label"
+                htmlFor="po-expected-delivery"
+                data-show-required={submitted && !expectedDeliveryDate ? 'true' : undefined}
+              >
+                Expected delivery
               </label>
               <input
-                id="po-supplier-search"
-                className="input"
-                value={supplierSearch}
-                onChange={(e) => onSupplierInputChange(e.target.value)}
-                placeholder="Search suppliers"
-                list="po-supplier-datalist"
-                autoComplete="off"
+                ref={expectedDeliveryRef}
+                id="po-expected-delivery"
+                type="date"
+                className={`po-create-input${fieldErrors.expectedDelivery ? ' po-create-input--error' : ''}`}
+                value={expectedDeliveryDate}
+                min={todayIso()}
+                onChange={(e) => {
+                  setExpectedDeliveryDate(e.target.value);
+                  setUrgentHintDismissed(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  focusVariantSearch();
+                }}
+                title={expectedDeliveryDate ? formatDateIn(expectedDeliveryDate) : 'DD / MM / YYYY'}
               />
-              <datalist id="po-supplier-datalist">
-                {supplierOptions.map((s) => (
-                  <option key={s.id} value={s.name} />
-                ))}
-              </datalist>
-              {filteredSuppliers.length > 0 && supplierSearch.trim() ? (
-                <div className="po-create-suggestions" style={{ marginTop: 'var(--spacing-md)' }}>
-                  {filteredSuppliers.map((s) => (
-                    <button key={s.id} type="button" className="po-create-suggestion" onClick={() => pickSupplier(s)}>
-                      <span>{s.name}</span>
-                      <span className="po-create-suggestion__meta"> · {s.id}</span>
-                    </button>
-                  ))}
+            </div>
+          </div>
+
+          {fieldErrors.supplier ||
+          (supplierId && !fieldErrors.supplier) ||
+          (editContactOpen && supplierId) ||
+          openDraftForSupplier ||
+          fieldErrors.deliveryLocation ||
+          fieldErrors.expectedDelivery ? (
+            <div className="po-create-details-ancillary">
+              {fieldErrors.supplier ? <p className="po-create-field-error">{fieldErrors.supplier}</p> : null}
+              {supplierId && !fieldErrors.supplier ? (
+                <p className="po-create-hint">
+                  Payment terms: {supplierSnapshot.defaultPaymentTerms || 'Net 30'} · Contact:{' '}
+                  {supplierSnapshot.email || '—'}{' '}
+                  <button type="button" className="po-create-hint-link" onClick={() => setEditContactOpen((v) => !v)}>
+                    [edit]
+                  </button>
+                </p>
+              ) : null}
+              {editContactOpen && supplierId ? (
+                <div className="po-create-details-edit-contact">
+                  <Select
+                    label="Payment terms"
+                    value={paymentTerms}
+                    onChange={(e) => setPaymentTerms(e.target.value)}
+                    options={PAYMENT_TERM_OPTIONS}
+                  />
+                  <Input
+                    label="Contact email"
+                    value={footerEmailOverride || supplierSnapshot.email || ''}
+                    onChange={(e) => setFooterEmailOverride(e.target.value)}
+                  />
                 </div>
               ) : null}
+              {openDraftForSupplier ? (
+                <div className="po-create-hint--warn" role="status">
+                  <span>
+                    Open {openDraftForSupplier.poNumber} exists for this supplier. Add lines to it instead?
+                  </span>
+                  <button
+                    type="button"
+                    className="po-create-hint-link"
+                    onClick={() => navigate(`/purchases/orders/${openDraftForSupplier.id}?tab=orders`)}
+                  >
+                    View PO
+                  </button>
+                  <button type="button" className="po-create-hint-link" onClick={() => setDismissOpenPoAlert(true)}>
+                    Continue anyway
+                  </button>
+                </div>
+              ) : null}
+              {fieldErrors.deliveryLocation ? (
+                <p className="po-create-field-error">{fieldErrors.deliveryLocation}</p>
+              ) : null}
+              {fieldErrors.expectedDelivery ? (
+                <p className="po-create-field-error">{fieldErrors.expectedDelivery}</p>
+              ) : null}
             </div>
-            <Input label="Supplier ID" value={supplierId} readOnly placeholder="Select a supplier" className="po-create-field-grow" title="Read-only after supplier selection" />
-          </div>
-          <div className="po-create-supplier-panel">
-            <div className="po-create-supplier-panel__grid">
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">Contact person</span>
-                <span className="po-create-kv__value">{supplierSnapshot.contactPerson || '—'}</span>
-              </div>
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">Phone</span>
-                <span className="po-create-kv__value">{supplierSnapshot.phone || '—'}</span>
-              </div>
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">Email</span>
-                <span className="po-create-kv__value">{supplierSnapshot.email || '—'}</span>
-              </div>
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">GSTIN</span>
-                <span className="po-create-kv__value">{supplierSnapshot.gstin || '—'}</span>
-              </div>
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">Default payment terms</span>
-                <span className="po-create-kv__value">{supplierSnapshot.defaultPaymentTerms || '—'}</span>
-              </div>
-              <div className="po-create-kv">
-                <span className="po-create-kv__label">Outstanding dues</span>
-                <span className={`po-create-kv__value${dues > 0 ? ' po-create-kv__value--warn' : ''}`}>{formatInr(dues)}</span>
-              </div>
-            </div>
-          </div>
+          ) : null}
+
+          {isDeliveryUrgent && !urgentHintDismissed ? (
+            <p className="po-create-hint po-create-hint--amber po-create-details-ancillary">
+              Delivery is within 2 days.{' '}
+              <button type="button" className="po-create-hint-link" onClick={() => setPriority('urgent')}>
+                Mark Urgent?
+              </button>
+              <button type="button" className="po-create-hint-link" onClick={() => setUrgentHintDismissed(true)}>
+                Dismiss
+              </button>
+            </p>
+          ) : null}
         </section>
 
-        <section className="po-create-card" aria-labelledby="po-create-lines">
-          <h2 id="po-create-lines" className="po-create-card__title">
-            Line items
-          </h2>
+        <section className="po-create-card" aria-labelledby="po-create-lines-title">
           <div className="po-create-toolbar">
-            <div className="po-create-toolbar__search">
-              <Input
-                label="Add by SKU or product name"
-                value={variantSearch}
-                onChange={(e) => setVariantSearch(e.target.value)}
-                placeholder="Type at least 2 characters"
-              />
-              {suggestions.length > 0 ? (
-                <div className="po-create-suggestions">
-                  {suggestions.map((s) => (
-                    <button key={s.variantId} type="button" className="po-create-suggestion" onClick={() => addVariant(s)}>
-                      <strong>{s.productName}</strong> — {s.variantName}
-                      <span className="po-create-suggestion__meta"> ({s.sku})</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <Button type="button" variant="secondary" onClick={addFirstSuggestion} disabled={!suggestions.length}>
-              Add item
-            </Button>
-            <Button type="button" variant="secondary" onClick={() => csvInputRef.current?.click()}>
-              Import CSV
-            </Button>
-            <input
-              ref={csvInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              hidden
-              onChange={(e) => void importCsv(e.target.files?.[0] || null)}
+            <ProductSearchCombobox
+              mode="catalog"
+              branchId={branchId}
+              className="po-create-toolbar__search"
+              value={variantSearch}
+              onValueChange={setVariantSearch}
+              onSelect={addVariant}
+              inputRef={variantSearchRef}
+              onOpenChange={handleVariantOpenChange}
+              comboboxAriaLabel="Search products to add to purchase order"
             />
           </div>
 
@@ -660,22 +1081,16 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
             <table className="po-create-table">
               <thead>
                 <tr>
-                  <th>Product / variant</th>
-                  <th>SKU</th>
-                  <th>Qty</th>
-                  <th>Unit</th>
-                  <th>Unit price</th>
-                  <th>Tax %</th>
-                  <th>Discount %</th>
-                  <th>Line total</th>
-                  <th aria-label="Actions" />
+                  {['Product / variant', 'Qty', 'Unit', 'Unit price', 'Total'].map((h) => (
+                    <th key={h}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 ? (
                   <tr>
-                    <td colSpan={9} style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
-                      No items yet. Search above or import a CSV (columns: variantId or sku, qty, unit, unitPrice, taxPercent, discountPercent).
+                    <td colSpan={5} style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                      No items yet. Search above to add products.
                     </td>
                   </tr>
                 ) : (
@@ -687,9 +1102,10 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
                           <div className="po-create-product-cell__name">
                             {line.productName} — {line.variantName}
                           </div>
-                          <div className="po-create-product-cell__sku">{line.sku}</div>
+                          {line.sku ? (
+                            <div className="po-create-product-cell__sku">{line.sku}</div>
+                          ) : null}
                         </td>
-                        <td>{line.sku}</td>
                         <td>
                           <div className="po-create-qty">
                             <Button
@@ -697,76 +1113,96 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
                               variant="secondary"
                               size="sm"
                               onClick={() =>
-                                updateLine(line.variantId, {
-                                  quantityOrdered: Math.max(0.000001, Number(line.quantityOrdered) - 1),
-                                })
+                                decrementQtyForLine(line.variantId, line.quantityOrdered, updateLine, removeLine)
                               }
                             >
                               −
                             </Button>
                             <Input
+                              ref={(el) => {
+                                if (el) qtyInputRefs.current.set(line.variantId, el);
+                                else qtyInputRefs.current.delete(line.variantId);
+                              }}
                               label=""
-                              type="number"
-                              min={0.000001}
-                              step="any"
-                              value={line.quantityOrdered}
-                              onChange={(e) =>
+                              type="text"
+                              inputMode="decimal"
+                              className="po-create-num-input"
+                              value={quantityInputValue(line.quantityOrdered)}
+                              onFocus={selectInputOnFocus}
+                              onChange={(e) => {
+                                const parsed = parseDecimalInput(e.target.value);
                                 updateLine(line.variantId, {
-                                  quantityOrdered: Math.max(0.000001, Number(e.target.value) || 0.000001),
-                                })
-                              }
+                                  quantityOrdered: parsed == null ? 0 : Math.max(0, parsed),
+                                });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return;
+                                e.preventDefault();
+                                const parsed = parseDecimalInput(e.currentTarget.value);
+                                if (parsed == null || parsed <= 0) {
+                                  removeLine(line.variantId);
+                                  focusVariantSearch();
+                                  return;
+                                }
+                                updateLine(line.variantId, { quantityOrdered: parsed });
+                                focusLinePrice(line.variantId);
+                              }}
                             />
                             <Button
                               type="button"
                               variant="secondary"
                               size="sm"
-                              onClick={() => updateLine(line.variantId, { quantityOrdered: Number(line.quantityOrdered) + 1 })}
+                              onClick={() =>
+                                updateLine(line.variantId, {
+                                  quantityOrdered: Math.max(0, Number(line.quantityOrdered) || 0) + 1,
+                                })
+                              }
                             >
                               +
                             </Button>
                           </div>
                         </td>
-                        <td style={{ minWidth: '6rem' }}>
-                          <Input label="" value={line.unitId} onChange={(e) => updateLine(line.variantId, { unitId: e.target.value })} />
-                        </td>
-                        <td style={{ minWidth: '6rem' }}>
-                          <Input
+                        <td>
+                          <Select
                             label=""
-                            type="number"
-                            min={0}
-                            step="any"
-                            value={line.expectedPrice}
-                            onChange={(e) => updateLine(line.variantId, { expectedPrice: Math.max(0, Number(e.target.value) || 0) })}
+                            className="po-create-unit-select"
+                            value={line.unitId}
+                            onChange={(e) => updateLine(line.variantId, { unitId: e.target.value })}
+                            options={(line.unitOptions.length
+                              ? line.unitOptions
+                              : [{ unitCode: line.unitId || 'pcs', factorToBase: 1 }]
+                            ).map((u) => ({
+                              value: u.unitCode,
+                              label: u.unitCode.toUpperCase(),
+                            }))}
                           />
                         </td>
-                        <td style={{ minWidth: '5rem' }}>
+                        <td>
                           <Input
+                            ref={(el) => {
+                              if (el) priceInputRefs.current.set(line.variantId, el);
+                              else priceInputRefs.current.delete(line.variantId);
+                            }}
                             label=""
-                            type="number"
-                            min={0}
-                            max={100}
-                            step="any"
-                            value={line.taxPercent}
-                            onChange={(e) => updateLine(line.variantId, { taxPercent: clampPct(Number(e.target.value) || 0) })}
-                          />
-                        </td>
-                        <td style={{ minWidth: '5rem' }}>
-                          <Input
-                            label=""
-                            type="number"
-                            min={0}
-                            max={100}
-                            step="any"
-                            value={line.discountPercent}
-                            onChange={(e) => updateLine(line.variantId, { discountPercent: clampPct(Number(e.target.value) || 0) })}
+                            type="text"
+                            inputMode="decimal"
+                            className="po-create-num-input"
+                            value={priceInputValue(line.expectedPrice)}
+                            onFocus={selectInputOnFocus}
+                            onChange={(e) => {
+                              const parsed = parseDecimalInput(e.target.value);
+                              updateLine(line.variantId, {
+                                expectedPrice: parsed == null ? 0 : Math.max(0, parsed),
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter') return;
+                              e.preventDefault();
+                              focusVariantSearch();
+                            }}
                           />
                         </td>
                         <td>{formatInr(lineTotal)}</td>
-                        <td>
-                          <Button type="button" variant="secondary" size="sm" onClick={() => removeLine(line.variantId)}>
-                            Remove
-                          </Button>
-                        </td>
                       </tr>
                     );
                   })
@@ -781,20 +1217,11 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
               <span>{formatInr(orderTotals.subtotal)}</span>
             </div>
             <div className="po-create-summary__row">
-              <span>Total tax</span>
-              <span>{formatInr(orderTotals.totalTax)}</span>
-            </div>
-            <div className="po-create-summary__row">
-              <span>Total discount</span>
-              <span>{formatInr(orderTotals.totalDiscount)}</span>
-            </div>
-            <div className="po-create-summary__row" style={{ alignItems: 'center' }}>
               <span>Shipping / freight</span>
               <Input
                 label=""
                 type="number"
                 min={0}
-                step="any"
                 value={shippingFreight}
                 onChange={(e) => setShippingFreight(Math.max(0, Number(e.target.value) || 0))}
                 style={{ maxWidth: '8rem' }}
@@ -807,19 +1234,21 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
           </div>
         </section>
 
-        <section className="po-create-card" aria-labelledby="po-create-notes">
-          <h2 id="po-create-notes" className="po-create-card__title">
-            Notes and attachments
+        <section className="po-create-card" aria-labelledby="po-notes-title">
+          <h2 id="po-notes-title" className="po-create-card__title">
+            Notes
           </h2>
-          <div className="po-create-grid-2">
-            <Textarea label="Internal notes" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} rows={4} />
-            <Textarea label="Supplier message" value={supplierMessage} onChange={(e) => setSupplierMessage(e.target.value)} rows={4} />
-          </div>
+          <Textarea
+            label="Message to supplier (optional)"
+            value={supplierMessage}
+            onChange={(e) => setSupplierMessage(e.target.value)}
+            rows={3}
+          />
           <div className="po-create-attachments">
             {attachments.map((a) => (
               <span key={a.id} className="po-create-chip">
                 {a.fileName}
-                <button type="button" aria-label={`Remove ${a.fileName}`} onClick={() => removeAttachment(a.id)}>
+                <button type="button" aria-label={`Remove ${a.fileName}`} onClick={() => setAttachments((p) => p.filter((x) => x.id !== a.id))}>
                   ×
                 </button>
               </span>
@@ -827,38 +1256,78 @@ export const PurchaseOrderCreatePage: React.FC<Props> = ({ branchId, supplierOpt
             <Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
               Upload
             </Button>
-            <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => onFilesSelected(e.target.files)} />
+            <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => {
+              const list = e.target.files;
+              if (!list?.length) return;
+              const next: LocalAttachment[] = [];
+              for (let i = 0; i < list.length; i += 1) {
+                const f = list[i];
+                next.push({ id: `${f.name}-${Date.now()}-${i}`, fileName: f.name, size: f.size, mimeType: f.type });
+              }
+              setAttachments((p) => [...p, ...next]);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            }} />
           </div>
         </section>
       </div>
 
-      <footer className="po-create-footer">
-        <div className="po-create-footer__stats">
-          <span>
-            Total items: <strong>{footerStats.totalItems}</strong>
-          </span>
-          <span>
-            Total qty: <strong>{footerStats.totalQty}</strong>
-          </span>
-          <span>
-            Grand total: <strong>{formatInr(footerStats.grandTotal)}</strong>
-          </span>
-        </div>
-        <div className="po-create-footer__actions">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => void submit('draft')} disabled={busy}>
-            Save draft
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => void submit('send')} disabled={busy}>
-            Send to supplier
-          </Button>
-          <Button type="button" variant="primary" onClick={() => void submit('confirm')} disabled={busy}>
-            Confirm order
-          </Button>
-        </div>
-      </footer>
+      <ConfirmDialog
+        isOpen={confirmOpen}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void handleConfirm()}
+        title="Confirm purchase order"
+        message={confirmDialogMessage}
+        confirmLabel={busy ? 'Confirming…' : 'Yes, confirm'}
+        cancelLabel="Cancel"
+        variant="info"
+        showVariantNotice={false}
+        initialFocus="confirm"
+        closeOnOverlayClick={!busy}
+        closeOnEscape={!busy}
+      />
+
+      <ConfirmDialog
+        isOpen={discardOpen}
+        onCancel={() => setDiscardOpen(false)}
+        onConfirm={() => {
+          setDiscardOpen(false);
+          onCancel();
+        }}
+        title="Discard this PO?"
+        message="Your changes will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        variant="danger"
+        showVariantNotice={false}
+        initialFocus="confirm"
+      />
+
+      <QuickAddPartyDrawer
+        isOpen={partyDrawerOpen}
+        onClose={() => setPartyDrawerOpen(false)}
+        initialName={partyDraftName}
+        paymentTermOptions={PAYMENT_TERM_OPTIONS}
+        existingParties={supplierItems}
+        onSaved={handlePartySaved}
+        persistParty={async (party) => {
+          const record = await saveSupplier({
+            name: party.name,
+            gstin: party.gstin !== '—' ? party.gstin : undefined,
+            email: party.email || undefined,
+            phone: party.phone,
+            paymentTerms: paymentLabelToValue(party.paymentTermsLabel),
+          });
+          return {
+            id: record.id,
+            name: record.name,
+            gstin: record.gstin,
+            email: record.email,
+            phone: record.phone,
+            paymentTermsLabel: record.paymentTermsLabel,
+          };
+        }}
+      />
+
     </div>
   );
 };

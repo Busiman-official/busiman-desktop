@@ -206,15 +206,27 @@ export const ProductDetailPage: React.FC = () => {
 
   const displaySku = itemDisplaySku(item, variants);
   const overviewIndustryFlags = ((): IndustryFlags => {
-    if (item.industryFlags) return item.industryFlags;
     const ic = item.industryClassification;
-    return {
+    const base: IndustryFlags = item.industryFlags ?? {
       industryType: ic?.industryType ?? IndustryType.FMCG,
       isHighValue: ic?.isHighValue ?? false,
       isPerishable: false,
-      requiresBatchTracking: variants.some((v) => v.trackBatchOverride),
-      requiresSerialTracking: variants.some((v) => v.trackSerialOverride),
+      requiresBatchTracking: false,
+      requiresSerialTracking: false,
+      serialOptional: false,
       hasExpiryDate: false,
+    };
+    return {
+      ...base,
+      requiresBatchTracking: Boolean(
+        base.requiresBatchTracking || variants.some((v) => v.trackBatchOverride),
+      ),
+      requiresSerialTracking: Boolean(
+        base.requiresSerialTracking || variants.some((v) => v.trackSerialOverride),
+      ),
+      serialOptional: Boolean(
+        base.serialOptional || variants.some((v) => v.serialOptionalOverride),
+      ),
     };
   })();
 
@@ -439,6 +451,10 @@ export const ProductDetailPage: React.FC = () => {
                   <span className="overview-label">Expiry Date:</span>
                   <span className="overview-value">{overviewIndustryFlags.hasExpiryDate ? 'Yes' : 'No'}</span>
                 </div>
+                <div className="overview-item">
+                  <span className="overview-label">Serviceable:</span>
+                  <span className="overview-value">{item.serviceable ? 'Yes' : 'No'}</span>
+                </div>
               </Card>
 
             </div>
@@ -488,6 +504,10 @@ export const ProductDetailPage: React.FC = () => {
                   <span className="variant-detail-value">Yes</span>
                 </div>
               )}
+              <div className="variant-detail-item">
+                <span className="variant-detail-label">Serviceable:</span>
+                <span className="variant-detail-value">{selectedVariant.serviceable ? 'Yes' : 'No'}</span>
+              </div>
             </div>
           </Card>
         )}

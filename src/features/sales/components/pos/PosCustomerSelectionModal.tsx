@@ -133,8 +133,8 @@ export type PosCustomerSelectionModalProps = {
   onConfirmNew: (payload: PosNewCustomerPayload) => void;
   onWalkIn: () => void;
   onUseCounterCustomer: (customerId: string) => void;
-  /** When true, walk-in checkout is hidden (e.g. pay-later requires a customer). */
-  hideWalkIn?: boolean;
+  /** Disable walk-in when on-account amount is set (requires a registered customer). */
+  walkInDisabled?: boolean;
 };
 
 export const PosCustomerSelectionModal: React.FC<PosCustomerSelectionModalProps> = ({
@@ -150,7 +150,7 @@ export const PosCustomerSelectionModal: React.FC<PosCustomerSelectionModalProps>
   onConfirmNew,
   onWalkIn,
   onUseCounterCustomer,
-  hideWalkIn = false,
+  walkInDisabled = false,
 }) => {
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -709,20 +709,23 @@ export const PosCustomerSelectionModal: React.FC<PosCustomerSelectionModalProps>
           {mode === 'sale' ? (
             <>
               <p className="pos-cust-modal__footer-note">
-                {hideWalkIn
-                  ? 'Pay-later is on — choose an existing customer or add one with a mobile number.'
-                  : 'Select a customer or add a new one.'}
+                {walkInDisabled
+                  ? 'On-account amount requires a registered customer.'
+                  : 'Select a customer, add a new one, or complete as walk-in.'}
               </p>
-              {!hideWalkIn ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={onWalkIn}
-                  disabled={busy || savingEdit || editing}
-                >
-                  Walk-in (no customer)
-                </Button>
-              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onWalkIn}
+                disabled={busy || savingEdit || editing || walkInDisabled}
+                title={
+                  walkInDisabled
+                    ? 'Clear on-account amount to complete as walk-in'
+                    : 'Complete sale without linking a customer'
+                }
+              >
+                Walk-in customer
+              </Button>
             </>
           ) : (
             <p className="pos-cust-modal__footer-note">Select the customer.</p>

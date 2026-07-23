@@ -11,6 +11,10 @@
   background: rgba(0, 0, 0, 0.5);
 }
 
+.qsf-totals {
+  margin: 0 var(--spacing-3xl) var(--spacing-xl);
+}
+
 .qsf-lines {
   margin: 0 var(--spacing-3xl) var(--spacing-2xl);
   padding: var(--spacing-xl);

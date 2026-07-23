@@ -111,6 +111,16 @@
   margin-bottom: 12px;
 }
 
+.fields-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fields-header-actions select {
+  min-width: 260px;
+}
+
 .empty-fields {
   padding: 20px;
   text-align: center;
@@ -148,6 +158,13 @@
 
 .field-input input[type="checkbox"] {
   margin-right: 4px;
+}
+
+.field-checkbox-inline {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
+  white-space: nowrap;
 }
 
 .select-options {

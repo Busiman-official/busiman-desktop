@@ -18,15 +18,23 @@ import { docId, entityId, idStr } from '../../utils/ids';
 import { orderSaleTimestampMs } from '@/utils/commercialDates';
 import {
   normalizeOrderPayments,
-  orderMatchesPaymentMethodFilter,
-  orderRecognizedRevenue,
   paymentAmountsByKnownMethod,
   resolveOrderPaymentSummary,
   type PaymentMethodFilter,
 } from '../../utils/orderPayments';
 import './SalesHistoryPanel.css';
 
-type StatusFilter = 'all' | 'completed' | 'draft' | 'cancelled';
+type StatusFilter =
+  | 'all'
+  | 'completed'
+  | 'on_account'
+  | 'partially_paid'
+  | 'cancelled'
+  | 'fulfilling'
+  | 'confirmed'
+  | 'quotation'
+  | 'draft'
+  | 'pending';
 type ModeFilter = 'all' | 'pos' | 'b2b' | 'online';
 type DateFilter = 'any' | 'today' | 'week' | 'month';
 type AmountFilter = 'any' | 'high' | 'low';
@@ -40,66 +48,9 @@ interface SalesHistoryPanelProps {
   customers: Record<string, unknown>[];
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function startOfWeek(d: Date): Date {
-  const x = startOfDay(d);
-  const day = x.getDay();
-  const diff = (day + 6) % 7;
-  x.setDate(x.getDate() - diff);
-  return x;
-}
-
-function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-
-function isDraftBucketStatus(s: string): boolean {
-  return s === 'draft' || s === 'confirmed' || s === 'fulfilling';
-}
-
-function matchesStatusFilter(status: string, f: StatusFilter): boolean {
-  if (f === 'all') return true;
-  if (f === 'completed') return status === 'completed';
-  if (f === 'cancelled') return status === 'cancelled';
-  if (f === 'draft') return isDraftBucketStatus(status);
-  return true;
-}
-
 function notesLookOnline(row: Record<string, unknown>): boolean {
   const n = String(row.notes || '').toLowerCase();
   return n.includes('online') || n.includes('web') || n.includes('ecom');
-}
-
-function matchesModeFilter(row: Record<string, unknown>, f: ModeFilter): boolean {
-  const mode = String(row.mode || '').toLowerCase();
-  if (f === 'all') return true;
-  if (f === 'pos') return mode === 'pos';
-  if (f === 'b2b') return mode === 'b2b' && !notesLookOnline(row);
-  if (f === 'online') return mode === 'b2b' && notesLookOnline(row);
-  return true;
-}
-
-function matchesDateFilter(ts: number, f: DateFilter): boolean {
-  if (f === 'any' || !ts) return true;
-  const now = new Date();
-  if (f === 'today') return ts >= startOfDay(now).getTime();
-  if (f === 'week') return ts >= startOfWeek(now).getTime();
-  if (f === 'month') return ts >= startOfMonth(now).getTime();
-  return true;
-}
-
-/** Local calendar day match for invoice/sale date (YYYY-MM-DD). */
-function matchesSaleCalendarDay(ts: number, ymd: string): boolean {
-  if (!ts || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return false;
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const rowYmd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return rowYmd === ymd;
 }
 
 /** Display-only: ISO date from `<input type="date">` → dd/mm/yyyy (local digits). */
@@ -111,13 +62,6 @@ function formatYmdToDdMmYyyy(ymd: string): string {
   const d = Number(dStr);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return '';
   return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
-}
-
-function matchesAmountFilter(total: number, f: AmountFilter): boolean {
-  if (f === 'any') return true;
-  if (f === 'high') return total > 5000;
-  if (f === 'low') return total < 500;
-  return true;
 }
 
 /** B2B draft orders are the quotation workflow (proposal to customer), not POS cart drafts. */
@@ -142,6 +86,8 @@ function statusPill(row: Record<string, unknown>): { label: string; cls: string 
   }
   if (status === 'completed') return { label: 'Completed', cls: 'sales-history-pill--completed' };
   if (status === 'cancelled') return { label: 'Cancelled', cls: 'sales-history-pill--cancelled' };
+  if (status === 'fulfilling') return { label: 'Partial pickup', cls: 'sales-history-pill--onaccount' };
+  if (status === 'confirmed') return { label: 'Open order', cls: 'sales-history-pill--draft' };
   if (isQuotationOrderRow(row)) return { label: 'Quotation', cls: 'sales-history-pill--quotation' };
   if (status === 'draft') return { label: 'Draft', cls: 'sales-history-pill--draft' };
   return { label: 'Pending', cls: 'sales-history-pill--draft' };
@@ -227,16 +173,42 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(50);
   const [historyTotal, setHistoryTotal] = useState(0);
-  const historyPageSize = 50;
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    revenueSum: 0,
+    avgOrder: 0,
+    pendingCount: 0,
+    pendingUnpaid: 0,
+    revenueTodayOnly: true,
+  });
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  const historyQueryOpts = useMemo(
+    () => ({
+      status: statusFilter,
+      mode: modeFilter,
+      dateFilter,
+      saleDate: saleDateYmd.trim() || undefined,
+      amountFilter,
+      paymentFilter,
+      search: deferredSearch,
+      sortDesc: dateDesc,
+    }),
+    [statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter, deferredSearch, dateDesc]
+  );
 
   const load = useCallback(() => {
     if (!branchId) return;
     setLoading(true);
     setError(null);
-    salesService
-      .listHistory(branchId, undefined, historyPage, historyPageSize)
-      .then((d) => {
+    setStatsLoading(true);
+    Promise.all([
+      salesService.listHistory(branchId, { ...historyQueryOpts, page: historyPage, limit: historyPageSize }),
+      salesService.getHistoryStats(branchId, historyQueryOpts),
+    ])
+      .then(([d, s]) => {
         if (d && typeof d === 'object' && !Array.isArray(d) && 'items' in d) {
           setRows((d as { items: Record<string, unknown>[] }).items);
           setHistoryTotal((d as { total: number }).total ?? 0);
@@ -244,14 +216,22 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           setRows(Array.isArray(d) ? d : []);
           setHistoryTotal(Array.isArray(d) ? d.length : 0);
         }
+        setStats(s);
       })
       .catch((e: Error) => setError(e.message || 'Failed to load'))
-      .finally(() => setLoading(false));
-  }, [branchId, historyPage]);
+      .finally(() => {
+        setLoading(false);
+        setStatsLoading(false);
+      });
+  }, [branchId, historyPage, historyPageSize, historyQueryOpts]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyQueryOpts]);
 
   const customerFallback = useMemo(() => {
     const m = new Map<string, { name: string; phone: string }>();
@@ -266,39 +246,6 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     return m;
   }, [customers]);
 
-  const filtered = useMemo(() => {
-    const q = deferredSearch.trim().toLowerCase();
-    let list = rows.filter((r) => {
-      const st = String(r.status || '');
-      if (!matchesStatusFilter(st, statusFilter)) return false;
-      if (!matchesModeFilter(r, modeFilter)) return false;
-      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
-      const ymd = saleDateYmd.trim();
-      if (ymd) {
-        if (!matchesSaleCalendarDay(ts, ymd)) return false;
-      } else if (!matchesDateFilter(ts, dateFilter)) {
-        return false;
-      }
-      const total = Number(r.total ?? 0);
-      if (!matchesAmountFilter(total, amountFilter)) return false;
-      if (!orderMatchesPaymentMethodFilter(r, paymentFilter)) return false;
-      if (q) {
-        const id = docId(r as { _id?: string; id?: string });
-        const num = String((r as { orderNumber?: string }).orderNumber ?? '');
-        const { name, phone } = customerCell(r, customerFallback);
-        const hay = `${id} ${num} ${name} ${phone}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-    list = [...list].sort((a, b) => {
-      const ta = orderSaleTimestampMs(a as { invoiceDate?: string; createdAt?: string });
-      const tb = orderSaleTimestampMs(b as { invoiceDate?: string; createdAt?: string });
-      return dateDesc ? tb - ta : ta - tb;
-    });
-    return list;
-  }, [rows, deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter, dateDesc, customerFallback]);
-
   const hasActiveFilters = useMemo(
     () =>
       deferredSearch.trim() !== '' ||
@@ -311,46 +258,16 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     [deferredSearch, statusFilter, modeFilter, dateFilter, saleDateYmd, amountFilter, paymentFilter]
   );
 
-  const stats = useMemo(() => {
-    const t0 = startOfDay(new Date()).getTime();
-    const revenueTodayOnly =
-      !hasActiveFilters ||
-      (dateFilter === 'today' && !saleDateYmd.trim() && statusFilter === 'completed');
-    let totalOrders = 0;
-    let revenueSum = 0;
-    let sumCompleted = 0;
-    let nCompleted = 0;
-    let pendingCount = 0;
-    let pendingUnpaid = 0;
-    for (const r of filtered) {
-      totalOrders += 1;
-      const st = String(r.status || '');
-      const total = Number(r.total ?? 0);
-      const ts = orderSaleTimestampMs(r as { invoiceDate?: string; createdAt?: string });
-      if (st === 'completed') {
-        const rev = orderRecognizedRevenue(r as Record<string, unknown>);
-        if (rev > 0) {
-          sumCompleted += rev;
-          nCompleted += 1;
-          if (!revenueTodayOnly || ts >= t0) revenueSum += rev;
-        }
-      }
-      if (isDraftBucketStatus(st)) {
-        pendingCount += 1;
-        pendingUnpaid += total;
-      }
-    }
-    const avgOrder = nCompleted > 0 ? sumCompleted / nCompleted : 0;
-    return { totalOrders, revenueSum, avgOrder, pendingCount, pendingUnpaid, revenueTodayOnly };
-  }, [filtered, hasActiveFilters, dateFilter, saleDateYmd, statusFilter]);
-
   const filteredIds = useMemo(
     () =>
-      filtered
+      rows
         .map((r) => docId(r as { _id?: string; id?: string }))
         .filter((x): x is string => Boolean(x)),
-    [filtered]
+    [rows]
   );
+
+  const historyPageFrom = historyTotal === 0 ? 0 : (historyPage - 1) * historyPageSize + 1;
+  const historyPageTo = Math.min(historyTotal, historyPage * historyPageSize);
 
   const allFilteredSelected =
     filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
@@ -719,9 +636,9 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   useImperativeHandle(
     ref,
     () => ({
-      exportCsv: () => exportRows(filtered),
+      exportCsv: () => exportRows(rows),
     }),
-    [filtered, exportRows]
+    [rows, exportRows]
   );
 
   const onBulkComplete = async () => {
@@ -791,7 +708,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
     },
     pending: () => {
       setSaleDateYmd('');
-      setStatusFilter('draft');
+      setStatusFilter('pending');
       setDateFilter('any');
       setAmountFilter('any');
     },
@@ -800,7 +717,13 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
   const statusOpts: SelectOption[] = [
     { value: 'all', label: 'Status: All' },
     { value: 'completed', label: 'Completed' },
-    { value: 'draft', label: 'Draft / pending' },
+    { value: 'on_account', label: 'On account' },
+    { value: 'partially_paid', label: 'Partially paid' },
+    { value: 'confirmed', label: 'Open order' },
+    { value: 'fulfilling', label: 'Partial pickup' },
+    { value: 'quotation', label: 'Quotation' },
+    { value: 'draft', label: 'Draft (POS)' },
+    { value: 'pending', label: 'Pending / in progress' },
     { value: 'cancelled', label: 'Cancelled' },
   ];
   const modeOpts: SelectOption[] = [
@@ -848,16 +771,18 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
         <div className="sales-history-stats">
           <button type="button" className="sales-history-stat sales-history-stat--blue" onClick={statCardHandlers.total}>
             <div className="sales-history-stat__label">Total orders</div>
-            <div className="sales-history-stat__value">{stats.totalOrders}</div>
+            <div className="sales-history-stat__value">{statsLoading ? '…' : stats.totalOrders}</div>
             <div className="sales-history-stat__ctx">
-              {hasActiveFilters ? 'Matching current filters' : 'In this branch (loaded list)'}
+              {hasActiveFilters ? 'Matching current filters' : 'All orders in branch'}
             </div>
           </button>
           <button type="button" className="sales-history-stat sales-history-stat--green" onClick={statCardHandlers.revenue}>
             <div className="sales-history-stat__label">
               {stats.revenueTodayOnly ? 'Revenue today' : 'Revenue'}
             </div>
-            <div className="sales-history-stat__value">₹{stats.revenueSum.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+            <div className="sales-history-stat__value">
+              {statsLoading ? '…' : `₹${stats.revenueSum.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+            </div>
             <div className="sales-history-stat__ctx">
               {stats.revenueTodayOnly
                 ? 'Collected revenue · today (by sale date)'
@@ -866,14 +791,16 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
           </button>
           <button type="button" className="sales-history-stat" onClick={statCardHandlers.avg}>
             <div className="sales-history-stat__label">Average order value</div>
-            <div className="sales-history-stat__value">₹{stats.avgOrder.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+            <div className="sales-history-stat__value">
+              {statsLoading ? '…' : `₹${stats.avgOrder.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+            </div>
             <div className="sales-history-stat__ctx">
-              {hasActiveFilters ? 'Among fully paid · filtered' : 'Among fully paid completed'}
+              {hasActiveFilters ? 'Among completed with revenue · filtered' : 'Among completed with revenue'}
             </div>
           </button>
           <button type="button" className="sales-history-stat sales-history-stat--amber" onClick={statCardHandlers.pending}>
             <div className="sales-history-stat__label">Pending / draft</div>
-            <div className="sales-history-stat__value">{stats.pendingCount}</div>
+            <div className="sales-history-stat__value">{statsLoading ? '…' : stats.pendingCount}</div>
             <div className="sales-history-stat__ctx">
               {hasActiveFilters ? 'In current view · ' : ''}
               Unpaid proxy ₹{stats.pendingUnpaid.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
@@ -903,7 +830,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                 disabled={busy}
                 onClick={() =>
                   exportRows(
-                    filtered.filter((r) => {
+                    rows.filter((r) => {
                       const rid = docId(r as { _id?: string; id?: string });
                       return rid ? selected.has(rid) : false;
                     })
@@ -1069,7 +996,7 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                   ))
                 : null}
               {!loading &&
-                filtered.map((r) => {
+                rows.map((r) => {
                   const id = docId(r as { _id?: string; id?: string }) || '';
                   const total = Number(r.total ?? 0);
                   const sp = statusPill(r);
@@ -1180,7 +1107,46 @@ export const SalesHistoryPanel = forwardRef<SalesHistoryPanelHandle, SalesHistor
                 })}
             </tbody>
           </table>
-          {!loading && filtered.length === 0 ? <div className="sales-history-empty">No orders match filters.</div> : null}
+          {!loading && rows.length === 0 ? <div className="sales-history-empty">No orders match filters.</div> : null}
+        </div>
+
+        <div className="sales-history-pagination">
+          <span className="sales-history-muted">
+            {historyPageFrom}-{historyPageTo} of {historyTotal}
+          </span>
+          <Select
+            value={String(historyPageSize)}
+            onChange={(e) => {
+              setHistoryPageSize(Number(e.target.value));
+              setHistoryPage(1);
+            }}
+            options={[
+              { value: '10', label: '10 / page' },
+              { value: '25', label: '25 / page' },
+              { value: '50', label: '50 / page' },
+              { value: '100', label: '100 / page' },
+            ]}
+            aria-label="Orders per page"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+            disabled={historyPage <= 1 || loading}
+          >
+            Prev
+          </Button>
+          <span>Page {historyPage}</span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setHistoryPage((p) => (p * historyPageSize < historyTotal ? p + 1 : p))}
+            disabled={historyPage * historyPageSize >= historyTotal || loading}
+          >
+            Next
+          </Button>
         </div>
       </div>
 

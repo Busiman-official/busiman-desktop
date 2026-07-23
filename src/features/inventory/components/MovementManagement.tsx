@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { normalizeSerialNumber, serialNumbersEqual } from '../utils/serialNumber';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   inventoryService,
@@ -919,8 +920,8 @@ export const MovementManagement: React.FC = () => {
                 onKeyPress={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    const trimmed = newSerialInput.trim().toUpperCase();
-                    if (trimmed && !serialNumbers.includes(trimmed)) {
+                    const trimmed = normalizeSerialNumber(newSerialInput);
+                    if (trimmed && !serialNumbers.some((existing) => serialNumbersEqual(existing, trimmed))) {
                       const updated = [...serialNumbers, trimmed];
                       setSerialNumbers(updated);
                       setNewSerialInput('');
@@ -934,15 +935,20 @@ export const MovementManagement: React.FC = () => {
               <Button
                 type="button"
                 onClick={() => {
-                  const trimmed = newSerialInput.trim().toUpperCase();
-                  if (trimmed && !serialNumbers.includes(trimmed)) {
+                  const trimmed = normalizeSerialNumber(newSerialInput);
+                  if (trimmed && !serialNumbers.some((existing) => serialNumbersEqual(existing, trimmed))) {
                     const updated = [...serialNumbers, trimmed];
                     setSerialNumbers(updated);
                     setNewSerialInput('');
                     setFormData({ ...formData, quantity: updated.length });
                   }
                 }}
-                disabled={!newSerialInput.trim() || serialNumbers.includes(newSerialInput.trim().toUpperCase())}
+                disabled={
+                  !newSerialInput.trim() ||
+                  serialNumbers.some((existing) =>
+                    serialNumbersEqual(existing, normalizeSerialNumber(newSerialInput))
+                  )
+                }
               >
                 Add
               </Button>
@@ -976,13 +982,13 @@ export const MovementManagement: React.FC = () => {
                 const pastedText = e.clipboardData.getData('text');
                 const lines = pastedText
                   .split('\n')
-                  .map((line) => line.trim().toUpperCase())
+                  .map((line) => normalizeSerialNumber(line))
                   .filter((line) => line.length > 0);
                 
                 const newSerials = [...serialNumbers];
                 let added = 0;
                 for (const line of lines) {
-                  if (!newSerials.includes(line)) {
+                  if (!newSerials.some((existing) => serialNumbersEqual(existing, line))) {
                     newSerials.push(line);
                     added++;
                   }

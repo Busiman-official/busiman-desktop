@@ -159,7 +159,7 @@ export const SerialLookup: React.FC = () => {
             <Input
               placeholder="Enter serial number..."
               value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value.toUpperCase())}
+              onChange={(e) => setSearchInput(e.target.value)}
               onKeyPress={(e) => {
                 if (e.key === 'Enter') {
                   handleSearch();

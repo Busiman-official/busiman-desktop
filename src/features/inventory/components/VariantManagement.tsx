@@ -110,6 +110,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     barcode: '',
     hsn: '',
     unitOfMeasureOverride: '',
+    serviceable: false,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -243,6 +244,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
         barcode: formData.barcode?.trim() || undefined,
         hsn: formData.hsn?.trim() || '',
         unitOfMeasureOverride: formData.unitOfMeasureOverride?.trim() || undefined,
+        serviceable: formData.serviceable,
       };
 
       await inventoryService.updateVariant(editingVariantId, updateData);
@@ -351,6 +353,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       barcode: variant.barcode || '',
       hsn: variant.hsn || '',
       unitOfMeasureOverride: variant.unitOfMeasureOverride || '',
+      serviceable: variant.serviceable ?? false,
     });
     setShowDrawer(true);
     setError(null);
@@ -364,6 +367,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       barcode: '',
       hsn: '',
       unitOfMeasureOverride: '',
+      serviceable: false,
     });
     setEditingVariantId(null);
     setFieldErrors({});
@@ -386,6 +390,7 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       barcode: '',
       hsn: '',
       unitOfMeasureOverride: '',
+      serviceable: false,
     });
     setEditingVariantId(null);
     setFieldErrors({});
@@ -513,6 +518,20 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           </div>
         );
       },
+    },
+    {
+      id: 'serviceable',
+      header: 'Serviceable',
+      width: 96,
+      align: 'center',
+      accessor: (variant) => (
+        <Tooltip content={variant.serviceable ? 'Can be booked for service/repair' : 'Not serviceable'}>
+          <span className={`variant-status ${variant.serviceable ? 'variant-status--active' : 'variant-status--inactive'}`}>
+            <span className="variant-status-dot">{variant.serviceable ? '●' : '○'}</span>
+            <span>{variant.serviceable ? 'Yes' : 'No'}</span>
+          </span>
+        </Tooltip>
+      ),
     },
     {
       id: 'default',
@@ -749,6 +768,18 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           {variants.length === 0 && !editingVariantId && (
             <span className="variant-form-default-note">(The first variant is always the default.)</span>
           )}
+        </label>
+      </div>
+
+      <div className="form-group">
+        <label>
+          <input
+            type="checkbox"
+            checked={formData.serviceable ?? false}
+            onChange={(e) => setFormData({ ...formData, serviceable: e.target.checked })}
+          />
+          Serviceable
+          <span className="variant-form-default-note">(Can be booked for after-sales service/repair.)</span>
         </label>
       </div>
 

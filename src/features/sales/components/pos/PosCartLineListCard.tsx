@@ -2,6 +2,7 @@ import React from 'react';
 import type { PosCartLine } from './usePosCart';
 import { PosQuantityStepper } from './PosQuantityStepper';
 import { formatPosQuantityDisplay } from './posQuantity';
+import { formatPosSerialCartLabel, isPosSerialLineComplete } from './posSerialUtils';
 
 interface Props {
   line: PosCartLine;
@@ -10,7 +11,10 @@ interface Props {
   flash: boolean;
   available?: number;
   showStockWarning: boolean;
+  storagePath?: string | null;
   onSelect: () => void;
+  /** Open line detail focused on serial capture. */
+  onPickSerials?: () => void;
   /** Set absolute quantity (0 removes line in parent). */
   onQuantityChange: (quantity: number) => void;
   onUnitChange: (unitOfMeasure: string) => void;
@@ -26,7 +30,9 @@ export const PosCartLineListCard: React.FC<Props> = ({
   flash,
   available,
   showStockWarning,
+  storagePath,
   onSelect,
+  onPickSerials,
   onQuantityChange,
   onUnitChange,
 }) => {
@@ -36,6 +42,9 @@ export const PosCartLineListCard: React.FC<Props> = ({
       onSelect();
     }
   };
+
+  const serialLabel = formatPosSerialCartLabel(line);
+  const serialComplete = isPosSerialLineComplete(line);
 
   return (
     <div
@@ -52,12 +61,39 @@ export const PosCartLineListCard: React.FC<Props> = ({
         >
           <div className="pos-cart-list-card__name">{line.label}</div>
           <div className="pos-cart-list-card__sku">{line.sku}</div>
-          {(line.serialWarning || line.batchWarning) && (
-            <div className="pos-cart-list-card__stub" role="status">
-              {line.serialWarning ? 'Serial capture: coming soon. ' : null}
-              {line.batchWarning ? 'Batch: coming soon.' : null}
+          {storagePath ? (
+            <div className="pos-cart-list-card__sku" title={storagePath}>
+              📍 {storagePath}
             </div>
-          )}
+          ) : null}
+          {line.serialWarning ? (
+            <div className="pos-cart-list-card__serial-row" role="status">
+              {serialComplete ? (
+                <span className="pos-cart-list-card__serial-ok">{serialLabel}</span>
+              ) : (
+                <>
+                  <span className="pos-cart-list-card__serial-warn">{serialLabel}</span>
+                  {onPickSerials ? (
+                    <button
+                      type="button"
+                      className="pos-cart-list-card__serial-pick"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPickSerials();
+                      }}
+                    >
+                      Pick
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+          {line.batchWarning ? (
+            <div className="pos-cart-list-card__stub" role="status">
+              Batch: coming soon.
+            </div>
+          ) : null}
           {showStockWarning && available !== undefined && (
             <div className="pos-cart-list-card__warn">
               Only {formatPosQuantityDisplay(available)} available (need{' '}

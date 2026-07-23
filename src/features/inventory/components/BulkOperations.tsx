@@ -3,6 +3,7 @@
  */
 
 import React, { useState } from 'react';
+import { normalizeSerialNumber } from '../utils/serialNumber';
 import {
   inventoryService,
   InventoryItem,
@@ -153,7 +154,7 @@ export const BulkOperations: React.FC = () => {
           continue;
         }
 
-        const serialNumber = line[0].trim().toUpperCase();
+        const serialNumber = normalizeSerialNumber(line[0]);
         const attributes: Record<string, any> = {};
 
         // Parse key-value pairs

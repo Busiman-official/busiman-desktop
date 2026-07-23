@@ -1,0 +1,101 @@
+.product-search-option__title {
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  line-height: 1.35;
+}
+
+.product-search-option__sep {
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-secondary);
+}
+
+.product-search-option__meta {
+  margin-top: 2px;
+  font-size: var(--font-size-small);
+  color: var(--color-text-tertiary);
+}
+
+.product-search--pos .search-combobox__field {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 0.5px solid var(--color-border);
+  border-radius: var(--border-radius);
+  background: var(--color-bg-primary);
+  overflow: hidden;
+}
+
+.product-search--pos .search-combobox__input {
+  border: 0;
+  border-radius: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: var(--font-size-base);
+}
+
+.product-search--pos .search-combobox__input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.product-search--pos .search-combobox__field:focus-within {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 0;
+  border-color: var(--color-primary);
+}
+
+.product-search--pos .pos-search-field__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.product-search--pos.search-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.product-search--pos .search-combobox__list {
+  max-height: 280px;
+}
+
+.pos-suggest-panel.search-combobox__list .search-combobox__option {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  font-size: 13px;
+  color: inherit;
+}
+
+.pos-suggest-panel.search-combobox__list .search-combobox__option:hover {
+  background: #f1f5f9;
+}
+
+.pos-suggest-panel.search-combobox__list .search-combobox__option--active {
+  background: #e0f2fe;
+}
+
+.pos-suggest-panel.search-combobox__list .search-combobox__option--active:hover {
+  background: #bae6fd;
+}
+
+.pos-suggest-panel.search-combobox__list .search-combobox__empty {
+  padding: 16px 14px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.pos-lookup-form__combobox {
+  width: 100%;
+}

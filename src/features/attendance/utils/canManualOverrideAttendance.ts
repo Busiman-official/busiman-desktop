@@ -11,5 +11,5 @@ export function canManualOverrideAttendance(performer: Performer, target: Target
   if (target.allowManualAttendanceOverride) {
     return (target.manualAttendanceOverrideAllowedUserIds ?? []).includes(performer.id);
   }
-  return performer.role === UserRole.HR || performer.role === UserRole.MANAGER;
+  return performer.role === UserRole.HR;
 }

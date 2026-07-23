@@ -76,6 +76,16 @@
   margin-top: 4px;
 }
 
+.sales-history-pagination {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
 .sales-history-stat--blue .sales-history-stat__value {
   color: #2563eb;
 }
