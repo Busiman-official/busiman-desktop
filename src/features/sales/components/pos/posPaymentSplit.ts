@@ -61,6 +61,53 @@ export function emptyNonCashAmounts(payOpts: PosPaymentOption[]): Record<string,
   return out;
 }
 
+/** All tender fields empty (including cash) — no auto-remainder. */
+export function emptyTenderAmountInputs(payOpts: PosPaymentOption[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of payOpts) {
+    if (!isOnAccountMethodCode(p.value)) out[p.value] = '';
+  }
+  return out;
+}
+
+/** Parsed amounts for each tender method (excludes on_account). */
+export function tenderAmountsFromInputs(
+  payOpts: PosPaymentOption[],
+  inputs: Record<string, string>
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of payOpts) {
+    if (isOnAccountMethodCode(p.value)) continue;
+    out[p.value] = parsePaymentAmountInput(inputs[p.value] ?? '');
+  }
+  return out;
+}
+
+export function sumTenderAmounts(amounts: Record<string, number>): number {
+  return roundMoney(Object.values(amounts).reduce((s, n) => s + n, 0));
+}
+
+/** Build payment lines from explicit field values only (cash is not auto-filled). */
+export function buildExplicitTenderPayments(
+  payOpts: PosPaymentOption[],
+  tenderInputs: Record<string, string>,
+  detailsByMethod: Record<string, PosPaymentMethodDetails | undefined>
+): PosCheckoutPaymentLine[] {
+  const lines: PosCheckoutPaymentLine[] = [];
+  for (const p of payOpts) {
+    if (isOnAccountMethodCode(p.value)) continue;
+    const amount = parsePaymentAmountInput(tenderInputs[p.value] ?? '');
+    if (amount <= 0) continue;
+    const details = detailsByMethod[p.value];
+    lines.push({
+      methodCode: p.value,
+      amount,
+      ...(details && Object.keys(details).length > 0 ? { details } : {}),
+    });
+  }
+  return lines;
+}
+
 /** Non-cash tender amounts keyed by method code (excludes on_account). */
 export function nonCashAmountsFromInputs(
   payOpts: PosPaymentOption[],

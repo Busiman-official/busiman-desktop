@@ -26,6 +26,8 @@ import { ModuleHeaderOutlineButton } from '@/shared/components/module-header/Mod
 import { Button, Input, Select } from '@/shared/components/ui';
 import { downloadAttendanceCsvFromRows } from '@/features/attendance/utils/exportAttendanceCsv';
 import { canManualOverrideAttendance } from '@/features/attendance/utils/canManualOverrideAttendance';
+import { canMarkAttendanceForOthers } from '@/features/attendance/utils/attendanceAccess';
+import { getHistoryRemoteNoteEntries } from '@/features/attendance/utils/formatHistoryRemoteNotes';
 import {
   attendanceDateYmd,
   formatAttendanceDateLabel,
@@ -101,6 +103,7 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
   const canMark =
     !!currentUser &&
     !!employee &&
+    canMarkAttendanceForOthers(currentUser.role, currentUser.branchDepartments) &&
     canManualOverrideAttendance(
       { id: currentUser.id, role: currentUser.role },
       employee
@@ -284,6 +287,12 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
       totalDuration: r.totalDuration,
       checkInApprovalStatus: r.checkInApproval?.status,
       checkOutApprovalStatus: r.checkOutApproval?.status,
+      checkInRemoteNote: r.checkInApproval?.remoteNote?.trim() ?? '',
+      checkOutRemoteNote: r.checkOutApproval?.remoteNote?.trim() ?? '',
+      checkInMarkingFrom: r.checkInApproval?.markingFrom ?? '',
+      checkOutMarkingFrom: r.checkOutApproval?.markingFrom ?? '',
+      checkInRejectReason: r.checkInApproval?.rejectReason?.trim() ?? '',
+      checkOutRejectReason: r.checkOutApproval?.rejectReason?.trim() ?? '',
     }));
     downloadAttendanceCsvFromRows(
       rows,
@@ -429,6 +438,7 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
                     <th>Check-out</th>
                     <th>Duration</th>
                     <th>Approval</th>
+                    <th>Remote reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -449,6 +459,7 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
                     ]
                       .filter(Boolean)
                       .join(' · ');
+                    const remoteNotes = getHistoryRemoteNoteEntries(row);
                     return (
                     <tr key={row.id}>
                       <td>{formatAttendanceDateLabel(row.date)}</td>
@@ -466,8 +477,29 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
                         {approvalLabel || '—'}
                         {approvalNote && (
                           <span className="ead-reject-reason" title={approvalNote}>
-                            {approvalNote}
+                            Rejected: {approvalNote}
                           </span>
+                        )}
+                      </td>
+                      <td className="ead-remote-notes-cell">
+                        {remoteNotes.length === 0 ? (
+                          '—'
+                        ) : (
+                          <ul className="ead-remote-notes-list">
+                            {remoteNotes.map((entry) => (
+                              <li key={`${row.id}-${entry.legLabel}`}>
+                                <span className="ead-remote-notes-leg">{entry.legLabel}</span>
+                                <span className="ead-remote-notes-text" title={entry.remoteNote}>
+                                  {entry.remoteNote}
+                                </span>
+                                {entry.markingFromLabel ? (
+                                  <span className="ead-remote-notes-from">
+                                    From {entry.markingFromLabel}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
                         )}
                       </td>
                     </tr>

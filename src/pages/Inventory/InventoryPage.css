@@ -14,3 +14,53 @@
   overflow: auto;
   min-height: 0;
 }
+
+/* Locations: fixed viewport workspace; tree + detail scroll independently */
+.inventory-page-content--locations-fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.inventory-page-content--locations-fill .location-management {
+  flex: 1;
+  min-height: 0;
+}
+
+.inventory-header-location-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 360px;
+}
+
+.inventory-header-location-search__input {
+  width: 100%;
+  min-height: 32px;
+  padding-right: 28px;
+}
+
+.inventory-header-location-search__clear {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.inventory-header-location-search__clear:hover {
+  background: #f3f4f6;
+  color: #374151;
+}

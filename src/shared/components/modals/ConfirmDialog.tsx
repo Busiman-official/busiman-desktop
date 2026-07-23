@@ -2,7 +2,7 @@
  * Confirm Dialog Component - For confirmation dialogs with optional reason
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal } from './Modal';
 import { Button } from '../ui';
 import { Textarea } from '../ui';
@@ -26,6 +26,8 @@ export interface ConfirmDialogProps {
   closeOnOverlayClick?: boolean;
   closeOnEscape?: boolean;
   showCloseButton?: boolean;
+  /** When set, focuses that action button after the dialog opens. */
+  initialFocus?: 'confirm' | 'cancel';
 }
 
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -46,8 +48,18 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   closeOnOverlayClick = true,
   closeOnEscape = true,
   showCloseButton = true,
+  initialFocus,
 }) => {
   const [reason, setReason] = useState('');
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen || !initialFocus) return;
+    const target = initialFocus === 'confirm' ? confirmRef : cancelRef;
+    const timer = window.setTimeout(() => target.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, initialFocus]);
 
   const handleConfirm = () => {
     if (requiresReason && !reason.trim()) {
@@ -151,10 +163,11 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
         )}
 
         <div className="confirm-dialog-actions">
-          <Button variant="secondary" onClick={handleCancel}>
+          <Button ref={cancelRef} variant="secondary" onClick={handleCancel}>
             {cancelLabel}
           </Button>
           <Button
+            ref={confirmRef}
             variant={variant === 'danger' ? 'danger' : 'primary'}
             onClick={handleConfirm}
             disabled={actualRequiresReason && !reason.trim()}

@@ -51,6 +51,14 @@ class ProfileService {
   async changePassword(request: ChangePasswordRequest): Promise<void> {
     await api.post('/profile/password', request);
   }
+
+  /**
+   * Set (or clear, when branchId is null) the admin's active branch.
+   */
+  async setActiveBranch(branchId: string | null): Promise<User> {
+    const response = await api.patch('/profile/active-branch', { branchId });
+    return extractApiData(response);
+  }
 }
 
 export const profileService = new ProfileService();

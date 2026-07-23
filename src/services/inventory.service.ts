@@ -87,6 +87,8 @@ export interface IndustryFlags {
   isPerishable: boolean;
   requiresBatchTracking: boolean;
   requiresSerialTracking: boolean;
+  /** Only meaningful when requiresSerialTracking is true — serial can be attached later (at outbound), not required at receipt. */
+  serialOptional: boolean;
   hasExpiryDate: boolean;
   isHighValue: boolean;
   industryType: IndustryType;
@@ -107,6 +109,8 @@ export interface InventoryItem {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  /** Whether this product can be booked for after-sales service/repair. */
+  serviceable?: boolean;
   barcode?: string;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
@@ -184,7 +188,10 @@ export interface InventoryVariant {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isDiscontinued?: boolean;
+  /** Whether this specific variant can be booked for after-sales service/repair. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -233,8 +240,11 @@ export interface CreateVariantRequest {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -271,8 +281,11 @@ export interface UpdateVariantRequest {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -296,6 +309,10 @@ export interface AttributeField {
   type: 'string' | 'number' | 'date' | 'select';
   required: boolean;
   options?: string[];
+  /** Pre-filled value for the first row of a serial-entry grid (subsequent rows carry-forward from the row above). For type 'select' must be one of `options`. */
+  defaultValue?: string;
+  /** Type 'date' only: server resolves defaultValue to the current date on every fetch instead of a fixed stored date. */
+  defaultToday?: boolean;
 }
 
 export interface SerialAttributeTemplate {
@@ -326,6 +343,7 @@ export interface CatalogVariantRow {
   sellingPrice?: number;
   costPrice?: number;
   stockOnHand?: number;
+  serviceable?: boolean;
 }
 
 export interface PaginatedCatalogResponse {
@@ -358,6 +376,9 @@ export interface CreateInventoryVariantLine {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  serialOptionalOverride?: boolean;
+  /** Defaults to the master's `serviceable` value when omitted. */
+  serviceable?: boolean;
   weightOverride?: number;
   dimensionsOverride?: {
     length?: number;
@@ -382,6 +403,7 @@ export interface CreateInventoryItemRequest {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  serviceable?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
   unitConfig?: UnitConfig;
@@ -414,6 +436,7 @@ export interface UpdateInventoryItemRequest {
   category?: string;
   productType?: ProductType;
   isMisc?: boolean;
+  serviceable?: boolean;
   unitOfMeasure?: string;
   unitConversions?: UnitConversion[];
   unitConfig?: UnitConfig;
@@ -689,6 +712,7 @@ class InventoryService {
     excludeNonStock?: boolean;
     itemType?: ItemType;
     isMisc?: boolean;
+    serviceable?: boolean;
     includeInactiveVariants?: boolean;
     page?: number;
     limit?: number;
@@ -703,6 +727,8 @@ class InventoryService {
     if (params?.itemType) q.append('itemType', params.itemType);
     if (params?.isMisc === true) q.append('isMisc', 'true');
     if (params?.isMisc === false) q.append('isMisc', 'false');
+    if (params?.serviceable === true) q.append('serviceable', 'true');
+    if (params?.serviceable === false) q.append('serviceable', 'false');
     if (params?.includeInactiveVariants) q.append('includeInactiveVariants', 'true');
     if (params?.page !== undefined) q.append('page', String(params.page));
     if (params?.limit !== undefined) q.append('limit', String(params.limit));
@@ -1108,6 +1134,7 @@ class InventoryService {
     toLocation?: { id: string; code: string; name: string };
     quantity: number;
     status: string;
+    user?: { id: string; name: string; email: string };
   }>> {
     const response = await api.get(`/inventory/serials/${serialNumber}/history`);
     return extractApiData(response);
@@ -1195,6 +1222,7 @@ class InventoryService {
         varianceReason?: string;
         batchNumber?: string;
         serialNumbers?: string[];
+        serialAttributes?: Record<string, Record<string, any>>;
         manufacturingDate?: string;
         expiryDate?: string;
         expectedVersion?: number;
@@ -1558,7 +1586,7 @@ export interface CountLineDto {
   lineNo: number;
   itemId: string;
   variantId?: string;
-  item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; isPerishable?: boolean };
+  item?: { id: string; sku: string; name: string; hasVariants?: boolean; requiresBatchTracking?: boolean; requiresSerialTracking?: boolean; serialOptional?: boolean; isPerishable?: boolean };
   variant?: { id: string; code: string; name: string };
   systemQuantity: number;
   /** Current on-hand at count location (for display: current − system) */
@@ -1569,6 +1597,7 @@ export interface CountLineDto {
   physicalEntered?: boolean;
   batchNumber?: string;
   serialNumbers?: string[];
+  serialAttributes?: Record<string, Record<string, any>>;
   manufacturingDate?: string;
   expiryDate?: string;
   lineVersion?: number;

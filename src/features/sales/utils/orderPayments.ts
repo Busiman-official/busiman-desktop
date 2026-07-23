@@ -22,6 +22,8 @@ export type SalesOrderPaymentDetails = {
 export type SalesOrderPaymentLine = {
   methodCode: string;
   amount: number;
+  /** Business date the tender was received (from payment modal / POS). */
+  paidAt?: string;
   details?: SalesOrderPaymentDetails;
 };
 
@@ -86,6 +88,18 @@ export function paymentMethodLabel(code: string, methods?: PaymentMethodLabelSou
   return c.charAt(0).toUpperCase() + c.slice(1);
 }
 
+/** Next enabled method when cycling a single chip (wraps). */
+export function nextPaymentMethodInCycle(
+  current: string,
+  options: Array<{ value: string }>
+): string {
+  if (!options.length) return current;
+  const norm = (s: string) => String(s || '').trim().toLowerCase();
+  const idx = options.findIndex((o) => norm(o.value) === norm(current));
+  const next = options[(idx + 1) % options.length];
+  return next?.value ?? options[0]!.value;
+}
+
 export function paymentMethodChip(code: string, methods?: PaymentMethodLabelSource): { label: string; cls: string } {
   const c = String(code || '').trim().toLowerCase();
   const label = paymentMethodLabel(code, methods);
@@ -106,7 +120,19 @@ export function normalizeOrderPayments(raw: unknown): SalesOrderPaymentLine[] {
     const amount = Number(r.amount);
     if (!methodCode || !Number.isFinite(amount) || amount <= 0) continue;
     const details = r.details as SalesOrderPaymentDetails | undefined;
-    out.push({ methodCode, amount, details: details && typeof details === 'object' ? details : undefined });
+    const paidAtRaw = r.paidAt;
+    const paidAt =
+      paidAtRaw != null && paidAtRaw !== ''
+        ? typeof paidAtRaw === 'string'
+          ? paidAtRaw
+          : new Date(paidAtRaw as Date).toISOString()
+        : undefined;
+    out.push({
+      methodCode,
+      amount,
+      ...(paidAt ? { paidAt } : {}),
+      details: details && typeof details === 'object' ? details : undefined,
+    });
   }
   return out;
 }

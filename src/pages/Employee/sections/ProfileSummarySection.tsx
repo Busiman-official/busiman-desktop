@@ -35,6 +35,14 @@ export const ProfileSummarySection: React.FC<ProfileSummarySectionProps> = ({
   };
 
   const handleStatusToggle = async () => {
+    if (employee.isActive) {
+      const voipNote = employee.sipExtension
+        ? ` Their SIP extension (${employee.sipExtension}) will be removed from FreePBX.`
+        : '';
+      if (!window.confirm(`Deactivate ${employee.name}?${voipNote}`)) {
+        return;
+      }
+    }
     const update: UpdateEmployeeDetailsRequest = {
       isActive: !employee.isActive,
     };

@@ -289,3 +289,56 @@ button.ead-status--clickable:focus-visible {
 .ead-table tbody tr:hover {
   background: var(--color-bg-secondary);
 }
+
+.ead-approval-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-width: 14rem;
+}
+
+.ead-reject-reason {
+  font-size: var(--font-size-small);
+  color: var(--color-danger, #b91c1c);
+  line-height: 1.35;
+}
+
+.ead-remote-notes-cell {
+  max-width: 18rem;
+  vertical-align: top;
+}
+
+.ead-remote-notes-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.ead-remote-notes-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ead-remote-notes-leg {
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ead-remote-notes-text {
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.ead-remote-notes-from {
+  font-size: var(--font-size-small);
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}

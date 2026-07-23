@@ -37,6 +37,8 @@ export interface PosVariantPickerModalProps {
   ) => Promise<Record<string, { price: number; currency: string }>>;
   /** When true, POS allows exceeding on-hand (matches cart / checkout). */
   allowNegativePos?: boolean;
+  /** When true, never block on zero stock (e.g. purchase goods receipt). */
+  ignoreStockLimits?: boolean;
   onConfirm: (lines: PosVariantPickerLine[]) => void;
 }
 
@@ -102,6 +104,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   resolvePrice,
   resolvePricesBatch,
   allowNegativePos = false,
+  ignoreStockLimits = false,
   onConfirm,
 }) => {
   const [loading, setLoading] = useState(true);
@@ -124,13 +127,14 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
   const variantIgnoresOnHand = useCallback(
     (v: InventoryVariant) => {
       if (!stockFlags) return false;
+      if (ignoreStockLimits) return true;
       if (allowNegativePos) return true;
       if (stockFlags.isNonStock) return true;
       if (stockFlags.allowNegativeStock) return true;
       if (v.allowBackorder === true) return true;
       return false;
     },
-    [allowNegativePos, stockFlags]
+    [allowNegativePos, ignoreStockLimits, stockFlags]
   );
 
   useEffect(() => {
@@ -165,9 +169,11 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
         : sortedVariants.map((v) => [v.id, 0] as const);
       for (const [id, avail] of stockResults) stock[id] = avail;
 
-      if (salesPointId) {
-        const variantIds = sortedVariants.map((v) => v.id);
-        const priceOpts = { salesPointId, customerId: customerId || undefined };
+      const variantIds = sortedVariants.map((v) => v.id);
+      const priceOpts = salesPointId
+        ? { salesPointId, customerId: customerId || undefined }
+        : undefined;
+      if (salesPointId || resolvePricesBatch || resolvePrice) {
         const priceMap = resolvePricesBatch
           ? await resolvePricesBatch(variantIds, priceOpts)
           : Object.fromEntries(
@@ -184,7 +190,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
             );
         for (const v of sortedVariants) {
           const pr = priceMap[v.id];
-          prices[v.id] = pr?.price ?? 0;
+          prices[v.id] = pr?.price ?? v.costPriceOverride ?? v.sellingPriceOverride ?? 0;
           if (pr?.currency) cur = pr.currency;
         }
       }
@@ -352,7 +358,19 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                       ? 'pos-variant-card__stock--low'
                       : 'pos-variant-card__stock--out';
               } else if (showSellableZero) {
-                if (stockFlags.isNonStock) {
+                if (ignoreStockLimits) {
+                  badge = (
+                    <span className="pos-variant-card__badge pos-variant-card__badge--neutral">
+                      {avail <= 0 ? '0 on hand' : status === 'low' ? 'Low stock' : 'In stock'}
+                    </span>
+                  );
+                  stockClass =
+                    status === 'in'
+                      ? 'pos-variant-card__stock--in'
+                      : status === 'low'
+                        ? 'pos-variant-card__stock--low'
+                        : 'pos-variant-card__stock--out';
+                } else if (stockFlags.isNonStock) {
                   badge = (
                     <span className="pos-variant-card__badge pos-variant-card__badge--neutral">Non-stock</span>
                   );
@@ -458,7 +476,7 @@ export const PosVariantPickerModal: React.FC<PosVariantPickerModalProps> = ({
                         <button
                           type="button"
                           className={`pos-variant-card__add${addedFlash[v.id] ? ' pos-variant-card__add--done' : ''}`}
-                          disabled={qty <= 0 || !salesPointId}
+                          disabled={qty <= 0 || (!salesPointId && !resolvePrice && !resolvePricesBatch)}
                           onClick={() => handleAddVariant(v)}
                         >
                           {addedFlash[v.id] ? (

@@ -1,7 +1,9 @@
 import React from 'react';
+import { formatCommercialCalendarDate } from '@/utils/commercialDates';
 import {
   formatInrAmount,
   formatPaymentDetailLines,
+  nextPaymentMethodInCycle,
   paymentMethodChip,
   paymentMethodLabel,
   type PaymentMethodLabelSource,
@@ -9,11 +11,19 @@ import {
 } from '../../utils/orderPayments';
 import './OrderPaymentsBreakdown.css';
 
+type MethodOption = { value: string; label: string };
+
 type Props = {
   payments: SalesOrderPaymentLine[];
   methods?: PaymentMethodLabelSource;
   compact?: boolean;
   className?: string;
+  /** Admin: single chip per row — click cycles method (amounts/dates read-only). */
+  editable?: boolean;
+  methodOptions?: MethodOption[];
+  draftMethods?: string[];
+  methodSavingIndex?: number | null;
+  onMethodChange?: (index: number, methodCode: string) => void;
 };
 
 export const OrderPaymentsBreakdown: React.FC<Props> = ({
@@ -21,6 +31,11 @@ export const OrderPaymentsBreakdown: React.FC<Props> = ({
   methods,
   compact = false,
   className = '',
+  editable = false,
+  methodOptions = [],
+  draftMethods,
+  methodSavingIndex = null,
+  onMethodChange,
 }) => {
   if (!payments.length) return null;
 
@@ -47,20 +62,49 @@ export const OrderPaymentsBreakdown: React.FC<Props> = ({
           <tr>
             <th>Method</th>
             <th className="order-payments-breakdown__th-num">Amount</th>
+            <th>Date</th>
             <th>Details</th>
           </tr>
         </thead>
         <tbody>
           {payments.map((p, i) => {
-            const chip = paymentMethodChip(p.methodCode, methods);
+            const draftCode = draftMethods?.[i] ?? p.methodCode;
+            const chip = paymentMethodChip(draftCode, methods);
             const detailLines = formatPaymentDetailLines(p.methodCode, p.details);
             const att = p.details?.attachment;
+            const showEditor = editable && methodOptions.length > 0 && draftMethods;
             return (
               <tr key={`${p.methodCode}-${i}`}>
                 <td>
-                  <span className={chip.cls}>{paymentMethodLabel(p.methodCode, methods)}</span>
+                  {showEditor ? (
+                    <button
+                      type="button"
+                      className={[chip.cls, 'order-pay-chip--cycle'].filter(Boolean).join(' ')}
+                      title="Click to change payment method"
+                      aria-label={`Payment method: ${chip.label}. Click to change.`}
+                      disabled={methodSavingIndex === i}
+                      onClick={() => {
+                        const next = nextPaymentMethodInCycle(draftMethods[i] ?? p.methodCode, methodOptions);
+                        if (
+                          String(next).trim().toLowerCase() !==
+                          String(draftMethods[i] ?? p.methodCode)
+                            .trim()
+                            .toLowerCase()
+                        ) {
+                          onMethodChange?.(i, next);
+                        }
+                      }}
+                    >
+                      {chip.label}
+                    </button>
+                  ) : (
+                    <span className={chip.cls}>{paymentMethodLabel(p.methodCode, methods)}</span>
+                  )}
                 </td>
                 <td className="order-payments-breakdown__td-num">{formatInrAmount(p.amount)}</td>
+                <td className="order-payments-breakdown__td-date">
+                  {p.paidAt ? formatCommercialCalendarDate(p.paidAt) : '—'}
+                </td>
                 <td>
                   {detailLines.length ? (
                     <ul className="order-payments-breakdown__details">

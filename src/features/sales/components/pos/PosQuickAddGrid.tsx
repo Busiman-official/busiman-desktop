@@ -150,7 +150,8 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
 
   const lastHandledRefreshRef = useRef<number | string | undefined>(undefined);
 
-  const gridStructureKey = `${branchId}|${salesPointId}|${categoryChip}|${inStockOnly}`;
+  const canLoadCatalog = Boolean(branchId);
+  const gridStructureKey = `${branchId}|${salesPointId ?? 'no-sp'}|${categoryChip}|${inStockOnly}`;
   const prevStructureKeyRef = useRef<string | null>(null);
 
   const applyInStockFilter = useCallback((list: GridRow[]): GridRow[] => {
@@ -178,7 +179,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
         row.kind === 'single' ? [row.variant.id] : row.variants.map((v) => v.id)
       );
       let priceMap: Record<string, { price: number; currency: string; priceListId: string }> = {};
-      if (variantIds.length > 0) {
+      if (variantIds.length > 0 && salesPointId) {
         try {
           priceMap = await resolvePricesBatch(variantIds, priceOpts());
         } catch {
@@ -188,11 +189,17 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
       return draft.map((row): GridRow => {
         const stock = stockMap.get(row.item.id) ?? 0;
         if (row.kind === 'single') {
-          const fallback = row.variant.sellingPriceOverride ?? row.price;
-          return { ...row, stock, price: priceMap[row.variant.id]?.price ?? fallback };
+          const sellingFallback = row.variant.sellingPriceOverride ?? row.price;
+          const purchaseFallback = row.variant.costPriceOverride ?? sellingFallback;
+          const price = salesPointId
+            ? (priceMap[row.variant.id]?.price ?? sellingFallback)
+            : purchaseFallback;
+          return { ...row, stock, price };
         }
-        const nums = row.variants.map(
-          (v) => priceMap[v.id]?.price ?? v.sellingPriceOverride ?? 0
+        const nums = row.variants.map((v) =>
+          salesPointId
+            ? (priceMap[v.id]?.price ?? v.sellingPriceOverride ?? 0)
+            : (v.costPriceOverride ?? v.sellingPriceOverride ?? 0)
         );
         return {
           ...row,
@@ -202,11 +209,11 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
         };
       });
     },
-    [priceOpts, resolvePricesBatch]
+    [priceOpts, resolvePricesBatch, salesPointId]
   );
 
   const softRefresh = useCallback(async () => {
-    if (!salesPointId) return;
+    if (!canLoadCatalog) return;
     const prev = rowsRef.current;
     if (prev.length === 0) return;
 
@@ -218,10 +225,10 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
     } finally {
       setRefreshing(false);
     }
-  }, [applyInStockFilter, applyPricesToRows, locationId, salesPointId]);
+  }, [applyInStockFilter, applyPricesToRows, canLoadCatalog, locationId]);
 
   const loadFullGrid = useCallback(async () => {
-    if (!salesPointId) {
+    if (!canLoadCatalog) {
       setRows([]);
       lastHandledRefreshRef.current = refreshTokenRef.current;
       prevStructureKeyRef.current = gridStructureKey;
@@ -300,7 +307,7 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
       else setRefreshing(false);
       lastHandledRefreshRef.current = refreshTokenRef.current;
     }
-  }, [applyInStockFilter, applyPricesToRows, branchId, categoryChip, customerId, gridStructureKey, locationId, salesPointId]);
+  }, [applyInStockFilter, applyPricesToRows, branchId, canLoadCatalog, categoryChip, gridStructureKey, locationId, salesPointId]);
 
   useEffect(() => {
     void loadFullGrid();
@@ -308,15 +315,15 @@ export const PosQuickAddGrid: React.FC<PosQuickAddGridProps> = ({
 
   useEffect(() => {
     if (refreshToken === undefined) return;
-    if (!salesPointId) return;
+    if (!canLoadCatalog) return;
     if (rowsRef.current.length === 0) return;
     if (lastHandledRefreshRef.current === refreshToken) return;
     lastHandledRefreshRef.current = refreshToken;
     void softRefresh();
-  }, [refreshToken, salesPointId, softRefresh]);
+  }, [canLoadCatalog, refreshToken, softRefresh]);
 
   const handleCard = async (row: GridRow) => {
-    if (disabled || !salesPointId) return;
+    if (disabled) return;
     const key = row.kind === 'single' ? row.variant.id : row.item.id;
     setActivatingKey(key);
     try {

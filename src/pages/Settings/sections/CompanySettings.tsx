@@ -7,18 +7,79 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { companyStore } from '@/store/companyStore';
 import { authStore } from '@/store/authStore';
-import { CompanyProfile, companyService, UpdateCompanyRequest } from '@/services/company.service';
+import { CompanyProfile, CompanyBankAccount, CompanyUpiId, companyService, UpdateCompanyRequest } from '@/services/company.service';
 import { branchService } from '@/services/branch.service';
 import { Branch, CreateBranchRequest, UpdateBranchRequest } from '@/types';
 import { employeeService } from '@/services/employee.service';
+import { profileService } from '@/services/profile.service';
 import { User, UserRole } from '@/types';
 import { logger } from '@/shared/utils/logger';
 import { Modal } from '@/shared/components/modals/Modal';
 
-const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'sales', 'purchases', 'calendar'] as const;
+const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'sales', 'purchases', 'calendar', 'service'] as const;
 import './CompanySettings.css';
 
 type CompanySettingsTab = 'details' | 'branches';
+
+function newLocalId(): string {
+  return `tmp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyBank(isPrimary = false): CompanyBankAccount {
+  return {
+    id: newLocalId(),
+    label: isPrimary ? 'Primary' : '',
+    accountHolderName: '',
+    accountNumber: '',
+    bankName: '',
+    branch: '',
+    ifsc: '',
+    isPrimary,
+  };
+}
+
+function emptyUpi(isPrimary = false): CompanyUpiId {
+  return {
+    id: newLocalId(),
+    label: isPrimary ? 'Primary' : '',
+    upiId: '',
+    isPrimary,
+  };
+}
+
+function banksFromCompany(company: CompanyProfile): CompanyBankAccount[] {
+  if (Array.isArray(company.bankAccounts) && company.bankAccounts.length > 0) {
+    return company.bankAccounts.map((b) => ({ ...b }));
+  }
+  if (
+    company.bankAccountName ||
+    company.bankAccountNumber ||
+    company.bankName ||
+    company.bankBranch ||
+    company.bankIfsc
+  ) {
+    return [
+      {
+        id: newLocalId(),
+        label: 'Primary',
+        accountHolderName: company.bankAccountName || '',
+        accountNumber: company.bankAccountNumber || '',
+        bankName: company.bankName || '',
+        branch: company.bankBranch || '',
+        ifsc: company.bankIfsc || '',
+        isPrimary: true,
+      },
+    ];
+  }
+  return [emptyBank(true)];
+}
+
+function upisFromCompany(company: CompanyProfile): CompanyUpiId[] {
+  if (Array.isArray(company.upiIds) && company.upiIds.length > 0) {
+    return company.upiIds.map((u) => ({ ...u }));
+  }
+  return [];
+}
 
 export const CompanySettings: React.FC = () => {
   const navigate = useNavigate();
@@ -27,6 +88,8 @@ export const CompanySettings: React.FC = () => {
 
   // Company details form state
   const [form, setForm] = useState<UpdateCompanyRequest>({});
+  const [bankAccounts, setBankAccounts] = useState<CompanyBankAccount[]>([emptyBank(true)]);
+  const [upiIds, setUpiIds] = useState<CompanyUpiId[]>([]);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
@@ -48,6 +111,12 @@ export const CompanySettings: React.FC = () => {
     departments: [],
   });
   const [managers, setManagers] = useState<User[]>([]);
+
+  // Admin active branch (Settings > Company > Branch Management)
+  const authUser = authStore((s) => s.user);
+  const [activeBranchId, setActiveBranchId] = useState<string>(authUser?.activeBranchId || '');
+  const [savingActiveBranch, setSavingActiveBranch] = useState(false);
+  const [activeBranchError, setActiveBranchError] = useState<string | null>(null);
 
   const [wipeWarnOpen, setWipeWarnOpen] = useState(false);
   const [wipeConfirmOpen, setWipeConfirmOpen] = useState(false);
@@ -79,12 +148,9 @@ export const CompanySettings: React.FC = () => {
         address: company.address,
         timezone: company.timezone,
         gstNumber: company.gstNumber,
-        bankAccountName: company.bankAccountName,
-        bankAccountNumber: company.bankAccountNumber,
-        bankName: company.bankName,
-        bankBranch: company.bankBranch,
-        bankIfsc: company.bankIfsc,
       });
+      setBankAccounts(banksFromCompany(company));
+      setUpiIds(upisFromCompany(company));
       setLogoPreview(company.logoUrl || null);
       setLogoFile(null);
     }
@@ -94,8 +160,25 @@ export const CompanySettings: React.FC = () => {
     if (activeTab === 'branches') {
       loadBranches();
       loadManagers();
+      if (authUser?.role === UserRole.ADMIN) {
+        profileService
+          .getProfile()
+          .then((fresh) => {
+            const current = authStore.getState().user;
+            if (current) {
+              authStore.getState().setUser({ ...current, activeBranchId: fresh.activeBranchId, activeBranchName: fresh.activeBranchName });
+            }
+          })
+          .catch(() => {
+            // Non-critical: keep whatever active-branch value is already cached locally
+          });
+      }
     }
-  }, [activeTab]);
+  }, [activeTab, authUser?.role]);
+
+  useEffect(() => {
+    setActiveBranchId(authUser?.activeBranchId || '');
+  }, [authUser?.activeBranchId]);
 
   const loadBranches = async () => {
     try {
@@ -222,6 +305,26 @@ export const CompanySettings: React.FC = () => {
     setShowBranchForm(true);
   };
 
+  const handleSetActiveBranch = async (branchId: string) => {
+    setActiveBranchId(branchId);
+    setSavingActiveBranch(true);
+    setActiveBranchError(null);
+    try {
+      const updated = await profileService.setActiveBranch(branchId || null);
+      const current = authStore.getState().user;
+      if (current) {
+        authStore.getState().setUser({ ...current, activeBranchId: updated.activeBranchId, activeBranchName: updated.activeBranchName });
+      }
+      setSaveSuccess(branchId ? 'Active branch set' : 'Active branch cleared — now acting on all branches');
+      setTimeout(() => setSaveSuccess(null), 3000);
+    } catch (err: any) {
+      setActiveBranchId(authUser?.activeBranchId || '');
+      setActiveBranchError(err?.response?.data?.error || err?.message || 'Failed to set active branch');
+    } finally {
+      setSavingActiveBranch(false);
+    }
+  };
+
   const handleCancelBranchForm = () => {
     setShowBranchForm(false);
     setEditingBranch(null);
@@ -267,7 +370,47 @@ export const CompanySettings: React.FC = () => {
       setSaveError(null);
       setSaveSuccess(null);
 
-      const updated: CompanyProfile = await companyService.updateCompany(form, logoFile || undefined);
+      const cleanedBanks = bankAccounts
+        .map((b, index) => ({
+          ...b,
+          id: b.id || newLocalId(),
+          label: b.label?.trim() || undefined,
+          accountHolderName: b.accountHolderName?.trim() || undefined,
+          accountNumber: b.accountNumber?.trim() || undefined,
+          bankName: b.bankName?.trim() || undefined,
+          branch: b.branch?.trim() || undefined,
+          ifsc: b.ifsc?.trim()?.toUpperCase() || undefined,
+          isPrimary: Boolean(b.isPrimary) || index === 0,
+        }))
+        .filter(
+          (b) => b.accountHolderName || b.accountNumber || b.bankName || b.branch || b.ifsc
+        );
+
+      const cleanedUpis = upiIds
+        .map((u, index) => ({
+          ...u,
+          id: u.id || newLocalId(),
+          label: u.label?.trim() || undefined,
+          upiId: u.upiId.trim(),
+          isPrimary: Boolean(u.isPrimary) || index === 0,
+        }))
+        .filter((u) => u.upiId);
+
+      if (cleanedBanks.length > 0 && !cleanedBanks.some((b) => b.isPrimary)) {
+        cleanedBanks[0].isPrimary = true;
+      }
+      if (cleanedUpis.length > 0 && !cleanedUpis.some((u) => u.isPrimary)) {
+        cleanedUpis[0].isPrimary = true;
+      }
+
+      const updated: CompanyProfile = await companyService.updateCompany(
+        {
+          ...form,
+          bankAccounts: cleanedBanks,
+          upiIds: cleanedUpis,
+        },
+        logoFile || undefined
+      );
       setCompany(updated);
       setLogoFile(null);
       setSaveSuccess('Company details updated successfully');
@@ -282,6 +425,39 @@ export const CompanySettings: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const updateBank = (id: string, patch: Partial<CompanyBankAccount>) => {
+    setBankAccounts((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  };
+
+  const setPrimaryBank = (id: string) => {
+    setBankAccounts((prev) => prev.map((b) => ({ ...b, isPrimary: b.id === id })));
+  };
+
+  const removeBank = (id: string) => {
+    setBankAccounts((prev) => {
+      const next = prev.filter((b) => b.id !== id);
+      if (next.length === 0) return [emptyBank(true)];
+      if (!next.some((b) => b.isPrimary)) next[0].isPrimary = true;
+      return next;
+    });
+  };
+
+  const updateUpi = (id: string, patch: Partial<CompanyUpiId>) => {
+    setUpiIds((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+  };
+
+  const setPrimaryUpi = (id: string) => {
+    setUpiIds((prev) => prev.map((u) => ({ ...u, isPrimary: u.id === id })));
+  };
+
+  const removeUpi = (id: string) => {
+    setUpiIds((prev) => {
+      const next = prev.filter((u) => u.id !== id);
+      if (next.length > 0 && !next.some((u) => u.isPrimary)) next[0].isPrimary = true;
+      return next;
+    });
   };
 
   const openWipeFlow = () => {
@@ -489,62 +665,190 @@ export const CompanySettings: React.FC = () => {
       </div>
 
       <div className="settings-card">
-        <div className="settings-card-header">
-          <h3>Primary Bank Account</h3>
+        <div className="settings-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <h3>Bank Accounts</h3>
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setBankAccounts((prev) => [...prev, emptyBank(prev.length === 0)])}
+          >
+            Add account
+          </button>
         </div>
-        <div className="settings-card-content">
-          <div className="form-grid">
-            <div className="form-group">
-              <label>Account Holder Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={form.bankAccountName || ''}
-                onChange={(e) => handleInputChange('bankAccountName', e.target.value)}
-                placeholder="e.g., Busiman Private Limited"
-              />
+        <div className="settings-card-content" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {bankAccounts.map((bank, index) => (
+            <div
+              key={bank.id}
+              style={{
+                border: '1px solid var(--border-color, #e5e7eb)',
+                borderRadius: 10,
+                padding: 14,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <strong style={{ fontSize: 14 }}>
+                  {bank.label?.trim() || (bank.isPrimary ? 'Primary account' : `Account ${index + 1}`)}
+                </strong>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                    <input
+                      type="radio"
+                      name="primary-bank"
+                      checked={Boolean(bank.isPrimary)}
+                      onChange={() => setPrimaryBank(bank.id)}
+                    />
+                    Primary
+                  </label>
+                  {bankAccounts.length > 1 ? (
+                    <button type="button" className="btn-secondary btn-sm" onClick={() => removeBank(bank.id)}>
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Label</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.label || ''}
+                    onChange={(e) => updateBank(bank.id, { label: e.target.value })}
+                    placeholder="e.g., Kotak Current / HDFC Savings"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Account Holder Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.accountHolderName || ''}
+                    onChange={(e) => updateBank(bank.id, { accountHolderName: e.target.value })}
+                    placeholder="e.g., Busiman Private Limited"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Account Number</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.accountNumber || ''}
+                    onChange={(e) => updateBank(bank.id, { accountNumber: e.target.value })}
+                    placeholder="e.g., 123456789012"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Bank Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.bankName || ''}
+                    onChange={(e) => updateBank(bank.id, { bankName: e.target.value })}
+                    placeholder="e.g., Kotak Mahindra Bank"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Branch</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.branch || ''}
+                    onChange={(e) => updateBank(bank.id, { branch: e.target.value })}
+                    placeholder="e.g., M.G. Road, Bengaluru"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>IFSC</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={bank.ifsc || ''}
+                    onChange={(e) => updateBank(bank.id, { ifsc: e.target.value.toUpperCase() })}
+                    placeholder="e.g., KKBK0008066"
+                  />
+                </div>
+              </div>
             </div>
-            <div className="form-group">
-              <label>Account Number</label>
-              <input
-                type="text"
-                className="form-input"
-                value={form.bankAccountNumber || ''}
-                onChange={(e) => handleInputChange('bankAccountNumber', e.target.value)}
-                placeholder="e.g., 123456789012"
-              />
-            </div>
-            <div className="form-group">
-              <label>Bank Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={form.bankName || ''}
-                onChange={(e) => handleInputChange('bankName', e.target.value)}
-                placeholder="e.g., Kotak Mahindra Bank"
-              />
-            </div>
-            <div className="form-group">
-              <label>Branch</label>
-              <input
-                type="text"
-                className="form-input"
-                value={form.bankBranch || ''}
-                onChange={(e) => handleInputChange('bankBranch', e.target.value)}
-                placeholder="e.g., M.G. Road, Bengaluru"
-              />
-            </div>
-            <div className="form-group">
-              <label>IFSC</label>
-              <input
-                type="text"
-                className="form-input"
-                value={form.bankIfsc || ''}
-                onChange={(e) => handleInputChange('bankIfsc', e.target.value.toUpperCase())}
-                placeholder="e.g., KKBK0008066"
-              />
-            </div>
-          </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <h3>UPI IDs</h3>
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setUpiIds((prev) => [...prev, emptyUpi(prev.length === 0)])}
+          >
+            Add UPI ID
+          </button>
+        </div>
+        <div className="settings-card-content" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {upiIds.length === 0 ? (
+            <p className="form-help" style={{ margin: 0 }}>
+              No UPI IDs yet. Add one for field collection / receipts.
+            </p>
+          ) : (
+            upiIds.map((upi, index) => (
+              <div
+                key={upi.id}
+                style={{
+                  border: '1px solid var(--border-color, #e5e7eb)',
+                  borderRadius: 10,
+                  padding: 14,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <strong style={{ fontSize: 14 }}>
+                    {upi.label?.trim() || (upi.isPrimary ? 'Primary UPI' : `UPI ${index + 1}`)}
+                  </strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                      <input
+                        type="radio"
+                        name="primary-upi"
+                        checked={Boolean(upi.isPrimary)}
+                        onChange={() => setPrimaryUpi(upi.id)}
+                      />
+                      Primary
+                    </label>
+                    <button type="button" className="btn-secondary btn-sm" onClick={() => removeUpi(upi.id)}>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label>Label</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={upi.label || ''}
+                      onChange={(e) => updateUpi(upi.id, { label: e.target.value })}
+                      placeholder="e.g., Office / Shop"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>UPI ID</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={upi.upiId || ''}
+                      onChange={(e) => updateUpi(upi.id, { upiId: e.target.value })}
+                      placeholder="e.g., company@okaxis"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -578,6 +882,37 @@ export const CompanySettings: React.FC = () => {
 
       {activeTab === 'branches' && (
         <div className="branch-management">
+          {authUser?.role === UserRole.ADMIN && (
+            <div className="settings-card" style={{ marginBottom: 20 }}>
+              <div className="settings-card-header">
+                <h3>Active Branch</h3>
+              </div>
+              <div className="settings-card-content">
+                <p className="form-help" style={{ marginTop: 0 }}>
+                  As an admin you normally see and manage data across all branches. Set an active branch here to have
+                  branch-scoped actions (e.g. serial number templates) act on that branch specifically, the same way
+                  a branch-assigned employee would. Leave as "All branches" for the default unfiltered view.
+                </p>
+                <div className="form-group" style={{ maxWidth: 420 }}>
+                  <label>Acting as branch</label>
+                  <select
+                    className="form-input"
+                    value={activeBranchId}
+                    disabled={savingActiveBranch}
+                    onChange={(e) => void handleSetActiveBranch(e.target.value)}
+                  >
+                    <option value="">All branches (unfiltered)</option>
+                    {branches.filter((b) => b.isActive).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {activeBranchError && <div className="settings-error">{activeBranchError}</div>}
+              </div>
+            </div>
+          )}
           <div className="branch-management-header">
             <h3>Branches</h3>
             <button

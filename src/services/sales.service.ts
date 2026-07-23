@@ -177,6 +177,11 @@ export interface QuotationShareLinkData {
   note?: string;
 }
 
+export type OrderLinePriceOverride = {
+  lineIndex: number;
+  unitPrice: number;
+};
+
 export type QuotationLineOverride = {
   lineIndex: number;
   quantity?: number;
@@ -483,6 +488,7 @@ export const salesService = {
         posLineNotes?: string;
         posHsn?: string;
         posGstInclusive?: boolean;
+        serialNumbers?: string[];
       }>;
       paymentMethodCode?: string;
       discountAmount?: number;
@@ -511,6 +517,7 @@ export const salesService = {
         posLineNotes?: string;
         posHsn?: string;
         posGstInclusive?: boolean;
+        serialNumbers?: string[];
       }>;
       paymentMethodCode?: string;
       /** Split tender (real methods only). Collected + onAccountAmount must equal order total. */
@@ -542,7 +549,14 @@ export const salesService = {
 
   async patchOrder(
     orderId: string,
-    body: { status?: 'completed' | 'cancelled'; paymentPending?: boolean },
+    body: {
+      status?: 'completed' | 'cancelled';
+      paymentPending?: boolean;
+      invoiceDate?: string;
+      lineOverrides?: OrderLinePriceOverride[];
+      /** Admin: method codes per `payments[]` index (amounts unchanged). */
+      paymentMethods?: string[];
+    },
     branchId?: string | null
   ) {
     const response = await api.patch(`/sales/orders/${orderId}`, body, { params: branchParams(branchId) });
@@ -554,11 +568,30 @@ export const salesService = {
     body: {
       amount: number;
       methodCode: string;
+      paymentDate?: string;
       details?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine['details'];
     },
     branchId?: string | null
   ) {
     const response = await api.post(`/sales/orders/${orderId}/collect-payment`, body, {
+      params: branchParams(branchId),
+    });
+    return extractApiData(response);
+  },
+
+  async recordOrderFulfillment(
+    orderId: string,
+    body: {
+      pickupDate?: string;
+      lines: Array<{ orderLineId: string; quantityPicked: number }>;
+      payments?: import('@/features/sales/utils/orderPayments').SalesOrderPaymentLine[];
+      onAccountAmount?: number;
+      note?: string;
+      paymentOnly?: boolean;
+    },
+    branchId?: string | null
+  ) {
+    const response = await api.post(`/sales/orders/${orderId}/fulfillments`, body, {
       params: branchParams(branchId),
     });
     return extractApiData(response);
@@ -583,16 +616,34 @@ export const salesService = {
 
   async listHistory(
     branchId?: string | null,
-    status?: string,
-    page = 1,
-    limit = 50
+    opts?: {
+      status?: string;
+      page?: number;
+      limit?: number;
+      mode?: string;
+      dateFilter?: string;
+      saleDate?: string;
+      amountFilter?: string;
+      paymentFilter?: string;
+      search?: string;
+      sortDesc?: boolean;
+    }
   ): Promise<{ items: unknown[]; total: number; page: number; limit: number } | unknown[]> {
+    const page = opts?.page ?? 1;
+    const limit = opts?.limit ?? 50;
     const response = await api.get('/sales/history', {
       params: {
         ...branchParams(branchId),
-        ...(status ? { status } : {}),
+        ...(opts?.status && opts.status !== 'all' ? { status: opts.status } : {}),
         page,
         limit,
+        ...(opts?.mode && opts.mode !== 'all' ? { mode: opts.mode } : {}),
+        ...(opts?.dateFilter && opts.dateFilter !== 'any' ? { dateFilter: opts.dateFilter } : {}),
+        ...(opts?.saleDate ? { saleDate: opts.saleDate } : {}),
+        ...(opts?.amountFilter && opts.amountFilter !== 'any' ? { amountFilter: opts.amountFilter } : {}),
+        ...(opts?.paymentFilter && opts.paymentFilter !== 'all' ? { paymentFilter: opts.paymentFilter } : {}),
+        ...(opts?.search?.trim() ? { search: opts.search.trim() } : {}),
+        sortDesc: opts?.sortDesc === false ? '0' : '1',
       },
     });
     const data = extractApiData(response);
@@ -600,6 +651,47 @@ export const salesService = {
       return data as { items: unknown[]; total: number; page: number; limit: number };
     }
     return Array.isArray(data) ? data : [];
+  },
+
+  async getHistoryStats(
+    branchId?: string | null,
+    opts?: {
+      mode?: string;
+      dateFilter?: string;
+      saleDate?: string;
+      amountFilter?: string;
+      paymentFilter?: string;
+      search?: string;
+      status?: string;
+    }
+  ): Promise<{
+    totalOrders: number;
+    revenueSum: number;
+    avgOrder: number;
+    pendingCount: number;
+    pendingUnpaid: number;
+    revenueTodayOnly: boolean;
+  }> {
+    const response = await api.get('/sales/history/stats', {
+      params: {
+        ...branchParams(branchId),
+        status: opts?.status ?? 'all',
+        mode: opts?.mode ?? 'all',
+        dateFilter: opts?.dateFilter ?? 'any',
+        ...(opts?.saleDate ? { saleDate: opts.saleDate } : {}),
+        amountFilter: opts?.amountFilter ?? 'any',
+        paymentFilter: opts?.paymentFilter ?? 'all',
+        ...(opts?.search?.trim() ? { search: opts.search.trim() } : {}),
+      },
+    });
+    return extractApiData(response) as {
+      totalOrders: number;
+      revenueSum: number;
+      avgOrder: number;
+      pendingCount: number;
+      pendingUnpaid: number;
+      revenueTodayOnly: boolean;
+    };
   },
 
   async upsertPriceListItem(
@@ -687,6 +779,14 @@ export const salesService = {
     branchId?: string | null
   ): Promise<Blob> {
     const response = await api.post('/sales/quotations/preview-pdf', body, {
+      params: branchParams(branchId),
+      responseType: 'blob',
+    });
+    return response.data as Blob;
+  },
+
+  async downloadOrderReceiptPdfBlob(orderId: string, branchId?: string | null): Promise<Blob> {
+    const response = await api.get(`/sales/orders/${orderId}/receipt-pdf`, {
       params: branchParams(branchId),
       responseType: 'blob',
     });

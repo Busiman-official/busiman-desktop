@@ -23,6 +23,17 @@ type Props = {
   onNonCashChange: (methodCode: string, raw: string) => void;
   onOnAccountChange: (raw: string) => void;
   onOpenDetails: (methodCode: string, label: string) => void;
+  /** Label for pending supplier balance (default: On account). */
+  onAccountLabel?: string;
+  onAccountTitle?: string;
+  onAccountInputRef?: React.RefObject<HTMLInputElement | null>;
+  registerPaymentInputRef?: (methodCode: string, el: HTMLInputElement | null) => void;
+  onPaymentInputKeyDown?: (methodCode: string, e: React.KeyboardEvent<HTMLInputElement>) => void;
+  onOnAccountKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /** When true, cash is editable and not auto-computed as remainder. */
+  manualTenderEntry?: boolean;
+  tenderInputs?: Record<string, string>;
+  onTenderChange?: (methodCode: string, raw: string) => void;
 };
 
 function DocumentIcon() {
@@ -60,6 +71,15 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
   onNonCashChange,
   onOnAccountChange,
   onOpenDetails,
+  onAccountLabel = "On account",
+  onAccountTitle,
+  onAccountInputRef,
+  registerPaymentInputRef,
+  onPaymentInputKeyDown,
+  onOnAccountKeyDown,
+  manualTenderEntry = false,
+  tenderInputs,
+  onTenderChange,
 }) => {
   if (payOpts.length === 0) return null;
 
@@ -73,7 +93,14 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
           const isCash = isCashMethodCode(p.value);
           const showDetails = supportsPaymentDetailsModal(p.value);
           const hasDetails = paymentDetailsFilled(detailsByMethod[p.value]);
-          const displayAmount = isCash ? cashAmount : (nonCashInputs[p.value] ?? "");
+          const manual = manualTenderEntry && tenderInputs && onTenderChange;
+          const displayAmount = manual
+            ? (tenderInputs[p.value] ?? "")
+            : isCash
+              ? total > 0
+                ? cashAmount.toFixed(2)
+                : "0"
+              : (nonCashInputs[p.value] ?? "");
 
           return (
             <div
@@ -94,12 +121,16 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
                   className="pos-payment-split__input no-spinner"
                   min={0}
                   step="0.01"
-                  value={isCash ? (total > 0 ? cashAmount.toFixed(2) : "0") : displayAmount}
-                  readOnly={isCash}
+                  value={displayAmount}
+                  readOnly={isCash && !manual}
                   disabled={disabled}
-                  onChange={(e) => onNonCashChange(p.value, e.target.value)}
+                  ref={(el) => registerPaymentInputRef?.(p.value, el)}
+                  onChange={(e) =>
+                    manual ? onTenderChange!(p.value, e.target.value) : onNonCashChange(p.value, e.target.value)
+                  }
+                  onKeyDown={(e) => onPaymentInputKeyDown?.(p.value, e)}
                   aria-label={`${p.label} amount`}
-                  aria-readonly={isCash}
+                  aria-readonly={isCash && !manual}
                 />
               </div>
               {showDetails ? (
@@ -127,12 +158,13 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
             .filter(Boolean)
             .join(" ")}
           title={
-            onAccountNeedsCustomer
+            onAccountTitle ??
+            (onAccountNeedsCustomer
               ? "Enter amount here; select a customer at checkout to put it on account"
-              : "Pending balance — deducted from cash above"
+              : "Pending balance — deducted from cash above")
           }
         >
-          <span className="pos-payment-split__label">On account</span>
+          <span className="pos-payment-split__label">{onAccountLabel}</span>
           <div className="pos-payment-split__amount">
             <input
               type="number"
@@ -141,8 +173,10 @@ export const PosPaymentSplitSection: React.FC<Props> = ({
               step="0.01"
               value={onAccountInput}
               disabled={disabled}
+              ref={onAccountInputRef}
               onChange={(e) => onOnAccountChange(e.target.value)}
-              aria-label="On account pending amount"
+              onKeyDown={onOnAccountKeyDown}
+              aria-label={`${onAccountLabel} pending amount`}
             />
           </div>
         </div>

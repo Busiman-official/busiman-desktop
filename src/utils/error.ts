@@ -15,10 +15,33 @@ export interface ApiError {
 /**
  * Extract user-friendly error message from various error types
  */
+type ApiErrorBody = {
+  message?: string;
+  error?: string;
+  errorCode?: string;
+  data?: { message?: string };
+};
+
+export function getApiErrorCode(error: unknown): string | undefined {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const axiosError = error as AxiosError<ApiErrorBody>;
+    return axiosError.response?.data?.errorCode;
+  }
+  return undefined;
+}
+
+/** Checkout/sale flows that should close the payment modal and show a blocking alert. */
+export function isPosCheckoutBlockingError(error: unknown): boolean {
+  const code = getApiErrorCode(error);
+  if (code === 'INVENTORY_MOVEMENTS_FROZEN') return true;
+  const msg = extractErrorMessage(error, '');
+  return /session is closed/i.test(msg) || /counter session is closed/i.test(msg);
+}
+
 export function extractErrorMessage(error: unknown, defaultMessage: string = 'An error occurred'): string {
   // Axios errors
   if (error && typeof error === 'object' && 'response' in error) {
-    const axiosError = error as AxiosError<{ message?: string; error?: string; data?: { message?: string } }>;
+    const axiosError = error as AxiosError<ApiErrorBody>;
     
     // Check response data
     if (axiosError.response?.data) {

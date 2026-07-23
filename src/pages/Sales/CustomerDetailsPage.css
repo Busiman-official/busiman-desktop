@@ -918,6 +918,11 @@
   border-bottom: 1px solid #e2e8f0;
 }
 
+.cd-quot-totals-wrap {
+  margin-bottom: 12px;
+  max-width: 320px;
+}
+
 .cd-quot-lines {
   padding: 12px 14px;
   background: #f8fafc;
@@ -972,4 +977,24 @@
 .cd-order-pay-open {
   color: #64748b;
   font-size: 13px;
+}
+
+.cd-pay-date-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.cd-pay-date-field__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.cd-pay-date-field__input {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  max-width: 200px;
 }

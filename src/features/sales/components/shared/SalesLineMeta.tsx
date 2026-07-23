@@ -30,8 +30,10 @@ export const SalesLineMeta: React.FC<{ line: SalesLineMetaSource; className?: st
   const listUnit = num(line.posListUnitPrice);
   const unit = num(line.unitPrice);
   const parts: React.ReactNode[] = [];
-  if (line.posGstInclusive === false) {
+  if (line.posGstInclusive === false || line.priceIncludesGst === false) {
     parts.push(<span key="mode">GST extra</span>);
+  } else if (line.posGstInclusive === true || line.priceIncludesGst === true) {
+    parts.push(<span key="mode">GST inclusive</span>);
   }
   if (hsn) parts.push(<span key="hsn">HSN {hsn}</span>);
   if (gst != null) parts.push(<span key="gst">GST {gst}%</span>);
