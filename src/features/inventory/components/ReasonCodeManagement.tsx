@@ -20,7 +20,7 @@ import { authStore } from '@/store/authStore';
 import { UserRole } from '@/types';
 import './ReasonCodeManagement.css';
 
-const CATEGORIES: ReasonCodeCategory[] = ['MOVEMENT', 'ADJUSTMENT', 'DAMAGE', 'WASTE', 'LOSS', 'BLOCK'];
+const CATEGORIES: ReasonCodeCategory[] = ['MOVEMENT', 'ADJUSTMENT', 'DAMAGE', 'WASTE', 'LOSS', 'BLOCK', 'SERVICE'];
 
 const categoryMovementTypes: Record<ReasonCodeCategory, string> = {
   MOVEMENT: 'Receipt, Issue, Transfer',
@@ -29,6 +29,7 @@ const categoryMovementTypes: Record<ReasonCodeCategory, string> = {
   WASTE: 'Waste',
   LOSS: 'Loss',
   BLOCK: 'Block, Unblock',
+  SERVICE: 'Service job Pending / Cancel',
 };
 
 type FormMode = 'add' | 'edit' | null;

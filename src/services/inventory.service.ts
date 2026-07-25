@@ -548,7 +548,8 @@ export type ReasonCodeCategory =
   | 'DAMAGE'
   | 'WASTE'
   | 'LOSS'
-  | 'BLOCK';
+  | 'BLOCK'
+  | 'SERVICE';
 
 export interface ReasonCodeResponse {
   id: string;
