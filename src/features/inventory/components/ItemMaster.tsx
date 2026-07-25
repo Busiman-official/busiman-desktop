@@ -57,6 +57,12 @@ import {
 import { buildVariantUnitOptions } from "./ProductCreationWizard/variantGridUnits";
 import { computeVariantSuffixForName } from "./ProductCreationWizard/variantSuffix";
 import { EditMasterDrawer } from "./EditMasterDrawer";
+import { buildProductsWorkbook, downloadProductsWorkbook } from "../utils/exportProductsExcel";
+import {
+  parseProductsWorkbook,
+  buildImportPlan,
+  type ProductImportResult,
+} from "../utils/importProductsExcel";
 import "./ItemMaster.css";
 import "./ProductCreationWizard/ProductCreationWizard.css";
 
@@ -317,6 +323,10 @@ export const ItemMaster: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(50);
   const [totalItems, setTotalItems] = useState(0);
+  const [exportingProducts, setExportingProducts] = useState(false);
+  const [importingProducts, setImportingProducts] = useState(false);
+  const [importSummary, setImportSummary] = useState<ProductImportResult | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dropTargetItemId, setDropTargetItemId] = useState<string | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -830,6 +840,130 @@ export const ItemMaster: React.FC = () => {
       loadingItemsRef.current = false;
     }
   }, [sortColumn, sortDirection, currentPage, itemsPerPage]);
+
+  const handleExportProducts = useCallback(async () => {
+    setExportingProducts(true);
+    setError(null);
+    try {
+      const allItems = await inventoryService.getAllItems();
+      const variantsByItemId = new Map<string, InventoryVariant[]>();
+      // Sequential, not Promise.all — a few hundred products means a few hundred requests;
+      // running them all at once would hammer the API and risk rate-limiting mid-export.
+      for (const item of allItems) {
+        try {
+          const itemVariants = await inventoryService.getVariantsByItem(item.id, true);
+          variantsByItemId.set(item.id, itemVariants);
+        } catch {
+          variantsByItemId.set(item.id, []);
+        }
+      }
+      const workbook = await buildProductsWorkbook(allItems, variantsByItemId);
+      await downloadProductsWorkbook(workbook);
+      setSuccess(`Exported ${allItems.length} products (${Array.from(variantsByItemId.values()).reduce((n, v) => n + v.length, 0)} variants).`);
+    } catch (err: any) {
+      setError(extractErrorMessage(err, "Failed to export products"));
+      logger.error("[ItemMaster] Failed to export products", err);
+    } finally {
+      setExportingProducts(false);
+    }
+  }, []);
+
+  const handleImportFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-selecting the same file later
+      if (!file) return;
+
+      setImportingProducts(true);
+      setError(null);
+      setImportSummary(null);
+      try {
+        const buffer = await file.arrayBuffer();
+        const parsed = await parseProductsWorkbook(buffer);
+
+        const allItems = await inventoryService.getAllItems();
+        const existingVariantsByItemId = new Map<string, InventoryVariant[]>();
+        for (const item of allItems) {
+          const itemVariants = await inventoryService.getVariantsByItem(item.id, true).catch(() => []);
+          existingVariantsByItemId.set(item.id, itemVariants);
+        }
+
+        const { plans, errors: planErrors } = buildImportPlan(parsed, allItems, existingVariantsByItemId);
+
+        const result: ProductImportResult = {
+          productsCreated: 0,
+          productsUpdated: 0,
+          variantsCreated: 0,
+          variantsUpdated: 0,
+          errors: [...planErrors],
+        };
+
+        for (const plan of plans) {
+          try {
+            if (plan.action === "create") {
+              await inventoryService.createItem(plan.request);
+              result.productsCreated += 1;
+              result.variantsCreated += plan.request.variants.length;
+              continue;
+            }
+
+            await inventoryService.updateItem(plan.itemId, plan.itemUpdate);
+            result.productsUpdated += 1;
+            for (const vu of plan.variantUpdates) {
+              try {
+                await inventoryService.updateVariant(vu.variantId, vu.update);
+                result.variantsUpdated += 1;
+              } catch (err: any) {
+                result.errors.push({
+                  row: plan.row,
+                  productName: plan.productName,
+                  message: `Variant "${vu.sku}": ${extractErrorMessage(err, "Failed to update variant")}`,
+                });
+              }
+            }
+            for (const vc of plan.variantCreates) {
+              try {
+                await inventoryService.createVariant(vc.request);
+                result.variantsCreated += 1;
+              } catch (err: any) {
+                result.errors.push({
+                  row: plan.row,
+                  productName: plan.productName,
+                  message: `Variant "${vc.sku}": ${extractErrorMessage(err, "Failed to add variant")}`,
+                });
+              }
+            }
+          } catch (err: any) {
+            result.errors.push({
+              row: plan.row,
+              productName: plan.productName,
+              message: extractErrorMessage(err, plan.action === "create" ? "Failed to create product" : "Failed to update product"),
+            });
+          }
+        }
+
+        setImportSummary(result);
+        const totalTouched = result.productsCreated + result.productsUpdated;
+        if (totalTouched > 0) {
+          setSuccess(
+            `${result.productsCreated} product${result.productsCreated === 1 ? "" : "s"} created, ` +
+              `${result.productsUpdated} updated ` +
+              `(${result.variantsCreated} variant${result.variantsCreated === 1 ? "" : "s"} added, ${result.variantsUpdated} updated)` +
+              (result.errors.length > 0 ? ` — ${result.errors.length} row(s) had issues, see details below.` : "."),
+          );
+        } else if (result.errors.length > 0) {
+          setError(`No products imported — ${result.errors.length} row(s) had errors, see details below.`);
+        }
+        await loadItems();
+      } catch (err: any) {
+        setError(extractErrorMessage(err, "Failed to read/import file"));
+        logger.error("[ItemMaster] Failed to import products", err);
+      } finally {
+        setImportingProducts(false);
+      }
+    },
+    [loadItems],
+  );
 
   useEffect(() => {
     if (viewMode === "list") {
@@ -1538,8 +1672,48 @@ export const ItemMaster: React.FC = () => {
   const renderList = () => (
     <div className="item-master-list">
       <div className="item-master-list-content">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "8px",
+            padding: "12px 12px 0",
+          }}
+        >
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".xlsx"
+            style={{ display: "none" }}
+            onChange={(e) => void handleImportFileSelected(e)}
+          />
+          <Button
+            variant="secondary"
+            disabled={importingProducts}
+            onClick={() => importFileInputRef.current?.click()}
+            title="Upload a .xlsx (Products + Variants sheets) — new product names are created, existing ones are updated by name/SKU"
+          >
+            {importingProducts ? "⏳ Uploading…" : "⬆️ Upload products"}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={exportingProducts}
+            onClick={() => void handleExportProducts()}
+            title="Export the full catalog to a formatted .xlsx (Products + Variants sheets)"
+          >
+            {exportingProducts ? "⏳ Exporting…" : "⬇️ Export to Excel"}
+          </Button>
+        </div>
+
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
+        {importSummary && importSummary.errors.length > 0 && (
+          <div className="error-message" style={{ whiteSpace: "pre-wrap" }}>
+            {importSummary.errors
+              .map((e) => `Row ${e.row} (${e.productName || "—"}): ${e.message}`)
+              .join("\n")}
+          </div>
+        )}
 
         {loading ? (
           <div className="loading-skeleton" style={{ padding: "20px" }}>
