@@ -1,0 +1,163 @@
+/**
+ * Create New Sale — guided entry step
+ */
+
+.cns-page {
+  display: flex;
+  justify-content: center;
+  padding: 32px 16px 48px;
+  min-height: 0;
+}
+
+.cns-card {
+  width: 100%;
+  max-width: 640px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 28px 28px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.cns-header h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.cns-header p {
+  margin: 0 0 24px;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.cns-section {
+  margin-bottom: 24px;
+}
+
+.cns-section h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+}
+
+.cns-optional {
+  text-transform: none;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #94a3b8;
+}
+
+.cns-sp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.cns-sp-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.cns-sp-card:hover {
+  border-color: #94a3b8;
+}
+
+.cns-sp-card--active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.cns-sp-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.cns-sp-card__status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.cns-sp-card__status--open {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.cns-sp-card__status--closed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.cns-hint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.cns-hint--warn {
+  color: #b45309;
+}
+
+.cns-customer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.cns-customer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cns-customer-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.cns-customer-name--muted {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.cns-customer-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.cns-customer-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cns-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+}

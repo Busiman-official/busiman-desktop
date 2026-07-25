@@ -26,6 +26,7 @@ import { salesService } from '@/services/sales.service';
 import { IndicatorRipple } from '@/features/sales/components/indicator_ripple';
 import { CustomerDetailsPage } from './CustomerDetailsPage';
 import { OrderDetailPage, OrderDetailHeaderActions } from './OrderDetailPage';
+import { CreateNewSalePage } from './CreateNewSalePage';
 import './SalesPage.css';
 
 const TAB_DEFS = [
@@ -77,6 +78,8 @@ export const SalesPage: React.FC = () => {
   const orderDetailMatch = useMatch({ path: '/sales/orders/:orderId', end: true });
   const isOrderDetail = Boolean(orderDetailMatch);
   const orderDetailId = orderDetailMatch?.params.orderId;
+  const createNewMatch = useMatch({ path: '/sales/new', end: true });
+  const isCreateNew = Boolean(createNewMatch);
   const branchId = useSalesBranchId();
   const user = authStore((s) => s.user);
   const isAdmin = user?.role === UserRole.ADMIN;
@@ -203,6 +206,31 @@ export const SalesPage: React.FC = () => {
     [isCustomerDetail, isOrderDetail, navigate, searchParams, setSearchParams]
   );
 
+  const goCreateNewSale = useCallback(() => {
+    const p = new URLSearchParams(searchParams);
+    p.set('tab', 'orders');
+    navigate(`/sales/new?${p.toString()}`);
+  }, [navigate, searchParams]);
+
+  const cancelCreateNewSale = useCallback(() => {
+    const p = new URLSearchParams(searchParams);
+    p.set('tab', 'orders');
+    navigate(`/sales?${p.toString()}`);
+  }, [navigate, searchParams]);
+
+  const startNewSale = useCallback(
+    (spId: string, custId: string | null) => {
+      const p = new URLSearchParams(searchParams);
+      p.set('tab', 'orders');
+      p.set('salesPointId', spId);
+      if (custId) p.set('customerId', custId);
+      else p.delete('customerId');
+      p.delete('posOrderForCustomer');
+      navigate(`/sales?${p.toString()}`);
+    },
+    [navigate, searchParams]
+  );
+
   const setBranchQueryId = useCallback(
     (id: string) => {
       const p = new URLSearchParams(searchParams);
@@ -300,7 +328,7 @@ export const SalesPage: React.FC = () => {
   );
 
   const salesPointContext =
-    isOrdersTab && !isCustomerDetail && !isOrderDetail ? (
+    isOrdersTab && !isCustomerDetail && !isOrderDetail && !isCreateNew ? (
       <Select
         value={salesPointId || ''}
         onChange={(e) => setSalesPointId(e.target.value)}
@@ -317,6 +345,10 @@ export const SalesPage: React.FC = () => {
 
   const headerTrailing = isOrderDetail && orderDetailId ? (
     <OrderDetailHeaderActions orderId={orderDetailId} />
+  ) : isOrdersTab && !isCustomerDetail && !isCreateNew ? (
+    <Button type="button" variant="primary" onClick={goCreateNewSale}>
+      + New sale
+    </Button>
   ) : isCustomerDetail ? (
     <>
       <Input
@@ -366,7 +398,13 @@ export const SalesPage: React.FC = () => {
     </Button>
   ) : null;
 
-  const pageTitle = isOrderDetail ? 'Order' : isCustomerDetail ? PAGE_TITLES.customers : PAGE_TITLES[activeTab];
+  const pageTitle = isOrderDetail
+    ? 'Order'
+    : isCreateNew
+      ? 'New sale'
+      : isCustomerDetail
+        ? PAGE_TITLES.customers
+        : PAGE_TITLES[activeTab];
 
   const tabActiveOverride = useCallback(
     (tabId: string) => {
@@ -435,6 +473,14 @@ export const SalesPage: React.FC = () => {
           <OrderDetailPage branches={branches} salesPoints={salesPoints} />
         ) : isCustomerDetail ? (
           <CustomerDetailsPage />
+        ) : isCreateNew ? (
+          <CreateNewSalePage
+            branchId={branchId}
+            salesPoints={salesPoints}
+            customers={customers}
+            onCancel={cancelCreateNewSale}
+            onStart={startNewSale}
+          />
         ) : (
           pageContentMain
         )}

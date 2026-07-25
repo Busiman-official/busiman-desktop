@@ -824,10 +824,10 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
         title="Delete Variant"
         message={
           deleteVariantStockOnHand === null
-            ? 'Are you sure you want to delete this variant? This action cannot be undone. Checking stock…'
+            ? 'Permanently delete this variant? This also deletes its serial numbers, stock, and movement history. This cannot be undone. Checking stock…'
             : deleteVariantStockOnHand > 0
-              ? `This variant has ${deleteVariantStockOnHand} unit${deleteVariantStockOnHand === 1 ? '' : 's'} on hand. Deleting will remove the variant from the product. Move or adjust stock first if you need to preserve it. Are you sure you want to delete?`
-              : 'Are you sure you want to delete this variant? This action cannot be undone. Make sure there is no stock associated with this variant.'
+              ? `This variant has ${deleteVariantStockOnHand} unit${deleteVariantStockOnHand === 1 ? '' : 's'} on hand. Deleting will permanently remove this variant AND that stock, its serial numbers, and its movement history. This cannot be undone.`
+              : 'Permanently delete this variant? This also deletes its serial numbers, stock, and movement history. This cannot be undone.'
         }
         onConfirm={handleDelete}
         onCancel={() => {

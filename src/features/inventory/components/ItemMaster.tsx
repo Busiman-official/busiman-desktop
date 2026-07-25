@@ -3400,7 +3400,7 @@ export const ItemMaster: React.FC = () => {
       <ConfirmDialog
         isOpen={showDeleteConfirm}
         title="Delete Item"
-        message="Are you sure you want to delete this item? This action cannot be undone."
+        message="Permanently delete this product? This also deletes ALL of its variants, serial numbers, batches, stock, and movement history. This cannot be undone."
         onConfirm={() => handleDelete()}
         onCancel={() => {
           setShowDeleteConfirm(false);
@@ -3413,7 +3413,7 @@ export const ItemMaster: React.FC = () => {
         title="Delete variant"
         message={
           variantDeleteTarget
-            ? `Delete variant "${variantDeleteTarget.label}"? This cannot be undone.`
+            ? `Permanently delete variant "${variantDeleteTarget.label}"? This also deletes its serial numbers, stock, and movement history. This cannot be undone.`
             : ""
         }
         onConfirm={() => void handleConfirmVariantDelete()}
