@@ -1046,6 +1046,7 @@ export const ItemMaster: React.FC = () => {
           variantTracking: {
             batch: vs.some((v) => v.trackBatchOverride),
             serial: vs.some((v) => v.trackSerialOverride),
+            serialOptional: vs.some((v) => v.serialOptionalOverride),
           },
         };
         setVariants((prev) => {

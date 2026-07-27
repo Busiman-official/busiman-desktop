@@ -87,7 +87,13 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
     setRequiresSerialTracking(
       Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial),
     );
-    setSerialOptional(Boolean(item.industryFlags?.serialOptional));
+    // Same fallback as requiresSerialTracking above — the item's own industryFlags.serialOptional
+    // is always written back as false by the server (tracking intent lives on variants), so
+    // without this fallback the drawer would show "Required" again every time it's reopened even
+    // though the save correctly cascaded serialOptionalOverride=true to every variant.
+    setSerialOptional(
+      Boolean(item.industryFlags?.serialOptional || item.variantTracking?.serialOptional),
+    );
     setHasExpiryDate(Boolean(item.industryFlags?.hasExpiryDate ?? false));
     setServiceable(Boolean(item.serviceable));
 

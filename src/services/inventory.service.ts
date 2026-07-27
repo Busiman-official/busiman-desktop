@@ -160,7 +160,7 @@ export interface InventoryItem {
   /** Default variant SKU for list views (from API). */
   displaySku?: string;
   /** Any variant has batch/serial overrides (from API on list). */
-  variantTracking?: { batch: boolean; serial: boolean };
+  variantTracking?: { batch: boolean; serial: boolean; serialOptional: boolean };
 }
 
 export interface InventoryVariant {
