@@ -1234,6 +1234,12 @@ class InventoryService {
     return extractApiData<CountDocumentResponse>(response);
   }
 
+  /** Drop one or more lines from a count (remove a variant, or every line of one master item). */
+  async removeCountLines(id: string, lineNos: number[]): Promise<CountDocumentResponse> {
+    const response = await api.delete(`/inventory/counts/${id}/lines`, { data: { lineNos } });
+    return extractApiData<CountDocumentResponse>(response);
+  }
+
   async setCountRules(
     id: string,
     body: { freezeMovements?: boolean; blindCount?: boolean }

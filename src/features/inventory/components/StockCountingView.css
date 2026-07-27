@@ -99,6 +99,23 @@
   margin-top: 2px;
 }
 
+/* Why the Submit button is disabled, shown right under the action bar */
+.stock-counting-view-submit-block-reason {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+/* Remove-row (✕) button */
+.stock-counting-view-remove-btn {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
 /* Variance colors (red negative, green positive) */
 .stock-counting-view .variance-zero {
   color: #666;

@@ -454,6 +454,62 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     return true;
   });
 
+  /** Mirrors canSubmit's checks but tallies WHY, across every line, instead of just returning a
+   * boolean — with 200+ line counts there's no way to spot the one or two problem rows by eye. */
+  const submitBlockReasons: string[] = (() => {
+    if (!doc?.lines?.length) return [];
+    let missingPhysical = 0;
+    let negativePhysical = 0;
+    let missingReason = 0;
+    let missingBatch = 0;
+    let missingSerials = 0;
+    let missingExpiry = 0;
+    for (const l of doc.lines) {
+      const ph = getPhysical(l);
+      if (ph == null) { missingPhysical++; continue; }
+      if (ph < 0) { negativePhysical++; continue; }
+      const v = ph - l.systemQuantity;
+      if (v === 0) continue;
+      if ((getVarianceReason(l) || '').trim().length === 0) missingReason++;
+      if (l.item?.requiresBatchTracking && !(getBatch(l) || '').trim()) missingBatch++;
+      if (l.item?.requiresSerialTracking && !l.item?.serialOptional) {
+        const s = getSerials(l) ?? [];
+        if (s.length !== Math.abs(v)) missingSerials++;
+      } else if (l.item?.requiresSerialTracking && l.item?.serialOptional) {
+        const s = getSerials(l) ?? [];
+        if (s.length > Math.abs(v)) missingSerials++;
+      }
+      if (l.item?.isPerishable && l.item?.requiresBatchTracking && !getExpiry(l)) missingExpiry++;
+    }
+    const parts: string[] = [];
+    const plural = (n: number) => (n === 1 ? 'line' : 'lines');
+    if (missingPhysical > 0) parts.push(`${missingPhysical} ${plural(missingPhysical)} still need a physical quantity`);
+    if (negativePhysical > 0) parts.push(`${negativePhysical} ${plural(negativePhysical)} have a negative physical quantity`);
+    if (missingReason > 0) parts.push(`${missingReason} ${plural(missingReason)} have a variance but no reason`);
+    if (missingBatch > 0) parts.push(`${missingBatch} ${plural(missingBatch)} need a batch number`);
+    if (missingSerials > 0) parts.push(`${missingSerials} ${plural(missingSerials)} need serial numbers entered`);
+    if (missingExpiry > 0) parts.push(`${missingExpiry} ${plural(missingExpiry)} need an expiry date`);
+    return parts;
+  })();
+
+  /** Drops one or more lines from the count entirely — a single variant, or every variant of
+   * one master item at once. Only ever called on DRAFT/IN_PROGRESS counts (Enter Physical). */
+  const handleRemoveLines = async (lineNos: number[]) => {
+    if (!doc || lineNos.length === 0) return;
+    setError(null);
+    try {
+      const updated = await inventoryService.removeCountLines(doc.id, lineNos);
+      setDoc(updated);
+      setLineEdits((prev) => {
+        const next = { ...prev };
+        for (const n of lineNos) delete next[n];
+        return next;
+      });
+    } catch (err: any) {
+      setError(extractErrorMessage(err, 'Failed to remove line(s)'));
+    }
+  };
+
   const handleSubmit = async () => {
     if (!doc || !canSubmit) return;
     setError(null);
@@ -993,6 +1049,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         </div>
         {error && <div className="error-message">{error}</div>}
         {success && <div className="success-message">{success}</div>}
+        {!canSubmit && submitBlockReasons.length > 0 && (
+          <div className="stock-counting-view-submit-block-reason">
+            Can't submit yet — {submitBlockReasons.join(' · ')}.
+          </div>
+        )}
         <div className="counting-table">
           <table>
             <thead>
@@ -1004,6 +1065,7 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                 <th>Variance</th>
                 <th>Variance reason</th>
                 <th title="Required for batch-tracked items when there is a variance">Batch</th>
+                <th title="Remove this row from the count"></th>
               </tr>
             </thead>
             <tbody>
@@ -1078,6 +1140,21 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                           </div>
                         </td>
                         <td>—</td>
+                        <td>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="stock-counting-view-remove-btn"
+                            onClick={() => {
+                              if (window.confirm(`Remove all ${lines.length} variants of "${first?.item?.name ?? itemId}" from this count?`)) {
+                                void handleRemoveLines(lines.map((l) => l.lineNo));
+                              }
+                            }}
+                            title="Remove this whole item (all its variants) from the count"
+                          >
+                            ✕
+                          </Button>
+                        </td>
                       </tr>
                       {!collapsed && lines.map((l) => {
                         const ph = getPhysical(l);
@@ -1113,6 +1190,17 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                                   {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
                                 </span>
                               ) : '—'}
+                            </td>
+                            <td>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="stock-counting-view-remove-btn"
+                                onClick={() => void handleRemoveLines([l.lineNo])}
+                                title="Remove this variant from the count"
+                              >
+                                ✕
+                              </Button>
                             </td>
                           </tr>
                         );
@@ -1156,6 +1244,17 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                             {getSerials(l).length > 0 ? <span className="stock-counting-view-tracking-summary">{getSerials(l).length} serials</span> : null}
                           </span>
                         ) : '—'}
+                      </td>
+                      <td>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="stock-counting-view-remove-btn"
+                          onClick={() => void handleRemoveLines([l.lineNo])}
+                          title="Remove this item from the count"
+                        >
+                          ✕
+                        </Button>
                       </td>
                     </tr>
                   );
