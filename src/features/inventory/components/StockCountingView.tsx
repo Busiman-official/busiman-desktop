@@ -90,8 +90,12 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
   // Enter physical: line edits (lineNo -> { physicalQuantity?, varianceReason?, batchNumber?, serialNumbers?, manufacturingDate?, expiryDate? })
   type LineEditPatch = { physicalQuantity?: number; varianceReason?: string; batchNumber?: string; serialNumbers?: string[]; serialAttributes?: Record<string, Record<string, any>>; manufacturingDate?: string; expiryDate?: string };
   const [lineEdits, setLineEdits] = useState<Record<number, LineEditPatch>>({});
-  const [bulkReason, setBulkReason] = useState('');
+  // Per-master (itemId) bulk-entry inputs shown on a variant group's parent row — type once,
+  // apply to every variant under that item, instead of repeating the same value per row.
+  const [bulkQtyByItem, setBulkQtyByItem] = useState<Record<string, string>>({});
+  const [bulkReasonByItem, setBulkReasonByItem] = useState<Record<string, string>>({});
   const [savingLines, setSavingLines] = useState(false);
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   // Collapse state for variant groups (itemIds that are collapsed)
   const [collapsedItems, setCollapsedItems] = useState<Set<string>>(new Set());
@@ -379,6 +383,30 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     }
   };
 
+  // Entries are kept locally (lineEdits) and only pushed to the server on an explicit
+  // "Save as draft" click — leaving with edits still pending would silently discard them, so
+  // this is the single choke point every way off the Enter Physical screen must go through.
+  const handleBackToList = () => {
+    if (Object.keys(lineEdits).length > 0) {
+      setShowUnsavedDialog(true);
+      return;
+    }
+    setDoc(null);
+    setViewMode('list');
+  };
+
+  const handleSaveAndLeave = async () => {
+    setShowUnsavedDialog(false);
+    await handleSaveLines(true);
+  };
+
+  const handleDiscardAndLeave = () => {
+    setShowUnsavedDialog(false);
+    setLineEdits({});
+    setDoc(null);
+    setViewMode('list');
+  };
+
   const getLineEdit = (lineNo: number) => lineEdits[lineNo] ?? {};
   const setLineEdit = (lineNo: number, patch: Partial<LineEditPatch>) => {
     setLineEdits((prev) => {
@@ -568,16 +596,47 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     URL.revokeObjectURL(a.href);
   };
 
-  const applyBulkReasonToVarianceLines = () => {
-    if (!doc || !bulkReason.trim()) return;
+  /** Sets the same physical quantity on every variant line of one master item — for the common
+   * case where a whole item's variants were genuinely all counted at the same quantity. */
+  const applyBulkQtyToItem = (itemId: string, lines: CountLineDto[]) => {
+    const raw = bulkQtyByItem[itemId];
+    if (raw == null || raw === '') return;
+    const qty = Number(raw);
+    if (!Number.isFinite(qty) || qty < 0) return;
     setLineEdits((prev) => {
       const next = { ...prev };
-      for (const line of doc.lines || []) {
+      for (const line of lines) {
+        next[line.lineNo] = { ...(next[line.lineNo] ?? {}), physicalQuantity: qty };
+      }
+      return next;
+    });
+  };
+
+  /** One-click "nothing changed" for a whole item — sets physical = system for every variant,
+   * clearing any reason those lines no longer need since the variance becomes zero. */
+  const applyMatchSystemToItem = (lines: CountLineDto[]) => {
+    setLineEdits((prev) => {
+      const next = { ...prev };
+      for (const line of lines) {
+        next[line.lineNo] = { ...(next[line.lineNo] ?? {}), physicalQuantity: line.systemQuantity, varianceReason: '' };
+      }
+      return next;
+    });
+  };
+
+  /** Applies one reason to every variant of this item that currently has a variance — so a
+   * single shared cause (e.g. "damaged in transit") doesn't need retyping per variant row. */
+  const applyBulkReasonToItem = (itemId: string, lines: CountLineDto[]) => {
+    const reason = (bulkReasonByItem[itemId] || '').trim();
+    if (!reason) return;
+    setLineEdits((prev) => {
+      const next = { ...prev };
+      for (const line of lines) {
         const ph = getPhysical(line);
         if (ph == null) continue;
         const variance = ph - line.systemQuantity;
         if (variance !== 0) {
-          next[line.lineNo] = { ...(next[line.lineNo] ?? {}), varianceReason: bulkReason.trim() };
+          next[line.lineNo] = { ...(next[line.lineNo] ?? {}), varianceReason: reason };
         }
       }
       return next;
@@ -910,8 +969,15 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         <div className="details-header">
           <h2>Enter Physical Stock</h2>
           <div className="details-actions">
-            <Button variant="secondary" onClick={() => setViewMode('list')}>Back to list</Button>
-            <Button variant="ghost" onClick={() => handleSaveLines(true)} disabled={savingLines} title="Save entered quantities and variance reasons">Save</Button>
+            <Button variant="secondary" onClick={handleBackToList}>Back to list</Button>
+            <Button
+              variant={Object.keys(lineEdits).length > 0 ? 'primary' : 'ghost'}
+              onClick={() => handleSaveLines(false)}
+              disabled={savingLines}
+              title="Save entered quantities and variance reasons without leaving this screen"
+            >
+              {savingLines ? 'Saving…' : Object.keys(lineEdits).length > 0 ? 'Save as draft •' : 'Save as draft'}
+            </Button>
             <Button
               variant="primary"
               onClick={handleSubmit}
@@ -950,17 +1016,68 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                 if (isVariantGroup) {
                   return (
                     <React.Fragment key={itemId}>
-                      <tr
-                        className="stock-counting-view-parent-row"
-                        onClick={() => toggleCollapse(itemId)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCollapse(itemId); } }}
-                      >
-                        <td><span className="stock-counting-view-chevron">{collapsed ? '▸' : '▾'}</span> {first?.item?.name ?? itemId}</td>
+                      <tr className="stock-counting-view-parent-row">
+                        <td
+                          className="stock-counting-view-parent-label"
+                          onClick={() => toggleCollapse(itemId)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCollapse(itemId); } }}
+                        >
+                          <span className="stock-counting-view-chevron">{collapsed ? '▸' : '▾'}</span> {first?.item?.name ?? itemId}
+                        </td>
                         <td>{lines.length} variants</td>
                         {!blind && <td>—</td>}
-                        <td colSpan={6}>—</td>
+                        <td>
+                          <div className="stock-counting-view-bulk-qty">
+                            <Input
+                              type="number"
+                              min={0}
+                              step={1}
+                              placeholder="Bulk qty"
+                              value={bulkQtyByItem[itemId] ?? ''}
+                              onChange={(e) => setBulkQtyByItem((p) => ({ ...p, [itemId]: e.target.value }))}
+                            />
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => applyBulkQtyToItem(itemId, lines)}
+                              disabled={bulkQtyByItem[itemId] == null || bulkQtyByItem[itemId] === ''}
+                              title="Set this quantity on every variant of this item"
+                            >
+                              Apply
+                            </Button>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="stock-counting-view-match-system"
+                            onClick={() => applyMatchSystemToItem(lines)}
+                            title="Set physical = system for every variant of this item (nothing changed)"
+                          >
+                            Match system
+                          </Button>
+                        </td>
+                        <td>—</td>
+                        <td>
+                          <div className="stock-counting-view-bulk-reason">
+                            <Input
+                              placeholder="Bulk reason"
+                              value={bulkReasonByItem[itemId] ?? ''}
+                              onChange={(e) => setBulkReasonByItem((p) => ({ ...p, [itemId]: e.target.value }))}
+                            />
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => applyBulkReasonToItem(itemId, lines)}
+                              disabled={!(bulkReasonByItem[itemId] || '').trim()}
+                              title="Apply this reason to every variant of this item that has a variance"
+                            >
+                              Apply
+                            </Button>
+                          </div>
+                        </td>
+                        <td>—</td>
                       </tr>
                       {!collapsed && lines.map((l) => {
                         const ph = getPhysical(l);
@@ -979,7 +1096,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                                 step={1}
                                 value={ph ?? ''}
                                 onChange={(e) => setLineEdit(l.lineNo, { physicalQuantity: e.target.value === '' ? undefined : Number(e.target.value) })}
-                                onBlur={() => { if (Object.keys(lineEdits).length > 0) handleSaveLines(); }}
                               />
                             </td>
                             <td>{ph != null ? <span className={varianceClass(v)}>{v > 0 ? '+' : ''}{v}</span> : '—'}</td>
@@ -988,7 +1104,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                                 value={getVarianceReason(l)}
                                 onChange={(e) => setLineEdit(l.lineNo, { varianceReason: e.target.value })}
                                 placeholder={needReason ? 'Required' : 'Optional'}
-                                onBlur={() => { if (Object.keys(lineEdits).length > 0) handleSaveLines(); }}
                               />
                             </td>
                             <td>
@@ -1023,7 +1138,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                           step={1}
                           value={ph ?? ''}
                           onChange={(e) => setLineEdit(l.lineNo, { physicalQuantity: e.target.value === '' ? undefined : Number(e.target.value) })}
-                          onBlur={() => { if (Object.keys(lineEdits).length > 0) handleSaveLines(); }}
                         />
                       </td>
                       <td>{ph != null ? <span className={varianceClass(v)}>{v > 0 ? '+' : ''}{v}</span> : '—'}</td>
@@ -1032,7 +1146,6 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
                           value={getVarianceReason(l)}
                           onChange={(e) => setLineEdit(l.lineNo, { varianceReason: e.target.value })}
                           placeholder={needReason ? 'Required' : 'Optional'}
-                          onBlur={() => { if (Object.keys(lineEdits).length > 0) handleSaveLines(); }}
                         />
                       </td>
                      
@@ -1262,6 +1375,22 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
           />
         );
       })()}
+
+      <Modal
+        isOpen={showUnsavedDialog}
+        onClose={() => setShowUnsavedDialog(false)}
+        title="Unsaved changes"
+        size="md"
+      >
+        <div className="confirm-dialog">
+          <p>You have physical counts or reasons that haven't been saved yet. Save them as a draft before leaving?</p>
+          <div className="form-actions" style={{ marginTop: 16 }}>
+            <Button variant="secondary" onClick={() => setShowUnsavedDialog(false)}>Cancel</Button>
+            <Button variant="danger" onClick={handleDiscardAndLeave}>Discard changes</Button>
+            <Button variant="primary" onClick={() => void handleSaveAndLeave()}>Save as draft & leave</Button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         isOpen={showApproveDialog}
