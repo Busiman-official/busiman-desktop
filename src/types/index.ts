@@ -35,6 +35,8 @@ export interface User {
   sipExtension?: string;
   voipEnabled?: boolean;
   sipPasswordGenerated?: string;
+  /** Fine-grained feature flags within modules (e.g. 'canBackdateSale'). */
+  featurePermissions?: string[];
 }
 
 // Auth types
@@ -403,6 +405,8 @@ export interface EmployeeDetails {
   breakRuleOverride?: boolean;
   holidayWorkingPermission?: boolean;
   canActAsProxy?: boolean;
+  /** Fine-grained feature flags within modules (e.g. 'canBackdateSale'). */
+  featurePermissions?: string[];
 
   // VoIP
   sipExtension?: string;
@@ -465,12 +469,14 @@ export interface UpdateEmployeeDetailsRequest {
   breakRuleOverride?: boolean;
   holidayWorkingPermission?: boolean;
   canActAsProxy?: boolean;
+  /** Fine-grained feature flags within modules (e.g. 'canBackdateSale'). Whole array replaced. */
+  featurePermissions?: string[];
 
   // VoIP (HR/Admin)
   enableVoip?: boolean;
   sipExtension?: string;
   resetVoipPassword?: boolean;
-  
+
   // Optional reason for audit
   reason?: string;
 }

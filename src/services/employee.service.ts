@@ -25,6 +25,8 @@ export interface CreateEmployeeRequest {
   role: UserRole;
   department?: string;
   visibleDepartments?: string[];
+  /** Fine-grained feature flags within modules (e.g. 'canBackdateSale'). */
+  featurePermissions?: string[];
   branchId?: string;
   phoneNumber?: string;
   address?: string;

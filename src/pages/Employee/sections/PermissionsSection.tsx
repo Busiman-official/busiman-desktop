@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { EmployeeDetails, UpdateEmployeeDetailsRequest } from '@/types';
+import { EmployeeDetails, UpdateEmployeeDetailsRequest, UserRole } from '@/types';
 import { CollapsibleSection } from '@/shared/components/ui';
 import './PermissionsSection.css';
 
@@ -37,6 +37,17 @@ export const PermissionsSection: React.FC<PermissionsSectionProps> = ({
       [field]: value,
     };
     await onUpdate(update);
+    onUnsavedChange(false);
+  };
+
+  /** featurePermissions is a single array field shared by several flags — toggling one means
+   * replacing the whole array with the flag added/removed, not setting a dedicated column. */
+  const handleFeaturePermissionToggle = async (permission: string, enabled: boolean) => {
+    const current = employee.featurePermissions ?? [];
+    const next = enabled
+      ? [...current.filter((p) => p !== permission), permission]
+      : current.filter((p) => p !== permission);
+    await onUpdate({ featurePermissions: next });
     onUnsavedChange(false);
   };
 
@@ -170,6 +181,56 @@ export const PermissionsSection: React.FC<PermissionsSectionProps> = ({
               Allow this employee to act as a proxy server for attendance requests
             </small>
           </div>
+
+          {employee.visibleDepartments?.includes('sales') && employee.role !== UserRole.ADMIN ? (
+            <div className="form-field toggle-field">
+              <label className="field-label">Backdate Sales</label>
+              {canEdit ? (
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={employee.featurePermissions?.includes('canBackdateSale') || false}
+                    onChange={(e) => handleFeaturePermissionToggle('canBackdateSale', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+              ) : (
+                <div className="field-value read-only">
+                  {employee.featurePermissions?.includes('canBackdateSale') ? 'Yes' : 'No'}
+                </div>
+              )}
+              <small className="field-hint">
+                Register a counter sale against a past date instead of today. Off by default for
+                every role — admins always have this.
+              </small>
+            </div>
+          ) : null}
+
+          {employee.visibleDepartments?.includes('expense') && employee.role !== UserRole.ADMIN ? (
+            <div className="form-field toggle-field">
+              <label className="field-label">Skip Expense Approval</label>
+              {canEdit ? (
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={employee.featurePermissions?.includes('canSkipExpenseApproval') || false}
+                    onChange={(e) => handleFeaturePermissionToggle('canSkipExpenseApproval', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+              ) : (
+                <div className="field-value read-only">
+                  {employee.featurePermissions?.includes('canSkipExpenseApproval') ? 'Yes' : 'No'}
+                </div>
+              )}
+              <small className="field-hint">
+                This employee's expenses are approved automatically, skipping the branch's
+                manager-approval threshold. Off by default for every role — admins always have this.
+              </small>
+            </div>
+          ) : null}
         </div>
       </div>
     </CollapsibleSection>

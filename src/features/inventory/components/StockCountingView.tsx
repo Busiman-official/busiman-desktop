@@ -324,9 +324,14 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     if (wizardStep === 3) setWizardStep(2);
   };
 
-  const handleSaveLines = async (redirectToList?: boolean) => {
-    if (!doc) return;
-    const lines = Object.entries(lineEdits)
+  /** Only ever sends lines with an actual PENDING local edit — not the whole document. Submit
+   * used to re-flush every line in doc.lines (including ones already saved, unchanged) on every
+   * click; for a 250+ line count that's a huge, mostly-redundant payload hitting the same write
+   * path as Save as draft. The server's submitCount re-reads lines from the DB itself, so all
+   * the client needs to guarantee is that pending edits landed first — nothing more. */
+  const buildLineUpdatesFromEdits = () => {
+    if (!doc) return [];
+    return Object.entries(lineEdits)
       .filter(([, v]) =>
         v.physicalQuantity != null ||
         (v.varianceReason != null && v.varianceReason !== '') ||
@@ -352,6 +357,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
         return out;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
+  };
+
+  const handleSaveLines = async (redirectToList?: boolean) => {
+    if (!doc) return;
+    const lines = buildLineUpdatesFromEdits();
     if (lines.length === 0) {
       setSuccess('No changes to save');
       setTimeout(() => setSuccess(null), 2500);
@@ -515,29 +525,11 @@ export const StockCountingView: React.FC<StockCountingViewProps> = ({ onViewMove
     setError(null);
     setSuccess(null);
     try {
-      const linesToFlush = (doc.lines || [])
-        .map((l) => {
-          const ph = getPhysical(l);
-          if (ph === undefined) return null;
-          const batch = (getBatch(l) || '').trim() || undefined;
-          const serials = getSerials(l);
-          const serialAttrs = getSerialAttributes(l);
-          return {
-            lineNo: l.lineNo,
-            physicalQuantity: ph,
-            varianceReason: (getVarianceReason(l) || '').trim() || undefined,
-            batchNumber: batch,
-            serialNumbers: serials?.length ? serials : undefined,
-            serialAttributes: serialAttrs && Object.keys(serialAttrs).length > 0 ? serialAttrs : undefined,
-            manufacturingDate: getMfg(l) || undefined,
-            expiryDate: getExpiry(l) || undefined,
-            expectedVersion: l.lineVersion,
-          };
-        })
-        .filter((x): x is NonNullable<typeof x> => x !== null && x.physicalQuantity !== undefined);
+      const linesToFlush = buildLineUpdatesFromEdits();
       if (linesToFlush.length > 0) {
         const updated = await inventoryService.updateCountLines(doc.id, { lines: linesToFlush });
         setDoc(updated);
+        setLineEdits({});
       }
       const updated = await inventoryService.submitCount(doc.id);
       setDoc(updated);

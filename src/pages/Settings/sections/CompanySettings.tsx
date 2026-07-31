@@ -16,7 +16,7 @@ import { User, UserRole } from '@/types';
 import { logger } from '@/shared/utils/logger';
 import { Modal } from '@/shared/components/modals/Modal';
 
-const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'sales', 'purchases', 'calendar', 'service'] as const;
+const STANDARD_DEPARTMENTS = ['attendance', 'inventory', 'sales', 'purchases', 'calendar', 'service', 'expense'] as const;
 import './CompanySettings.css';
 
 type CompanySettingsTab = 'details' | 'branches';

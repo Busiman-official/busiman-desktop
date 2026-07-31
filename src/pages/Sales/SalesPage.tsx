@@ -83,6 +83,10 @@ export const SalesPage: React.FC = () => {
   const branchId = useSalesBranchId();
   const user = authStore((s) => s.user);
   const isAdmin = user?.role === UserRole.ADMIN;
+  /** Off by default for every role (including manager/hr) — only admins and users explicitly
+   * granted 'canBackdateSale' can register a counter sale against a past date. The server
+   * independently re-checks this at checkout time regardless of what the UI shows/allows. */
+  const canBackdateSale = isAdmin || (user?.featurePermissions?.includes('canBackdateSale') ?? false);
   const adminBranchLockedRef = useRef(!!searchParams.get('branchId'));
 
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -252,9 +256,13 @@ export const SalesPage: React.FC = () => {
   );
 
   const posInvoiceDateYmd = useMemo(() => {
+    // Ignore a stale/manually-edited ?invoiceDate= param once permission is missing — otherwise
+    // a leftover backdated value would keep flowing into checkout even with the picker hidden.
+    // (The server independently re-checks this too; this just keeps the UI honest.)
+    if (!canBackdateSale) return localDateISO();
     const raw = searchParams.get('invoiceDate')?.trim() || '';
     return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : localDateISO();
-  }, [searchParams]);
+  }, [searchParams, canBackdateSale]);
 
   const branchSelectOptions = useMemo(() => {
     const fromApi = branches.map((b) => ({
@@ -289,7 +297,7 @@ export const SalesPage: React.FC = () => {
 
   const showBranchInHeader = isAdmin && !isCustomersTabUi;
   const showPosInvoiceDate =
-    isOrdersTab && !isCustomerDetail && !isOrderDetail;
+    isOrdersTab && !isCustomerDetail && !isOrderDetail && canBackdateSale;
   const invoiceDateInput = showPosInvoiceDate ? (
     <input
       type="date"

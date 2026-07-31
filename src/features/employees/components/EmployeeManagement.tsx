@@ -66,6 +66,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
     role: UserRole.EMPLOYEE,
     branchId: '',
     visibleDepartments: [],
+    featurePermissions: [],
     phoneNumber: '',
     employeeId: '',
     designation: '',
@@ -221,6 +222,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       role: UserRole.EMPLOYEE,
       branchId: '',
       visibleDepartments: [],
+      featurePermissions: [],
       phoneNumber: '',
       employeeId: '',
       designation: '',
@@ -411,7 +413,15 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
   };
 
   const handleVisibleDepartmentsChange = (next: string[]) => {
-    setFormData((prev) => ({ ...prev, visibleDepartments: next }));
+    setFormData((prev) => ({
+      ...prev,
+      visibleDepartments: next,
+      featurePermissions: (prev.featurePermissions ?? []).filter((p) => {
+        if (!next.includes('sales') && p === 'canBackdateSale') return false;
+        if (!next.includes('expense') && p === 'canSkipExpenseApproval') return false;
+        return true;
+      }),
+    }));
   };
 
   const handleSectionToggle = (sectionId: string) => {
@@ -721,6 +731,42 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                     }
                   />
                 </div>
+
+                {formData.visibleDepartments?.includes('sales') && formData.role !== UserRole.ADMIN ? (
+                  <div className="form-row form-row--full">
+                    <Checkbox
+                      checked={formData.featurePermissions?.includes('canBackdateSale') ?? false}
+                      label="Allow backdating sales (register a counter sale against a past date)"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          featurePermissions: e.target.checked
+                            ? [...(prev.featurePermissions ?? []).filter((p) => p !== 'canBackdateSale'), 'canBackdateSale']
+                            : (prev.featurePermissions ?? []).filter((p) => p !== 'canBackdateSale'),
+                        }))
+                      }
+                      disabled={loading}
+                    />
+                  </div>
+                ) : null}
+
+                {formData.visibleDepartments?.includes('expense') && formData.role !== UserRole.ADMIN ? (
+                  <div className="form-row form-row--full">
+                    <Checkbox
+                      checked={formData.featurePermissions?.includes('canSkipExpenseApproval') ?? false}
+                      label="Skip expense approval (this employee's expenses are auto-approved, bypassing the branch threshold)"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          featurePermissions: e.target.checked
+                            ? [...(prev.featurePermissions ?? []).filter((p) => p !== 'canSkipExpenseApproval'), 'canSkipExpenseApproval']
+                            : (prev.featurePermissions ?? []).filter((p) => p !== 'canSkipExpenseApproval'),
+                        }))
+                      }
+                      disabled={loading}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="form-row">
                   <Input
