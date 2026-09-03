@@ -69,24 +69,33 @@ export const PosCartLineListCard: React.FC<Props> = ({
           {line.serialWarning ? (
             <div className="pos-cart-list-card__serial-row" role="status">
               {serialComplete ? (
-                <span className="pos-cart-list-card__serial-ok">{serialLabel}</span>
+                <span
+                  className={
+                    line.serialOptional && (line.serialNumbers?.length ?? 0) === 0
+                      ? 'pos-cart-list-card__serial-optional'
+                      : 'pos-cart-list-card__serial-ok'
+                  }
+                >
+                  {serialLabel}
+                </span>
               ) : (
-                <>
-                  <span className="pos-cart-list-card__serial-warn">{serialLabel}</span>
-                  {onPickSerials ? (
-                    <button
-                      type="button"
-                      className="pos-cart-list-card__serial-pick"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPickSerials();
-                      }}
-                    >
-                      Pick
-                    </button>
-                  ) : null}
-                </>
+                <span className="pos-cart-list-card__serial-warn">{serialLabel}</span>
               )}
+              {/* Mandatory lines only offer Pick while incomplete (matches serialComplete gating
+                  above); an optional line is always "complete" so it needs its own always-visible
+                  entry point — otherwise there'd be no way to add a serial to it from the cart row. */}
+              {onPickSerials && (!serialComplete || line.serialOptional) ? (
+                <button
+                  type="button"
+                  className="pos-cart-list-card__serial-pick"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPickSerials();
+                  }}
+                >
+                  Pick
+                </button>
+              ) : null}
             </div>
           ) : null}
           {line.batchWarning ? (

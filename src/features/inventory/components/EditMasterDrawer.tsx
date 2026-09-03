@@ -53,6 +53,11 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
   const [serialOptional, setSerialOptional] = useState(false);
   const [hasExpiryDate, setHasExpiryDate] = useState(false);
   const [serviceable, setServiceable] = useState(false);
+  /** Off by default — this control now only sets the default new variants of this product are
+   * created with. Checking it is an explicit, one-time "also overwrite every existing variant's
+   * own tracking setting" bulk action (see VariantManagement for setting one variant at a time). */
+  const [applyTrackingToAllVariants, setApplyTrackingToAllVariants] = useState(false);
+  const [initialSerialMode, setInitialSerialMode] = useState<'none' | 'required' | 'optional'>('none');
 
   const [industryType, setIndustryType] = useState<IndustryType>(IndustryType.FMCG);
 
@@ -79,21 +84,19 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
         })),
     );
 
-    // Product industryFlags keep tracking false by design; effective flags live on variants
-    // (variantTracking) and must win when industryFlags.requires* is explicitly false.
+    // industryFlags.requires* is the product's own honest default (what a newly-created variant
+    // inherits) — the `|| item.variantTracking?.*` fallback only matters for items saved before
+    // this was true (older data whose master flags were still zeroed and whose real state only
+    // ever lived on variants); harmless to keep checking it either way.
+    const serialOn = Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial);
+    const serialOpt = Boolean(item.industryFlags?.serialOptional || item.variantTracking?.serialOptional);
     setRequiresBatchTracking(
       Boolean(item.industryFlags?.requiresBatchTracking || item.variantTracking?.batch),
     );
-    setRequiresSerialTracking(
-      Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial),
-    );
-    // Same fallback as requiresSerialTracking above — the item's own industryFlags.serialOptional
-    // is always written back as false by the server (tracking intent lives on variants), so
-    // without this fallback the drawer would show "Required" again every time it's reopened even
-    // though the save correctly cascaded serialOptionalOverride=true to every variant.
-    setSerialOptional(
-      Boolean(item.industryFlags?.serialOptional || item.variantTracking?.serialOptional),
-    );
+    setRequiresSerialTracking(serialOn);
+    setSerialOptional(serialOpt);
+    setInitialSerialMode(!serialOn ? 'none' : serialOpt ? 'optional' : 'required');
+    setApplyTrackingToAllVariants(false);
     setHasExpiryDate(Boolean(item.industryFlags?.hasExpiryDate ?? false));
     setServiceable(Boolean(item.serviceable));
 
@@ -185,6 +188,10 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
           serialOptional: behavior.trackingAllowed && requiresSerialTracking ? serialOptional : false,
           hasExpiryDate: behavior.trackingAllowed ? hasExpiryDate : false,
         },
+        // Explicit opt-in only — see the checkbox next to the Serial tracking control. Leaving
+        // this out (or false) means the change above only sets the default for variants created
+        // from now on; every existing variant keeps whatever it's individually set to.
+        applyTrackingToAllVariants,
         images: images.length
           ? images.map((img) => ({ url: img.url, publicId: img.publicId, isPrimary: img.isPrimary }))
           : [],
@@ -370,7 +377,49 @@ export const EditMasterDrawer: React.FC<EditMasterDrawerProps> = ({ isOpen, item
                     <option value="required">Required (every unit)</option>
                     <option value="optional">Optional (assign at sale/dispatch)</option>
                   </Select>
+                  <p style={{ margin: 0, fontSize: 10, color: '#94a3b8', maxWidth: 220 }}>
+                    Sets the default for new variants. To change one existing variant, edit it
+                    directly below instead.
+                  </p>
                 </div>
+
+                {(() => {
+                  const currentSerialMode: 'none' | 'required' | 'optional' = !requiresSerialTracking
+                    ? 'none'
+                    : serialOptional
+                      ? 'optional'
+                      : 'required';
+                  if (currentSerialMode === initialSerialMode) return null;
+                  return (
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 6,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        maxWidth: 260,
+                        padding: '6px 8px',
+                        background: '#fffbeb',
+                        border: '1px solid #fde68a',
+                        borderRadius: 6,
+                      }}
+                    >
+                      <Checkbox
+                        checked={applyTrackingToAllVariants}
+                        onChange={(e) => setApplyTrackingToAllVariants(e.target.checked)}
+                        aria-label="Apply to all existing variants"
+                      />
+                      <span>
+                        Also apply to every existing variant of this product
+                        <span style={{ display: 'block', color: '#92400e', fontSize: 10 }}>
+                          Overwrites each variant's own serial tracking setting. Leave unchecked
+                          to only change the default for variants created from now on.
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })()}
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12 }}>
                   <Checkbox

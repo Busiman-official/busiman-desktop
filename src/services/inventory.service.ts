@@ -441,6 +441,10 @@ export interface UpdateInventoryItemRequest {
   unitConversions?: UnitConversion[];
   unitConfig?: UnitConfig;
   industryFlags?: Partial<IndustryFlags>;
+  /** Opt-in bulk action: when true, a serial/batch tracking change here also overwrites every
+   * existing variant's own tracking override to match. Off by default — a plain master-form save
+   * must never silently touch variants configured differently via the per-variant editor. */
+  applyTrackingToAllVariants?: boolean;
   itemType?: ItemType;
   isActive?: boolean;
   // Image fields

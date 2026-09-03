@@ -13,8 +13,8 @@ import {
   normalizePosGstRatePercent,
 } from './posLineMath';
 import { ReceivingLocationSelect } from '@/features/inventory/components/ReceivingLocationSelect';
-import { PosSerialCaptureSection } from './PosSerialCaptureSection';
-import { trimSerialsToQuantity } from './posSerialUtils';
+import { PosSerialCaptureSection, type PosSerialCaptureSectionHandle } from './PosSerialCaptureSection';
+import { trimSerialsToQuantity, trimNewSerials } from './posSerialUtils';
 import './PosCartItemDetailPanel.css';
 
 interface Props {
@@ -58,6 +58,7 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
 }) => {
   const isReceipt = mode === 'receipt';
   const priceInputRef = useRef<HTMLInputElement>(null);
+  const serialSectionRef = useRef<PosSerialCaptureSectionHandle>(null);
   const effectiveGst = line ? (line.gstRatePercent ?? normalizePosGstRatePercent(branchTaxPercent)) : 0;
 
   useEffect(() => {
@@ -111,9 +112,11 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
 
   const handleQtyCommit = (n: number) => {
     if (isSerialLine) {
+      const keptSerials = trimSerialsToQuantity(line, n);
       onUpdate({
         quantity: n,
-        serialNumbers: trimSerialsToQuantity(line, n),
+        serialNumbers: keptSerials,
+        newSerialNumbers: trimNewSerials(line, keptSerials),
       });
       return;
     }
@@ -169,6 +172,14 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return;
               e.preventDefault();
+              // This item can carry a serial — Enter here hands off to the scan input instead of
+              // saving/closing, so a cashier who tabs into price first (or has it auto-focused,
+              // see focusPriceOnMount) can't blow past capturing/skipping the serial by accident.
+              // The scan input's own empty-Enter (see onEmptyEnter below) is what actually closes.
+              if (isSerialLine) {
+                serialSectionRef.current?.focus();
+                return;
+              }
               onSave();
             }}
             min={0}
@@ -183,11 +194,19 @@ export const PosCartItemDetailPanel: React.FC<Props> = ({
 
         {isSerialLine ? (
           <PosSerialCaptureSection
+            ref={serialSectionRef}
             line={line}
             salesLocationId={salesLocationId}
             otherCartSerials={otherCartSerials}
             focusOnMount={focusSerialOnMount && embeddedInModal}
-            onSerialNumbersChange={(serialNumbers) => onUpdate({ serialNumbers })}
+            onSerialNumbersChange={(serialNumbers, newSerialNumbers, quantity) =>
+              onUpdate({
+                serialNumbers,
+                newSerialNumbers,
+                ...(quantity != null ? { quantity } : {}),
+              })
+            }
+            onEmptyEnter={onSave}
           />
         ) : null}
 

@@ -20,6 +20,12 @@ export interface PosResolvedLineMeta {
   allowNegativeStock?: boolean;
   /** True when serial/batch tracking applies; POS capture is Phase 2. */
   serialWarning?: boolean;
+  /**
+   * Only meaningful when serialWarning is true. Mirrors the server's SERIAL_OPTIONAL tracking type
+   * (resolveEffectiveTrackingType / effective-tracking.ts) — a serial can be attached but is not
+   * required, so checkout must never block on this line being "incomplete".
+   */
+  serialOptional?: boolean;
   batchWarning?: boolean;
   baseUnit: string;
   defaultSalesUnit: string;
@@ -49,13 +55,22 @@ function resolveLineUnits(item: InventoryItem, variant: InventoryVariant): {
   return { baseUnit, defaultSalesUnit: salesDefault, unitOptions };
 }
 
-function serialBatchWarnings(item: InventoryItem, v: InventoryVariant): { serial?: boolean; batch?: boolean } {
+function serialBatchWarnings(
+  item: InventoryItem,
+  v: InventoryVariant
+): { serial?: boolean; serialOptional?: boolean; batch?: boolean } {
   const serial =
     item.industryFlags?.requiresSerialTracking === true || v.trackSerialOverride === true;
   const batch =
     item.industryFlags?.requiresBatchTracking === true || v.trackBatchOverride === true;
+  // Variant override wins over the item default — same precedence as the server's
+  // resolveEffectiveTrackingType (effective-tracking.ts), and only meaningful when serial is on.
+  const serialOptional = serial && (v.serialOptionalOverride ?? item.industryFlags?.serialOptional ?? false);
   if (!serial && !batch) return {};
-  return { ...(serial ? { serial: true } : {}), ...(batch ? { batch: true } : {}) };
+  return {
+    ...(serial ? { serial: true, serialOptional } : {}),
+    ...(batch ? { batch: true } : {}),
+  };
 }
 
 /** POS stock policy for an item (variant picker, scan, cart meta). */
@@ -106,6 +121,7 @@ export async function resolveBarcodeForPos(barcode: string): Promise<PosResolved
       isNonStock: flags.isNonStock,
       allowNegativeStock: flags.allowNegativeStock,
       serialWarning: w.serial,
+      serialOptional: w.serialOptional,
       batchWarning: w.batch,
       ...resolveLineUnits(fullItem, variant),
     };
@@ -132,6 +148,7 @@ export function buildLineMetaFromItemVariant(
     isNonStock: flags.isNonStock,
     allowNegativeStock: flags.allowNegativeStock,
     serialWarning: w.serial,
+    serialOptional: w.serialOptional,
     batchWarning: w.batch,
     ...resolveLineUnits(item, variant),
   };

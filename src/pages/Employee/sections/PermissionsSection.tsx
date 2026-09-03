@@ -231,6 +231,56 @@ export const PermissionsSection: React.FC<PermissionsSectionProps> = ({
               </small>
             </div>
           ) : null}
+
+          {employee.visibleDepartments?.includes('service') && employee.role !== UserRole.ADMIN ? (
+            <div className="form-field toggle-field">
+              <label className="field-label">Skip Outsourcing Approval</label>
+              {canEdit ? (
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={employee.featurePermissions?.includes('canSkipOutsourcingApproval') || false}
+                    onChange={(e) => handleFeaturePermissionToggle('canSkipOutsourcingApproval', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+              ) : (
+                <div className="field-value read-only">
+                  {employee.featurePermissions?.includes('canSkipOutsourcingApproval') ? 'Yes' : 'No'}
+                </div>
+              )}
+              <small className="field-hint">
+                This employee's outsourcing sends go out immediately, skipping manager approval.
+                Off by default for every role — admins always have this.
+              </small>
+            </div>
+          ) : null}
+
+          {employee.visibleDepartments?.includes('service') && employee.role !== UserRole.ADMIN ? (
+            <div className="form-field toggle-field">
+              <label className="field-label">Backdate Outsourcing</label>
+              {canEdit ? (
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={employee.featurePermissions?.includes('canBackdateOutsourcing') || false}
+                    onChange={(e) => handleFeaturePermissionToggle('canBackdateOutsourcing', e.target.checked)}
+                    disabled={!canEdit}
+                  />
+                  <span className="toggle-slider"></span>
+                </label>
+              ) : (
+                <div className="field-value read-only">
+                  {employee.featurePermissions?.includes('canBackdateOutsourcing') ? 'Yes' : 'No'}
+                </div>
+              )}
+              <small className="field-hint">
+                This employee can register outsourcing orders against a past send date. Off by
+                default for every role — admins always have this.
+              </small>
+            </div>
+          ) : null}
         </div>
       </div>
     </CollapsibleSection>

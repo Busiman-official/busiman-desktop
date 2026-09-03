@@ -16,17 +16,19 @@ export type VariantGridColKey =
   | 'name'
   | 'barcode'
   | 'unit'
+  | 'serialTracking'
   | 'sellingPrice'
   | 'details'
   | 'default'
   | 'delete';
 
-/** Ordered columns (0..7) for focus navigation. */
+/** Ordered columns (0..8) for focus navigation. */
 export const VARIANT_GRID_COL_KEYS: readonly VariantGridColKey[] = [
   'hsn',
   'name',
   'barcode',
   'unit',
+  'serialTracking',
   'sellingPrice',
   'details',
   'default',
@@ -60,6 +62,8 @@ export interface WizardVariantRow {
   allowBackorder?: boolean;
   trackSerialOverride?: boolean;
   trackBatchOverride?: boolean;
+  /** Only meaningful when trackSerialOverride is true. */
+  serialOptionalOverride?: boolean;
   isActive?: boolean;
   isDiscontinued?: boolean;
   /** Whether this specific variant can be booked for after-sales service/repair. Defaults to the master's setting. */
@@ -187,6 +191,7 @@ export function normalizeVariantRows(raw: unknown, productDefaultUnit = 'pcs'): 
       ...(normalizeBoolean(o.allowBackorder) != null ? { allowBackorder: normalizeBoolean(o.allowBackorder) } : {}),
       ...(normalizeBoolean(o.trackSerialOverride) != null ? { trackSerialOverride: normalizeBoolean(o.trackSerialOverride) } : {}),
       ...(normalizeBoolean(o.trackBatchOverride) != null ? { trackBatchOverride: normalizeBoolean(o.trackBatchOverride) } : {}),
+      ...(normalizeBoolean(o.serialOptionalOverride) != null ? { serialOptionalOverride: normalizeBoolean(o.serialOptionalOverride) } : {}),
       ...(normalizeBoolean(o.isActive) != null ? { isActive: normalizeBoolean(o.isActive) } : {}),
       ...(normalizeBoolean(o.isDiscontinued) != null ? { isDiscontinued: normalizeBoolean(o.isDiscontinued) } : {}),
       ...(normalizeBoolean(o.serviceable) != null ? { serviceable: normalizeBoolean(o.serviceable) } : {}),
@@ -222,8 +227,10 @@ export function duplicateVariantRow(rows: WizardVariantRow[], rowIndex: number):
     allowBackorder: row.allowBackorder,
     trackSerialOverride: row.trackSerialOverride,
     trackBatchOverride: row.trackBatchOverride,
+    serialOptionalOverride: row.serialOptionalOverride,
     isActive: row.isActive,
     isDiscontinued: row.isDiscontinued,
+    serviceable: row.serviceable,
     weightOverride: row.weightOverride,
     dimensionsOverride: row.dimensionsOverride ? { ...row.dimensionsOverride } : undefined,
     packSize: row.packSize,

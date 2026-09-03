@@ -9,12 +9,14 @@ import {
   CreateVariantRequest,
   CreateVariantResponse,
   UpdateVariantRequest,
+  ProductType,
 } from '@/services/inventory.service';
-import { Button, Input, Tooltip, Spinner } from '@/shared/components/ui';
+import { Button, Input, Tooltip, Spinner, Select } from '@/shared/components/ui';
 import { DataTable, ColumnDef, FilterConfig } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
 import { logger } from '@/shared/utils/logger';
 import { ConfirmDialog, SideDrawer } from '@/shared/components/modals';
+import { resolveInventoryBehavior } from '../constants/productCatalog';
 import './VariantManagement.css';
 
 /** Inline trash icon for delete-variant control (no extra icon package). */
@@ -45,6 +47,14 @@ interface VariantManagementProps {
   itemName: string;
   /** Product default unit of measure; used when variant has no UoM override. */
   itemDefaultUnitOfMeasure: string;
+  /** Needed to know whether tracking is even allowed for this product (Misc/ASSET items can't). */
+  itemProductType: ProductType;
+  itemIsMisc: boolean;
+  /** Product-level serial tracking default — pre-fills a newly added variant's own setting (each
+   * variant still gets its own explicit, independently-editable value; this is only a starting
+   * point, not something the variant stays tied to afterward). */
+  itemDefaultSerialTracking: boolean;
+  itemDefaultSerialOptional: boolean;
   selectedVariantId?: string;
   onVariantChange?: () => void;
   onVariantCreated?: (
@@ -78,11 +88,19 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
   itemId,
   itemName,
   itemDefaultUnitOfMeasure,
+  itemProductType,
+  itemIsMisc,
+  itemDefaultSerialTracking,
+  itemDefaultSerialOptional,
   selectedVariantId,
   onVariantChange,
   onVariantCreated,
   onVariantSelect,
 }) => {
+  const trackingAllowed = useMemo(
+    () => resolveInventoryBehavior({ productType: itemProductType, isMisc: itemIsMisc }).trackingAllowed,
+    [itemProductType, itemIsMisc],
+  );
   const [variants, setVariants] = useState<InventoryVariant[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +129,8 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
     hsn: '',
     unitOfMeasureOverride: '',
     serviceable: false,
+    trackSerialOverride: itemDefaultSerialTracking,
+    serialOptionalOverride: itemDefaultSerialOptional,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -245,6 +265,8 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
         hsn: formData.hsn?.trim() || '',
         unitOfMeasureOverride: formData.unitOfMeasureOverride?.trim() || undefined,
         serviceable: formData.serviceable,
+        trackSerialOverride: formData.trackSerialOverride,
+        serialOptionalOverride: formData.serialOptionalOverride,
       };
 
       await inventoryService.updateVariant(editingVariantId, updateData);
@@ -354,6 +376,11 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       hsn: variant.hsn || '',
       unitOfMeasureOverride: variant.unitOfMeasureOverride || '',
       serviceable: variant.serviceable ?? false,
+      // Falls back to the product default only for the rare pre-existing variant that somehow
+      // never got an explicit value written (see resolveEffectiveTrackingType's own fallback) —
+      // in practice every variant already carries its own explicit true/false.
+      trackSerialOverride: variant.trackSerialOverride ?? itemDefaultSerialTracking,
+      serialOptionalOverride: variant.serialOptionalOverride ?? itemDefaultSerialOptional,
     });
     setShowDrawer(true);
     setError(null);
@@ -368,6 +395,10 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       hsn: '',
       unitOfMeasureOverride: '',
       serviceable: false,
+      // Pre-filled from the product's current default so a fresh variant starts sensible — still
+      // its own explicit, independently-editable value from the moment it's created.
+      trackSerialOverride: itemDefaultSerialTracking,
+      serialOptionalOverride: itemDefaultSerialOptional,
     });
     setEditingVariantId(null);
     setFieldErrors({});
@@ -391,6 +422,8 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
       hsn: '',
       unitOfMeasureOverride: '',
       serviceable: false,
+      trackSerialOverride: itemDefaultSerialTracking,
+      serialOptionalOverride: itemDefaultSerialOptional,
     });
     setEditingVariantId(null);
     setFieldErrors({});
@@ -532,6 +565,27 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           </span>
         </Tooltip>
       ),
+    },
+    {
+      id: 'serialTracking',
+      header: 'Serial tracking',
+      width: 128,
+      align: 'center',
+      accessor: (variant) => {
+        const label = !variant.trackSerialOverride
+          ? 'Not tracked'
+          : variant.serialOptionalOverride
+            ? 'Optional'
+            : 'Required';
+        return (
+          <Tooltip content={`This variant's own setting: ${label}`}>
+            <span className={`variant-status ${variant.trackSerialOverride ? 'variant-status--active' : 'variant-status--inactive'}`}>
+              <span className="variant-status-dot">{variant.trackSerialOverride ? '●' : '○'}</span>
+              <span>{label}</span>
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       id: 'default',
@@ -770,6 +824,34 @@ export const VariantManagement: React.FC<VariantManagementProps> = ({
           )}
         </label>
       </div>
+
+      {trackingAllowed ? (
+        <div className="form-group">
+          <label htmlFor="variant-serial-mode">Serial tracking</label>
+          <Select
+            id="variant-serial-mode"
+            value={
+              !formData.trackSerialOverride ? 'none' : formData.serialOptionalOverride ? 'optional' : 'required'
+            }
+            onChange={(e) => {
+              const mode = e.target.value as 'none' | 'required' | 'optional';
+              setFormData({
+                ...formData,
+                trackSerialOverride: mode !== 'none',
+                serialOptionalOverride: mode === 'optional',
+              });
+            }}
+            aria-label="Serial tracking for this variant"
+          >
+            <option value="none">Not tracked</option>
+            <option value="required">Required (every unit)</option>
+            <option value="optional">Optional (assign at sale/dispatch)</option>
+          </Select>
+          <p className="variant-form-field-hint">
+            This variant's own setting — independent of the product's default and every other variant.
+          </p>
+        </div>
+      ) : null}
 
       <div className="form-group">
         <label>

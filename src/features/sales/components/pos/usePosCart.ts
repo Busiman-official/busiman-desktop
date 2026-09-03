@@ -12,9 +12,18 @@ export interface PosCartLine {
   /** MISC + tracked inventory: allow selling below zero on hand (matches server POS / movement rules). */
   allowNegativeStock?: boolean;
   serialWarning?: boolean;
+  /** Only meaningful when serialWarning is true — see PosResolvedLineMeta.serialOptional. */
+  serialOptional?: boolean;
   batchWarning?: boolean;
   /** Confirmed serial numbers for ISSUE (one per unit when serialWarning). */
   serialNumbers?: string[];
+  /**
+   * Subset of serialNumbers that don't exist yet — server will mint them on checkout
+   * ("serialize-at-exit", SERIAL_OPTIONAL items only). Kept separate purely so the UI can badge
+   * them distinctly from serials picked out of existing stock; checkout sends serialNumbers as-is
+   * either way, the server re-derives new-vs-existing itself.
+   */
+  newSerialNumbers?: string[];
   /** Per-line discount (this sale only). */
   lineDiscountType?: 'per_unit' | 'flat' | 'percent';
   lineDiscountValue?: number;
@@ -52,8 +61,13 @@ function mergeLine(prev: PosCartLine[], line: PosCartLine, splitByLocation: bool
       isNonStock: next[i].isNonStock || line.isNonStock,
       allowNegativeStock: next[i].allowNegativeStock || line.allowNegativeStock,
       serialWarning: next[i].serialWarning || line.serialWarning,
+      // Optional only if BOTH merging lines agree it's optional — if either resolved as strictly
+      // required (stale meta, a variant override race, etc.) the merged line must not silently
+      // relax to optional and let checkout skip a serial it actually needs.
+      serialOptional: (next[i].serialOptional ?? true) && (line.serialOptional ?? true),
       batchWarning: next[i].batchWarning || line.batchWarning,
       serialNumbers: mergePosSerialNumbers(next[i].serialNumbers, line.serialNumbers),
+      newSerialNumbers: mergePosSerialNumbers(next[i].newSerialNumbers, line.newSerialNumbers),
       lineDiscountType: next[i].lineDiscountType ?? line.lineDiscountType,
       lineDiscountValue: next[i].lineDiscountValue ?? line.lineDiscountValue,
       gstRatePercent: next[i].gstRatePercent ?? line.gstRatePercent,

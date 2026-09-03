@@ -74,10 +74,26 @@
 }
 
 .pos-serial-picked-row__sn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: ui-monospace, monospace;
   font-size: 13px;
   color: #0f172a;
   word-break: break-all;
+}
+
+.pos-serial-picked-row__new {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-family: system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 999px;
 }
 
 .pos-serial-picked-row__remove {

@@ -49,9 +49,16 @@ export interface VariantSpreadsheetGridProps {
   isStepActive?: boolean;
   /** Opens variant details drawer for the given row. */
   onOpenDetails: (rowIndex: number) => void;
+  /** False hides the Serial column entirely — this product's type/Misc setting doesn't support
+   * tracking at all, so there's nothing for a per-row choice to mean. Defaults to true. */
+  trackingAllowed?: boolean;
+  /** Product-level "Tracking & Handling" intent (wizard step 1) — what an untouched row's Serial
+   * cell shows/saves as until the user picks something different for that specific row. */
+  defaultTrackSerial?: boolean;
+  defaultSerialOptional?: boolean;
 }
 
-const GRID_TEMPLATE_COLUMNS = `100px minmax(150px,1fr) 130px 80px 100px 72px 72px 48px`;
+const GRID_TEMPLATE_COLUMNS = `100px minmax(150px,1fr) 130px 80px 150px 100px 72px 72px 48px`;
 
 function colIndexToField(colIndex: number): VariantRowFieldErrorKey | null {
   if (colIndex === 0) return 'hsn';
@@ -75,6 +82,9 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
       className = '',
       isStepActive = true,
       onOpenDetails,
+      trackingAllowed = true,
+      defaultTrackSerial,
+      defaultSerialOptional,
     },
     ref
   ) {
@@ -422,7 +432,7 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
           }
         }
 
-        if (colKey === 'unit' || colKey === 'sellingPrice') {
+        if (colKey === 'unit' || colKey === 'serialTracking' || colKey === 'sellingPrice') {
           if (e.key === 'Tab') {
             e.preventDefault();
             e.stopPropagation();
@@ -546,11 +556,13 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
                       ? 'Barcode'
                         : key === 'unit'
                         ? 'Unit'
-                        : key === 'sellingPrice'
-                          ? 'Selling Price'
-                          : key === 'details'
-                            ? 'More'
-                            : 'Default'}
+                        : key === 'serialTracking'
+                          ? 'Serial'
+                          : key === 'sellingPrice'
+                            ? 'Selling Price'
+                            : key === 'details'
+                              ? 'More'
+                              : 'Default'}
             </div>
           ))}
         </div>
@@ -587,6 +599,9 @@ export const VariantSpreadsheetGrid = forwardRef<VariantSpreadsheetGridHandle, V
                     activeCol={activeCol}
                     unitOfMeasure={unitOfMeasure}
                     unitOptions={unitOptions}
+                    trackingAllowed={trackingAllowed}
+                    defaultTrackSerial={defaultTrackSerial}
+                    defaultSerialOptional={defaultSerialOptional}
                     isDefaultRow={isDefaultRow}
                     gridTemplateColumns={GRID_TEMPLATE_COLUMNS}
                     setCellRef={setCellRef}
@@ -614,6 +629,9 @@ type RowViewProps = {
   activeCol: number;
   unitOfMeasure: string;
   unitOptions?: VariantUnitOption[];
+  trackingAllowed?: boolean;
+  defaultTrackSerial?: boolean;
+  defaultSerialOptional?: boolean;
   isDefaultRow: boolean;
   gridTemplateColumns: string;
   setCellRef: (rowIndex: number, colIndex: number, el: HTMLElement | null) => void;
@@ -637,6 +655,9 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
   activeCol,
   unitOfMeasure,
   unitOptions = [],
+  trackingAllowed = true,
+  defaultTrackSerial,
+  defaultSerialOptional,
   isDefaultRow,
   gridTemplateColumns,
   setCellRef,
@@ -757,12 +778,59 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
         role="gridcell"
         aria-colindex={5}
         className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 4 ? 'variant-grid-cell--active' : ''}`}
-        data-col="sellingPrice"
+        data-col="serialTracking"
         onClick={() => onActivate(rowIndex, 4)}
       >
         <div className="wizard-variant-cell-stack">
+          <Tooltip
+            content={trackingAllowed ? 'Press Space to open the list.' : 'Not available for this product type.'}
+            position="bottom"
+            openOnFocus={true}
+            delay={0}
+          >
+            <Select
+              ref={(el) => setCellRef(rowIndex, 4, el)}
+              className="variant-grid-serial-select"
+              disabled={!trackingAllowed}
+              options={[
+                { value: 'none', label: 'Not tracked' },
+                { value: 'required', label: 'Required (every unit)' },
+                { value: 'optional', label: 'Optional (assign at sale/dispatch)' },
+              ]}
+              value={
+                !(row.trackSerialOverride ?? defaultTrackSerial ?? false)
+                  ? 'none'
+                  : (row.trackSerialOverride === undefined ? defaultSerialOptional : row.serialOptionalOverride)
+                    ? 'optional'
+                    : 'required'
+              }
+              onChange={(e) => {
+                const mode = e.target.value as 'none' | 'required' | 'optional';
+                patchRow(rowIndex, {
+                  trackSerialOverride: mode !== 'none',
+                  serialOptionalOverride: mode === 'optional',
+                  // Serial and batch tracking are mutually exclusive, same as the product-level form.
+                  trackBatchOverride: mode !== 'none' ? false : row.trackBatchOverride,
+                });
+              }}
+              aria-label={`Variant ${rowIndex + 1} serial tracking`}
+              tabIndex={activeRow === rowIndex && activeCol === 4 ? 0 : -1}
+              onKeyDown={(e) => onCellKeyDown(e, rowIndex, 4, null)}
+              onFocus={() => onActivate(rowIndex, 4)}
+            />
+          </Tooltip>
+        </div>
+      </div>
+      <div
+        role="gridcell"
+        aria-colindex={6}
+        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 5 ? 'variant-grid-cell--active' : ''}`}
+        data-col="sellingPrice"
+        onClick={() => onActivate(rowIndex, 5)}
+      >
+        <div className="wizard-variant-cell-stack">
           <Input
-            ref={(el) => setCellRef(rowIndex, 4, el)}
+            ref={(el) => setCellRef(rowIndex, 5, el)}
             type="number"
             min={0}
             step={0.01}
@@ -770,28 +838,28 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
             onChange={(e) => patchRow(rowIndex, { sellingPriceOverride: e.target.value === '' ? undefined : Number(e.target.value) })}
             placeholder="0.00"
             aria-label={`Variant ${rowIndex + 1} selling price`}
-            tabIndex={activeRow === rowIndex && activeCol === 4 ? 0 : -1}
-            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 4, null)}
-            onFocus={() => onActivate(rowIndex, 4)}
+            tabIndex={activeRow === rowIndex && activeCol === 5 ? 0 : -1}
+            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 5, null)}
+            onFocus={() => onActivate(rowIndex, 5)}
           />
         </div>
       </div>
       <div
         role="gridcell"
-        aria-colindex={6}
-        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 5 ? 'variant-grid-cell--active' : ''}`}
+        aria-colindex={7}
+        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 6 ? 'variant-grid-cell--active' : ''}`}
         data-col="details"
-        onClick={() => onActivate(rowIndex, 5)}
+        onClick={() => onActivate(rowIndex, 6)}
       >
         <Tooltip content="Variant details (editable) — Space to open" position="left" openOnFocus={true} delay={0}>
           <button
             type="button"
-            ref={(el) => setCellRef(rowIndex, 5, el)}
+            ref={(el) => setCellRef(rowIndex, 6, el)}
             className="wizard-variant-details-btn"
-            tabIndex={activeRow === rowIndex && activeCol === 5 ? 0 : -1}
+            tabIndex={activeRow === rowIndex && activeCol === 6 ? 0 : -1}
             aria-label={`Open details for variant ${rowIndex + 1}`}
-            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 5, null)}
-            onFocus={() => onActivate(rowIndex, 5)}
+            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 6, null)}
+            onFocus={() => onActivate(rowIndex, 6)}
             onClick={(e) => {
               e.stopPropagation();
               onOpenDetails(rowIndex);
@@ -803,18 +871,18 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
       </div>
       <div
         role="gridcell"
-        aria-colindex={7}
+        aria-colindex={8}
         aria-readonly="true"
-        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 6 ? 'variant-grid-cell--active' : ''}`}
+        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 7 ? 'variant-grid-cell--active' : ''}`}
         data-col="default"
-        onClick={() => onActivate(rowIndex, 6)}
+        onClick={() => onActivate(rowIndex, 7)}
       >
         <div
-          ref={(el) => setCellRef(rowIndex, 6, el)}
+          ref={(el) => setCellRef(rowIndex, 7, el)}
           className="variant-grid-readonly-cell variant-grid-default-cell"
-          tabIndex={activeRow === rowIndex && activeCol === 6 ? 0 : -1}
-          onKeyDown={(e) => onCellKeyDown(e, rowIndex, 6, null)}
-          onFocus={() => onActivate(rowIndex, 6)}
+          tabIndex={activeRow === rowIndex && activeCol === 7 ? 0 : -1}
+          onKeyDown={(e) => onCellKeyDown(e, rowIndex, 7, null)}
+          onFocus={() => onActivate(rowIndex, 7)}
         >
           {isDefaultRow ? (
             <span className="wizard-variant-default-badge" title="First variant is saved as default">
@@ -827,20 +895,20 @@ const VariantGridRowView = React.memo(function VariantGridRowView({
       </div>
       <div
         role="gridcell"
-        aria-colindex={8}
-        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 7 ? 'variant-grid-cell--active' : ''}`}
+        aria-colindex={9}
+        className={`variant-grid-cell ${activeRow === rowIndex && activeCol === 8 ? 'variant-grid-cell--active' : ''}`}
         data-col="delete"
-        onClick={() => onActivate(rowIndex, 7)}
+        onClick={() => onActivate(rowIndex, 8)}
       >
         <Tooltip content="Remove row (Ctrl+Delete)">
           <button
             type="button"
-            ref={(el) => setCellRef(rowIndex, 7, el)}
+            ref={(el) => setCellRef(rowIndex, 8, el)}
             className="wizard-variant-row-delete"
             aria-label={`Remove variant row ${rowIndex + 1}`}
-            tabIndex={activeRow === rowIndex && activeCol === 7 ? 0 : -1}
-            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 7, null)}
-            onFocus={() => onActivate(rowIndex, 7)}
+            tabIndex={activeRow === rowIndex && activeCol === 8 ? 0 : -1}
+            onKeyDown={(e) => onCellKeyDown(e, rowIndex, 8, null)}
+            onFocus={() => onActivate(rowIndex, 8)}
             onClick={(e) => {
               e.stopPropagation();
               onDelete();

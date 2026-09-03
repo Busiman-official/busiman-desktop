@@ -57,6 +57,7 @@ import {
 import { buildVariantUnitOptions } from "./ProductCreationWizard/variantGridUnits";
 import { computeVariantSuffixForName } from "./ProductCreationWizard/variantSuffix";
 import { EditMasterDrawer } from "./EditMasterDrawer";
+import { resolveInventoryBehavior } from "../constants/productCatalog";
 import { buildProductsWorkbook, downloadProductsWorkbook } from "../utils/exportProductsExcel";
 import {
   parseProductsWorkbook,
@@ -110,7 +111,9 @@ function detailIndustryFlags(item: InventoryItem): IndustryFlags {
     serialOptional: false,
     hasExpiryDate: false,
   };
-  // Master industryFlags intentionally store tracking as false; OR in variant-level flags.
+  // item.industryFlags.requires* is the product's own honest default now — the
+  // `|| item.variantTracking?.*` fallback only matters for older items saved before that was
+  // true, whose master flags may still read false while their real state lives on variants.
   return {
     ...base,
     requiresBatchTracking: Boolean(
@@ -189,6 +192,7 @@ function inventoryVariantToWizardRow(v: InventoryVariant): WizardVariantRow {
     allowBackorder: v.allowBackorder,
     trackSerialOverride: v.trackSerialOverride,
     trackBatchOverride: v.trackBatchOverride,
+    serialOptionalOverride: v.serialOptionalOverride,
     isActive: v.isActive,
     isDiscontinued: v.isDiscontinued,
     serviceable: v.serviceable,
@@ -229,6 +233,7 @@ function variantPatchToUpdateRequest(
     allowBackorder: patch.allowBackorder,
     trackSerialOverride: patch.trackSerialOverride,
     trackBatchOverride: patch.trackBatchOverride,
+    serialOptionalOverride: patch.serialOptionalOverride,
     isActive: patch.isActive,
     isDiscontinued: patch.isDiscontinued,
     serviceable: patch.serviceable,
@@ -289,6 +294,7 @@ function variantPatchToCreateRequest(
     allowBackorder: patch.allowBackorder,
     trackSerialOverride: patch.trackSerialOverride,
     trackBatchOverride: patch.trackBatchOverride,
+    serialOptionalOverride: patch.serialOptionalOverride,
     isActive: patch.isActive ?? true,
     isDiscontinued: patch.isDiscontinued,
     serviceable: patch.serviceable,
@@ -3263,6 +3269,12 @@ export const ItemMaster: React.FC = () => {
           })()}
           baseSkuPreview={
             addVariantContext ? "" : bulkVariantEditContext!.apiVariant.code
+          }
+          trackingAllowed={
+            resolveInventoryBehavior({
+              productType: (addVariantContext?.item ?? bulkVariantEditContext!.item).productType,
+              isMisc: (addVariantContext?.item ?? bulkVariantEditContext!.item).isMisc,
+            }).trackingAllowed
           }
           existingVariantRows={
             addVariantContext

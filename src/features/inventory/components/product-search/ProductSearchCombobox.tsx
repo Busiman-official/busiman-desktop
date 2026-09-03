@@ -130,7 +130,7 @@ function ProductSearchComboboxCatalog({
       comboboxAriaLabel={comboboxAriaLabel ?? 'Search products'}
       getSearchableText={catalogVariantSearchText}
       getItemLabel={(row) => `${row.productName} — ${row.variantName}`}
-      renderItem={(row) => <CatalogVariantSearchOption row={row} />}
+      renderItem={(row) => <CatalogVariantSearchOption row={row} query={value} />}
       inputRef={inputRef}
       isOpen={isOpen}
       onOpenChange={onOpenChange}
@@ -221,7 +221,7 @@ function ProductSearchComboboxSearch({
       comboboxAriaLabel={comboboxAriaLabel ?? 'Search products'}
       getSearchableText={itemSearchResultText}
       getItemLabel={(item) => item.name}
-      renderItem={(item) => <ItemSearchResultOption item={item} />}
+      renderItem={(item) => <ItemSearchResultOption item={item} query={value} />}
       inputRef={inputRef}
       isOpen={isOpen}
       onOpenChange={onOpenChange}

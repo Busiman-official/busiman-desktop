@@ -601,6 +601,37 @@
   box-shadow: none;
 }
 
+/* Serial tracking column — same compact grid-cell treatment as the unit select. */
+.variant-grid-cell .variant-grid-serial-select.select-group {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  gap: 0;
+}
+
+.variant-spreadsheet-grid .variant-grid-serial-select .select {
+  width: 100%;
+  min-height: 26px;
+  font-size: 12px;
+  margin: 0;
+  padding: 0 1.5rem 0 4px;
+  border-radius: 3px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.variant-spreadsheet-grid .variant-grid-serial-select .select:focus {
+  outline: none;
+  outline-offset: 0;
+  border-color: #2563eb;
+  box-shadow: none;
+}
+
+.variant-spreadsheet-grid .variant-grid-serial-select .select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .wizard-variant-status-new {
   font-size: 12px;
   color: #64748b;

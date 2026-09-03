@@ -76,6 +76,7 @@ import {
   countIncompletePosSerialLines,
   normalizePosSerial,
   trimSerialsToQuantity,
+  trimNewSerials,
   isPosSerialLineComplete,
 } from './posSerialUtils';
 import {
@@ -493,11 +494,20 @@ export const PosShell: React.FC<Props> = ({
       const current = lines.find((l) => l.variantId === selectedDetailVariantId);
       if (!current) return;
       const nextPatch = { ...patch };
-      if (current.serialWarning && nextPatch.quantity != null) {
+      // Only auto-trim serials to the new quantity when the caller changed quantity WITHOUT also
+      // supplying its own serialNumbers (the qty stepper's onCommit, PosQuantityStepper's own
+      // direct callers, ...). When serialNumbers is already in the patch — e.g. the serial scan
+      // input growing the line's quantity to fit a serial beyond the old count, see
+      // PosSerialCaptureSection's tryAddSerial — that list is already the authoritative, exact
+      // result of the edit that just happened; recomputing it here from `current` would silently
+      // undo it (and, worse, clobber newSerialNumbers back to whatever `current` had before this
+      // very update, dropping the "New" badge on whatever was just added).
+      if (current.serialWarning && nextPatch.quantity != null && nextPatch.serialNumbers === undefined) {
         nextPatch.serialNumbers = trimSerialsToQuantity(
           { ...current, ...nextPatch },
           nextPatch.quantity
         );
+        nextPatch.newSerialNumbers = trimNewSerials(current, nextPatch.serialNumbers);
       }
       if (patch.unitOfMeasure && patch.unitOfMeasure !== current.unitOfMeasure) {
         const currentFactor = getUnitFactor(current, current.unitOfMeasure);
@@ -567,9 +577,11 @@ export const PosShell: React.FC<Props> = ({
       const qty = Math.min(cap, q);
       const current = lines.find((l) => l.variantId === variantId);
       if (current?.serialWarning) {
+        const keptSerials = trimSerialsToQuantity(current, qty);
         updateLine(variantId, {
           quantity: qty,
-          serialNumbers: trimSerialsToQuantity(current, qty),
+          serialNumbers: keptSerials,
+          newSerialNumbers: trimNewSerials(current, keptSerials),
         });
         return;
       }
@@ -616,6 +628,7 @@ export const PosShell: React.FC<Props> = ({
           isNonStock: meta.isNonStock,
           allowNegativeStock: meta.allowNegativeStock,
           serialWarning: meta.serialWarning,
+          serialOptional: meta.serialOptional,
           batchWarning: meta.batchWarning,
           lineDiscountType: 'per_unit',
           lineDiscountValue: 0,
@@ -634,7 +647,11 @@ export const PosShell: React.FC<Props> = ({
           setLookupQuery('');
         }
         if (openDetail) {
-          if (meta.serialWarning) {
+          // A mandatory-serial item needs the scan flow immediately — it can't check out without
+          // one. An optional-serial item can (that's the whole point of "optional"), so forcing
+          // the serial section open on every add would just add friction for the common path;
+          // it stays reachable any time via the cart row's "Pick" pill or the detail panel.
+          if (meta.serialWarning && !meta.serialOptional) {
             openLineDetail(meta.variantId, { focusSerial: true });
           } else {
             openLineDetail(meta.variantId, { focusPrice: true });

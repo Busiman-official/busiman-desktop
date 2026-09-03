@@ -46,6 +46,7 @@ export type ProductVariantDetailsDrawerApplyPayload = {
       | 'allowBackorder'
       | 'trackSerialOverride'
       | 'trackBatchOverride'
+      | 'serialOptionalOverride'
       | 'isActive'
       | 'isDiscontinued'
       | 'serviceable'
@@ -80,6 +81,10 @@ export type ProductVariantDetailsDrawerProps = {
     shelfLifeDays?: number;
   };
   baseSkuPreview: string;
+  /** False for a product whose type/Misc setting doesn't support tracking at all (e.g. Misc,
+   * Asset) — hides the serial tracking control entirely rather than offering a choice that can't
+   * actually take effect. Defaults to true (every existing caller's products support tracking). */
+  trackingAllowed?: boolean;
   onApply: (payload: ProductVariantDetailsDrawerApplyPayload) => void;
 };
 
@@ -92,6 +97,7 @@ export function ProductVariantDetailsDrawer({
   unitOptions,
   defaults,
   baseSkuPreview,
+  trackingAllowed = true,
   onApply,
   existingVariantRows = [],
 }: ProductVariantDetailsDrawerProps) {
@@ -113,8 +119,23 @@ export function ProductVariantDetailsDrawer({
   const [minStock, setMinStock] = useState<number | undefined>(initialVariantRow?.minStock);
   const [maxStock, setMaxStock] = useState<number | undefined>(initialVariantRow?.maxStock);
   const [allowBackorder] = useState<boolean | undefined>(initialVariantRow?.allowBackorder);
-  const [trackSerialOverride] = useState<boolean | undefined>(initialVariantRow?.trackSerialOverride);
-  const [trackBatchOverride] = useState<boolean | undefined>(initialVariantRow?.trackBatchOverride);
+  // Pre-filled from the product's default (via `defaults.trackSerial`/`trackBatch`) only when this
+  // variant has never had its own explicit value — once set, a variant's own choice always wins,
+  // never silently reset back to the product default on a later edit.
+  const [trackSerialOverride, setTrackSerialOverride] = useState<boolean | undefined>(
+    initialVariantRow?.trackSerialOverride ?? defaults.trackSerial,
+  );
+  const [trackBatchOverride, setTrackBatchOverride] = useState<boolean | undefined>(
+    initialVariantRow?.trackBatchOverride ?? defaults.trackBatch,
+  );
+  const [serialOptionalOverride, setSerialOptionalOverride] = useState<boolean | undefined>(
+    initialVariantRow?.serialOptionalOverride,
+  );
+  const setSerialTrackingMode = useCallback((mode: 'none' | 'required' | 'optional') => {
+    setTrackSerialOverride(mode !== 'none');
+    setSerialOptionalOverride(mode === 'optional');
+    if (mode !== 'none') setTrackBatchOverride(false);
+  }, []);
   const [isActive] = useState<boolean | undefined>(initialVariantRow?.isActive);
   const [isDiscontinued] = useState<boolean | undefined>(initialVariantRow?.isDiscontinued);
   const [serviceable, setServiceable] = useState<boolean>(initialVariantRow?.serviceable ?? false);
@@ -165,6 +186,8 @@ export function ProductVariantDetailsDrawer({
       unitsPerBox: normalizeOptionalNumber(unitsPerBox),
       shelfLifeDaysOverride: normalizeOptionalNumber(shelfLifeDaysOverride),
       serviceable,
+      trackSerialOverride: trackSerialOverride ?? false,
+      serialOptionalOverride: serialOptionalOverride ?? false,
     };
     const base = {
       name: (initialVariantRow.name ?? '').trim(),
@@ -188,6 +211,8 @@ export function ProductVariantDetailsDrawer({
       unitsPerBox: normalizeOptionalNumber(initialVariantRow.unitsPerBox),
       shelfLifeDaysOverride: normalizeOptionalNumber(initialVariantRow.shelfLifeDaysOverride),
       serviceable: initialVariantRow.serviceable ?? false,
+      trackSerialOverride: initialVariantRow.trackSerialOverride ?? defaults.trackSerial ?? false,
+      serialOptionalOverride: initialVariantRow.serialOptionalOverride ?? false,
     };
     return JSON.stringify(same) !== JSON.stringify(base);
   }, [
@@ -204,6 +229,9 @@ export function ProductVariantDetailsDrawer({
     mrpOverride,
     taxOverride,
     reorderLevel,
+    trackSerialOverride,
+    serialOptionalOverride,
+    defaults.trackSerial,
     minStock,
     maxStock,
     weightOverride,
@@ -249,6 +277,7 @@ export function ProductVariantDetailsDrawer({
       allowBackorder,
       trackSerialOverride,
       trackBatchOverride,
+      serialOptionalOverride: trackSerialOverride ? serialOptionalOverride : false,
       isActive,
       isDiscontinued,
       serviceable,
@@ -281,6 +310,7 @@ export function ProductVariantDetailsDrawer({
     allowBackorder,
     trackSerialOverride,
     trackBatchOverride,
+    serialOptionalOverride,
     isActive,
     isDiscontinued,
     serviceable,
@@ -341,6 +371,10 @@ export function ProductVariantDetailsDrawer({
                 unitsPerBox={unitsPerBox}
                 shelfLifeDaysOverride={shelfLifeDaysOverride}
                 serviceable={serviceable}
+                trackSerialOverride={trackSerialOverride ?? false}
+                serialOptionalOverride={serialOptionalOverride ?? false}
+                trackingAllowed={trackingAllowed}
+                onTrackSerialModeChange={setSerialTrackingMode}
                 defaults={defaults}
                 onVariantNameChange={setVariantName}
                 onBarcodeChange={setBarcode}

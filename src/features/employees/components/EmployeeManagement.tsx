@@ -419,6 +419,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
       featurePermissions: (prev.featurePermissions ?? []).filter((p) => {
         if (!next.includes('sales') && p === 'canBackdateSale') return false;
         if (!next.includes('expense') && p === 'canSkipExpenseApproval') return false;
+        if (!next.includes('service') && (p === 'canSkipOutsourcingApproval' || p === 'canBackdateOutsourcing')) return false;
         return true;
       }),
     }));
@@ -761,6 +762,42 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                           featurePermissions: e.target.checked
                             ? [...(prev.featurePermissions ?? []).filter((p) => p !== 'canSkipExpenseApproval'), 'canSkipExpenseApproval']
                             : (prev.featurePermissions ?? []).filter((p) => p !== 'canSkipExpenseApproval'),
+                        }))
+                      }
+                      disabled={loading}
+                    />
+                  </div>
+                ) : null}
+
+                {formData.visibleDepartments?.includes('service') && formData.role !== UserRole.ADMIN ? (
+                  <div className="form-row form-row--full">
+                    <Checkbox
+                      checked={formData.featurePermissions?.includes('canSkipOutsourcingApproval') ?? false}
+                      label="Skip outsourcing approval (this employee's outsourcing sends go out immediately, bypassing manager approval)"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          featurePermissions: e.target.checked
+                            ? [...(prev.featurePermissions ?? []).filter((p) => p !== 'canSkipOutsourcingApproval'), 'canSkipOutsourcingApproval']
+                            : (prev.featurePermissions ?? []).filter((p) => p !== 'canSkipOutsourcingApproval'),
+                        }))
+                      }
+                      disabled={loading}
+                    />
+                  </div>
+                ) : null}
+
+                {formData.visibleDepartments?.includes('service') && formData.role !== UserRole.ADMIN ? (
+                  <div className="form-row form-row--full">
+                    <Checkbox
+                      checked={formData.featurePermissions?.includes('canBackdateOutsourcing') ?? false}
+                      label="Backdate outsourcing (this employee can register outsourcing orders against a past send date)"
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          featurePermissions: e.target.checked
+                            ? [...(prev.featurePermissions ?? []).filter((p) => p !== 'canBackdateOutsourcing'), 'canBackdateOutsourcing']
+                            : (prev.featurePermissions ?? []).filter((p) => p !== 'canBackdateOutsourcing'),
                         }))
                       }
                       disabled={loading}

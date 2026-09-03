@@ -99,3 +99,17 @@
 .pos-lookup-form__combobox {
   width: 100%;
 }
+
+/* Marks exactly the substring(s) that made a result match — same tokens the search itself used
+ * (see highlightMatch in productSearchRow.tsx), not a decorative style. */
+.product-search-highlight {
+  background: rgba(37, 99, 235, 0.16);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
+.search-combobox__option--active .product-search-highlight {
+  background: rgba(37, 99, 235, 0.28);
+}

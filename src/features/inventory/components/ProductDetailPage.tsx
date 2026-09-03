@@ -19,6 +19,7 @@ import {
   MovementType,
   IndustryFlags,
   IndustryType,
+  ProductType,
 } from '@/services/inventory.service';
 import { Button, Card, Input, Select } from '@/shared/components/ui';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
@@ -515,6 +516,10 @@ export const ProductDetailPage: React.FC = () => {
               itemId={id}
               itemName={item.name}
               itemDefaultUnitOfMeasure={item.unitOfMeasure || 'pcs'}
+              itemProductType={(item.productType as ProductType) ?? ProductType.STOCK_ITEM}
+              itemIsMisc={Boolean(item.isMisc)}
+              itemDefaultSerialTracking={Boolean(item.industryFlags?.requiresSerialTracking || item.variantTracking?.serial)}
+              itemDefaultSerialOptional={Boolean(item.industryFlags?.serialOptional || item.variantTracking?.serialOptional)}
               selectedVariantId={variantIdFromUrl || undefined}
               onVariantCreated={(variant, migration) => {
                 if (migration) {

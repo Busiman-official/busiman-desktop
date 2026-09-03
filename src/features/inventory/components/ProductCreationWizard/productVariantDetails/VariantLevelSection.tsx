@@ -32,6 +32,15 @@ export type VariantLevelSectionProps = {
   shelfLifeDaysOverride?: number;
   /** Whether this specific variant can be booked for after-sales service/repair. Defaults to the master's setting. */
   serviceable: boolean;
+  /** This variant's own serial tracking choice — independent of the product's default and every
+   * other variant of the same product. */
+  trackSerialOverride: boolean;
+  /** Only meaningful when trackSerialOverride is true. */
+  serialOptionalOverride: boolean;
+  /** False hides the control entirely — this product's type/Misc setting doesn't support
+   * tracking at all, so there's nothing for a per-variant choice to mean. */
+  trackingAllowed: boolean;
+  onTrackSerialModeChange: (mode: 'none' | 'required' | 'optional') => void;
   defaults: {
     costPrice?: number;
     sellingPrice?: number;
@@ -88,6 +97,10 @@ function VariantLevelSectionInner({
   unitsPerBox,
   shelfLifeDaysOverride,
   serviceable,
+  trackSerialOverride,
+  serialOptionalOverride,
+  trackingAllowed,
+  onTrackSerialModeChange,
   defaults,
   onVariantNameChange,
   onBarcodeChange,
@@ -194,6 +207,24 @@ function VariantLevelSectionInner({
               Serviceable
             </label>
           </div>
+          {trackingAllowed ? (
+            <div className="product-variant-details-field">
+              <label htmlFor="pvd-serial-mode" className="product-variant-details-label">
+                Serial tracking
+              </label>
+              <Select
+                id="pvd-serial-mode"
+                value={!trackSerialOverride ? 'none' : serialOptionalOverride ? 'optional' : 'required'}
+                onChange={(e) => onTrackSerialModeChange(e.target.value as 'none' | 'required' | 'optional')}
+                aria-label="Serial tracking for this variant"
+              >
+                <option value="none">Not tracked</option>
+                <option value="required">Required (every unit)</option>
+                <option value="optional">Optional (assign at sale/dispatch)</option>
+              </Select>
+              <span className="product-variant-details-hint">This variant's own setting</span>
+            </div>
+          ) : null}
         </div>
         {showHsnInVariantFields ? (
           <p className="product-variant-details-readonly">

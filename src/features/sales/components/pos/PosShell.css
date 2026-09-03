@@ -488,7 +488,12 @@
   border-radius: 8px;
   box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
   max-height: min(260px, 42vh);
-  overflow: hidden;
+  /* This class is reused (via SearchCombobox's listClassName) directly on the live result list,
+   * not a wrapper around a separate scrollable child the way the old custom dropdown it was
+   * written for had — `overflow: hidden` here silently killed the base .search-combobox__list's
+   * own `overflow: auto`, making the POS suggest panel unscrollable by mouse wheel even though
+   * keyboard nav and the base component both expected it to scroll. */
+  overflow: auto;
   z-index: 10;
 }
 
@@ -1009,6 +1014,14 @@
   font-size: 12px;
   color: #166534;
   font-family: ui-monospace, monospace;
+}
+
+/* Optional serial tracking with nothing picked yet — not a warning (checkout isn't blocked), so
+   it stays neutral gray rather than the amber "warn" or green "ok" states. */
+.pos-cart-list-card__serial-optional {
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
 }
 
 .pos-cart-list-card__serial-pick {

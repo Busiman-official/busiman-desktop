@@ -174,6 +174,11 @@ export function SearchCombobox<T>({
     [inputRefProp]
   );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeItemRef = useRef<HTMLButtonElement | null>(null);
+  // Set right before an ArrowDown/ArrowUp-driven setActiveIndex, consumed by the scrollIntoView
+  // effect below — distinguishes a keyboard move (should auto-scroll) from a mouse-hover move
+  // (should NOT, or wheel-scrolling the list would keep fighting itself).
+  const keyboardNavRef = useRef(false);
 
   const [isOpenInternal, setIsOpenInternal] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -194,10 +199,17 @@ export function SearchCombobox<T>({
 
   const filteredAll = useMemo(() => {
     if (!isSearchMode) return recentItems.slice(0, 5);
-    return filterItems
-      ? filterItems(items, query)
-      : defaultFilter(items, query, getSearchableText);
-  }, [isSearchMode, recentItems, filterItems, items, query, getSearchableText]);
+    if (filterItems) return filterItems(items, query);
+    // When onSearch is wired up, `items` IS the search result for this exact query — the caller
+    // already scoped it (often via a sophisticated server-side matcher: exact/prefix/fuzzy/
+    // cross-field, see search.service.ts). Re-running defaultFilter's naive substring check on
+    // top would silently drop anything that doesn't literally contain the typed text — which is
+    // exactly the class of result (typo-tolerant fuzzy matches, a hit on a field other than the
+    // one displayed) an async search exists to surface. Only a caller with no onSearch — a fixed
+    // local list that needs filtering as you type — falls through to defaultFilter.
+    if (onSearch) return items;
+    return defaultFilter(items, query, getSearchableText);
+  }, [isSearchMode, recentItems, filterItems, items, query, getSearchableText, onSearch]);
 
   const displayedItems = useMemo(
     () => (isSearchMode ? filteredAll.slice(0, maxResults) : filteredAll),
@@ -256,6 +268,19 @@ export function SearchCombobox<T>({
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [isOpen, setOpen]);
 
+  // The result list scrolls (max-height, see .search-combobox__list) — arrow-key navigation must
+  // keep the active row in view itself, since a keyboard move that lands below the visible area
+  // otherwise looks like the highlight vanished (nothing scrolls to follow it). Only do this for
+  // keyboard-driven moves (see keyboardNavRef): activeIndex also changes on plain mouse hover
+  // (onMouseEnter below), and re-snapping scroll on every hover would fight the user's own wheel
+  // scroll — each row the cursor passes while wheeling would yank the list back to "nearest",
+  // making mouse scrolling feel stuck.
+  useEffect(() => {
+    if (!keyboardNavRef.current) return;
+    keyboardNavRef.current = false;
+    activeItemRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!onSearch || query.length < minSearchLength) {
@@ -312,6 +337,7 @@ export function SearchCombobox<T>({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
+      keyboardNavRef.current = true;
       setActiveIndex((i) => {
         if (i < 0) return 0;
         return Math.min(i + 1, maxActiveIndex);
@@ -320,6 +346,7 @@ export function SearchCombobox<T>({
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
+      keyboardNavRef.current = true;
       setActiveIndex((i) => Math.max(i - 1, 0));
       return;
     }
@@ -452,6 +479,7 @@ export function SearchCombobox<T>({
                 return (
                   <button
                     key={getItemId(item)}
+                    ref={active ? activeItemRef : undefined}
                     type="button"
                     role="option"
                     aria-selected={active}

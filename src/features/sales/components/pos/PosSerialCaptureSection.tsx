@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Input } from '@/shared/components/ui';
 import {
   inventoryService,
@@ -15,6 +22,7 @@ import {
   normalizePosSerial,
   pickedSerialCount,
   serialCountRequired,
+  isNewSerial,
 } from './posSerialUtils';
 import './PosSerialCaptureSection.css';
 
@@ -23,8 +31,26 @@ interface Props {
   salesLocationId: string | null;
   /** Serials already picked on other cart lines (duplicate guard). */
   otherCartSerials: string[];
-  onSerialNumbersChange: (serialNumbers: string[]) => void;
+  /**
+   * `quantity` is only passed when a scanned/picked serial pushes the count past the line's
+   * current quantity — the input never blocks on "quantity full" (see tryAddSerial); instead the
+   * quantity itself grows to match, same as a manual + on the stepper would.
+   */
+  onSerialNumbersChange: (serialNumbers: string[], newSerialNumbers?: string[], quantity?: number) => void;
   focusOnMount?: boolean;
+  /**
+   * Enter pressed on the scan input while it's empty — the parent (PosCartItemDetailPanel) treats
+   * this as "nothing more to add here" and closes/saves, mirroring the old price-field Enter
+   * behavior for lines that don't need a serial at all.
+   */
+  onEmptyEnter?: () => void;
+}
+
+export interface PosSerialCaptureSectionHandle {
+  /** Focuses the scan input — used when Enter on the price field should redirect here instead of
+   * closing the modal (see PosCartItemDetailPanel). No-ops if the input can't take focus right now
+   * (e.g. disabled because the quantity's serial slots are already full). */
+  focus: () => void;
 }
 
 function serialErrorMessage(status: string, message?: string): string {
@@ -32,13 +58,17 @@ function serialErrorMessage(status: string, message?: string): string {
   return serialStatusToLabel(status as SerialValidationStatus).replace(/^[^\s]+\s/, '');
 }
 
-export const PosSerialCaptureSection: React.FC<Props> = ({
-  line,
-  salesLocationId,
-  otherCartSerials,
-  onSerialNumbersChange,
-  focusOnMount = false,
-}) => {
+export const PosSerialCaptureSection = React.forwardRef<PosSerialCaptureSectionHandle, Props>(function PosSerialCaptureSection(
+  {
+    line,
+    salesLocationId,
+    otherCartSerials,
+    onSerialNumbersChange,
+    focusOnMount = false,
+    onEmptyEnter,
+  },
+  forwardedRef
+) {
   const inputRef = useRef<HTMLInputElement>(null);
   const lastKeyTimeRef = useRef(0);
   const [draft, setDraft] = useState('');
@@ -58,6 +88,7 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
   const pickedCount = pickedSerialCount(line);
   const slotsLeft = Math.max(0, required - pickedCount);
   const isComplete = slotsLeft === 0 && required > 0;
+  const isOptional = line.serialOptional === true;
 
   useEffect(() => {
     if (!focusOnMount) return;
@@ -94,14 +125,15 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
     window.requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
+  useImperativeHandle(forwardedRef, () => ({ focus: refocusInput }), [refocusInput]);
+
   const tryAddSerial = useCallback(
     async (raw: string) => {
       const sn = normalizePosSerial(raw);
       if (!sn) return;
-      if (slotsLeft <= 0) {
-        setInlineError(`Quantity is ${required}; remove a serial before adding another.`);
-        return;
-      }
+      // No "quantity full" block: the scan input drives quantity, not the other way round — a
+      // serial beyond the current count just grows the line to match (see nextQuantity below),
+      // same as pressing + on the stepper would. The input must never refuse a scan here.
       if (pickedSet.has(sn)) {
         setInlineError('Serial already added to this line.');
         return;
@@ -130,7 +162,14 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
           setInlineError(serialErrorMessage(row?.status ?? 'NOT_FOUND', row?.message));
           return;
         }
-        onSerialNumbersChange([...picked, sn]);
+        // status === 'NEW' means this serial doesn't exist in the system yet — the server will
+        // mint it on checkout (this item is optional-serial, the only case NEW/allowed shows up
+        // on an outbound movement). Track it in newSerialNumbers purely so the Picked list below
+        // can badge it, same as any other valid pick otherwise.
+        const nextNew = row.status === 'NEW' ? [...(line.newSerialNumbers ?? []), sn] : line.newSerialNumbers;
+        const nextPicked = [...picked, sn];
+        const nextQuantity = nextPicked.length > line.quantity ? nextPicked.length : undefined;
+        onSerialNumbersChange(nextPicked, nextNew, nextQuantity);
         setDraft('');
         setInlineError(null);
         refocusInput();
@@ -142,15 +181,15 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
     },
     [
       line.itemId,
+      line.newSerialNumbers,
+      line.quantity,
       line.variantId,
       onSerialNumbersChange,
       otherSet,
       picked,
       pickedSet,
       refocusInput,
-      required,
       salesLocationId,
-      slotsLeft,
     ]
   );
 
@@ -162,7 +201,16 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
+      // Enter on an empty box means "nothing more to scan here" — hand back to the parent to
+      // close/save, same as the old price-field Enter did before it started redirecting focus
+      // here. Scoped to Enter only: Tab on an empty box keeps its normal "just move on" no-op
+      // (commitDraft() below is a no-op on empty draft anyway) rather than also closing the modal.
+      if (e.key === 'Enter' && !draft.trim() && onEmptyEnter) {
+        onEmptyEnter();
+        return;
+      }
       commitDraft();
+      return;
     }
   };
 
@@ -190,7 +238,10 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
 
   const removePicked = (sn: string) => {
     const u = normalizePosSerial(sn);
-    onSerialNumbersChange(picked.filter((x) => normalizePosSerial(x) !== u));
+    onSerialNumbersChange(
+      picked.filter((x) => normalizePosSerial(x) !== u),
+      (line.newSerialNumbers ?? []).filter((x) => normalizePosSerial(x) !== u)
+    );
     refocusInput();
   };
 
@@ -201,9 +252,9 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
           Serial numbers
         </h4>
         <span
-          className={`pos-serial-section__count ${isComplete ? 'pos-serial-section__count--done' : ''}`}
+          className={`pos-serial-section__count ${isComplete || isOptional ? 'pos-serial-section__count--done' : ''}`}
         >
-          {pickedCount} of {required} {isComplete ? '✓' : 'required'}
+          {pickedCount} of {required} {isComplete ? '✓' : isOptional ? '(optional)' : 'required'}
         </span>
       </div>
 
@@ -215,7 +266,7 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
           onChange={onInputChange}
           onKeyDown={onInputKeyDown}
           placeholder="Scan or type, then Enter"
-          disabled={checking || slotsLeft <= 0}
+          disabled={checking}
           autoComplete="off"
           spellCheck={false}
         />
@@ -233,7 +284,10 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
           <ul className="pos-serial-picked-list">
             {picked.map((sn) => (
               <li key={sn} className="pos-serial-picked-row">
-                <span className="pos-serial-picked-row__sn">{sn}</span>
+                <span className="pos-serial-picked-row__sn">
+                  {sn}
+                  {isNewSerial(line, sn) ? <span className="pos-serial-picked-row__new">New</span> : null}
+                </span>
                 <button
                   type="button"
                   className="pos-serial-picked-row__remove"
@@ -277,7 +331,7 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
                 type="button"
                 role="option"
                 className="pos-serial-section__list-row"
-                disabled={checking || slotsLeft <= 0}
+                disabled={checking}
                 onClick={() => void tryAddSerial(s.serialNumber)}
               >
                 <span className="pos-serial-section__list-sn">{s.serialNumber}</span>
@@ -291,4 +345,4 @@ export const PosSerialCaptureSection: React.FC<Props> = ({
       </div>
     </section>
   );
-};
+});
