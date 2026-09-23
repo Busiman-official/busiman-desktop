@@ -101,6 +101,15 @@ function stripItemMasterSelectionFromParams(
  * each one finishes (in completion order, not input order) — the throughput of Promise.all without
  * flooding the server with hundreds of simultaneous requests for a large catalog, and with real
  * per-item progress instead of an opaque wait. Order of `results` matches `items`. */
+/** True for an axios request rejected by an AbortController (see handleRunReconcile's Stop
+ * button) — every per-item try/catch in that flow must re-throw this specific case instead of
+ * silently treating a deliberate stop as "this one item just failed, keep going", or Stop would
+ * quietly do nothing while the run raced ahead on empty/default data instead of actually halting. */
+function isAbortError(err: unknown): boolean {
+  const e = err as { code?: string; name?: string } | null | undefined;
+  return e?.code === "ERR_CANCELED" || e?.name === "CanceledError" || e?.name === "AbortError";
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -381,6 +390,10 @@ export const ItemMaster: React.FC = () => {
   const [reconcileLocationId, setReconcileLocationId] = useState("");
   const [reconciling, setReconciling] = useState(false);
   const [reconcileProgress, setReconcileProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
+  // Every call in the reconcile flow now runs with no client-side timeout (see handleRunReconcile) —
+  // this is the only way left for the user to actually get out of a run that's genuinely stuck
+  // (dead connection, not just slow), rather than the modal being unresponsive until the app restarts.
+  const reconcileAbortRef = useRef<AbortController | null>(null);
   // Reconcile now creates products and auto-approves stock/serial changes with no manual review
   // step — restricted to admins only, same bar as who can self-approve a Stock Count server-side.
   const isAdmin = authStore((s) => s.user)?.role === UserRole.ADMIN;
@@ -1088,6 +1101,9 @@ export const ItemMaster: React.FC = () => {
     setError(null);
     setSuccess(null);
     setReconcileProgress({ phase: "Loading catalog", current: 0, total: 1 });
+    const controller = new AbortController();
+    reconcileAbortRef.current = controller;
+    const signal = controller.signal;
     try {
       const buffer = await reconcilePendingFile.arrayBuffer();
 
@@ -1124,7 +1140,7 @@ export const ItemMaster: React.FC = () => {
       // Resolve those SKUs against the live catalog. A large catalog's own load easily clears the
       // API client's default 30s timeout on this one bulk call, so it gets a generous override
       // here — the progress bar below is what makes that wait tolerable, not a shorter deadline.
-      const allItems = await inventoryService.getAllItems(undefined, { timeout: 120000 });
+      const allItems = await inventoryService.getAllItems(undefined, { timeout: 0, signal });
 
       const skuToItemVariant = new Map<string, { item: InventoryItem; variant: InventoryVariant }>();
       const relevantItemIds = new Set<string>();
@@ -1148,7 +1164,12 @@ export const ItemMaster: React.FC = () => {
             isMisc: item.isMisc,
             itemType: item.itemType,
           }).stockManaged;
-          const itemVariants = await inventoryService.getVariantsByItem(item.id, true, { timeout: 60000 }).catch(() => []);
+          const itemVariants = await inventoryService
+            .getVariantsByItem(item.id, true, { timeout: 0, signal })
+            .catch((err) => {
+              if (isAbortError(err)) throw err;
+              return [];
+            });
           existingVariantsByItemId.set(item.id, itemVariants);
           for (const v of itemVariants) {
             const sku = (v.code || v.sku || "").trim().toUpperCase();
@@ -1238,43 +1259,59 @@ export const ItemMaster: React.FC = () => {
       const currentQtyBySku = new Map<string, number>();
       const existingSerials = new Set<string>();
       if (existingItemIdsToCheck.length > 0) {
-        setReconcileProgress({ phase: "Fetching current stock levels", current: 0, total: existingItemIdsToCheck.length });
-        await mapWithConcurrency(
-          existingItemIdsToCheck,
-          8,
-          async (itemId) => {
+        // One company-wide report (same call handleExportProducts already uses) instead of one
+        // request per item — this is what was actually timing out before: getVariantStock(itemId)
+        // had no timeout override at all, so any single slow call died at the API client's 30s
+        // default. A single bulk call removes that failure mode entirely rather than just widening it.
+        setReconcileProgress({ phase: "Fetching current stock levels", current: 0, total: 1 });
+        try {
+          const stockReport = await inventoryService.getVariantStockReport({ timeout: 0, signal });
+          const stockByVariantId = new Map(stockReport.map((r) => [r.variantId, r]));
+          for (const itemId of existingItemIdsToCheck) {
             const pairsForItem = [
               ...Array.from(skuToItemVariant.entries()).filter(([, p]) => p.item.id === itemId),
               ...Array.from(nonStockMatches.get(itemId)?.variants.entries() ?? []).map(
                 ([sku, variant]) => [sku, { item: nonStockMatches.get(itemId)!.item, variant }] as const,
               ),
             ];
-            try {
-              const stockRows = await inventoryService.getVariantStock(itemId);
-              for (const [sku, pair] of pairsForItem) {
-                const row = stockRows.find((r) => r.variantId === pair.variant.id);
-                const atLocation = row?.locations.find((l) => l.locationId === reconcileLocationId);
-                currentQtyBySku.set(sku, atLocation?.quantity ?? 0);
-              }
-            } catch {
-              // Leave unset — treated as "starts at zero" below, same as a brand-new SKU.
+            for (const [sku, pair] of pairsForItem) {
+              const row = stockByVariantId.get(pair.variant.id);
+              const atLocation = row?.locations.find((l) => l.locationId === reconcileLocationId);
+              currentQtyBySku.set(sku, atLocation?.quantity ?? 0);
             }
+          }
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          // Leave unset — treated as "starts at zero" below, same as a brand-new SKU.
+        }
+        setReconcileProgress({ phase: "Fetching current stock levels", current: 1, total: 1 });
+
+        // No bulk equivalent exists for serials yet, so this still goes item by item — but with an
+        // unbounded timeout (the file's still being validated, nothing has been written yet) and
+        // 8-way concurrency, so one slow item can't kill the whole run and a small matched set
+        // finishes in one round rather than N sequential ones.
+        setReconcileProgress({ phase: "Fetching existing serial numbers", current: 0, total: existingItemIdsToCheck.length });
+        await mapWithConcurrency(
+          existingItemIdsToCheck,
+          8,
+          async (itemId) => {
             try {
               const all: SerialResponse[] = [];
               let page = 1;
               for (;;) {
-                const batch = await inventoryService.getSerialsByItem(itemId, undefined, undefined, undefined, page, 500);
+                const batch = await inventoryService.getSerialsByItem(itemId, undefined, undefined, undefined, page, 500, { timeout: 0, signal });
                 all.push(...batch);
                 if (batch.length < 500) break;
                 page += 1;
               }
               all.forEach((s) => existingSerials.add(s.serialNumber.toUpperCase()));
-            } catch {
+            } catch (err) {
+              if (isAbortError(err)) throw err;
               // Worst case a genuinely-existing serial gets treated as "new" and validation below
               // (or the server) surfaces the real conflict — never silently dropped.
             }
           },
-          (completed, total) => setReconcileProgress({ phase: "Fetching current stock levels", current: completed, total }),
+          (completed, total) => setReconcileProgress({ phase: "Fetching existing serial numbers", current: completed, total }),
         );
       }
 
@@ -1385,12 +1422,13 @@ export const ItemMaster: React.FC = () => {
             const { item } = toConvert[ci];
             setReconcileProgress({ phase: "Converting non-stock items", current: ci + 1, total: toConvert.length });
             try {
-              await inventoryService.updateItem(item.id, {
-                productType: ProductType.STOCK_ITEM,
-                itemType: ItemType.STOCK,
-                isMisc: false,
-              });
+              await inventoryService.updateItem(
+                item.id,
+                { productType: ProductType.STOCK_ITEM, itemType: ItemType.STOCK, isMisc: false },
+                { timeout: 0, signal },
+              );
             } catch (err: any) {
+              if (isAbortError(err)) throw err;
               setError((prev) => {
                 const line = `Could not convert "${item.name}" to stock-managed: ${extractErrorMessage(err, "unknown error")}`;
                 return prev ? `${prev}\n${line}` : line;
@@ -1398,7 +1436,12 @@ export const ItemMaster: React.FC = () => {
               continue;
             }
             convertedItemIds.add(item.id);
-            const itemVariants = await inventoryService.getVariantsByItem(item.id, true).catch(() => []);
+            const itemVariants = await inventoryService
+              .getVariantsByItem(item.id, true, { timeout: 0, signal })
+              .catch((err) => {
+                if (isAbortError(err)) throw err;
+                return [];
+              });
             for (const v of itemVariants) {
               const sku = (v.code || v.sku || "").trim().toUpperCase();
               if (sku && skusInFile.has(sku)) {
@@ -1422,8 +1465,9 @@ export const ItemMaster: React.FC = () => {
         setReconcileProgress({ phase: "Creating new products", current: pi + 1, total: createPlans.length });
         let created: InventoryItem;
         try {
-          created = await inventoryService.createItem(plan.request);
+          created = await inventoryService.createItem(plan.request, { timeout: 0, signal });
         } catch (err: any) {
+          if (isAbortError(err)) throw err;
           for (const v of plan.request.variants) failedToCreateSkus.push(v.sku);
           setError((prev) => {
             const line = `Could not create "${plan.productName}": ${extractErrorMessage(err, "unknown error")}`;
@@ -1432,7 +1476,12 @@ export const ItemMaster: React.FC = () => {
           continue;
         }
         createdProductNames.push(plan.productName);
-        const newVariants = await inventoryService.getVariantsByItem(created.id, true).catch(() => []);
+        const newVariants = await inventoryService
+          .getVariantsByItem(created.id, true, { timeout: 0, signal })
+          .catch((err) => {
+            if (isAbortError(err)) throw err;
+            return [];
+          });
         for (const v of newVariants) {
           const sku = (v.code || v.sku || "").trim().toUpperCase();
           if (sku && unmatchedSkus.has(sku)) {
@@ -1467,11 +1516,14 @@ export const ItemMaster: React.FC = () => {
             .filter((id): id is string => Boolean(id)),
         ),
       );
-      const count = await inventoryService.createCount({
-        countType: CountType.CYCLE_COUNT,
-        locationId: reconcileLocationId,
-        itemIds: itemIdsForCount,
-      });
+      const count = await inventoryService.createCount(
+        {
+          countType: CountType.CYCLE_COUNT,
+          locationId: reconcileLocationId,
+          itemIds: itemIdsForCount,
+        },
+        { timeout: 0, signal },
+      );
 
       const editedLineNos = new Set<number>();
       const editedLineUpdates = finalLines
@@ -1509,7 +1561,8 @@ export const ItemMaster: React.FC = () => {
       const lineUpdates = [...editedLineUpdates, ...untouchedLineUpdates];
 
       if (lineUpdates.length > 0) {
-        await inventoryService.updateCountLines(count.id, { lines: lineUpdates });
+        setReconcileProgress({ phase: "Applying reconciliation — writing line updates", current: 0, total: 1 });
+        await inventoryService.updateCountLines(count.id, { lines: lineUpdates }, { timeout: 0, signal });
       }
 
       // Reconcile is an admin-only, file-driven action (see the button's gating below) — rather
@@ -1517,10 +1570,14 @@ export const ItemMaster: React.FC = () => {
       // the stock/serial changes take effect immediately, same as ticking every box by hand would.
       // submitCount already auto-approves in-policy variances for a role that can approve — only
       // call approveCount ourselves when that didn't already happen, or it 400s on an already-
-      // APPROVED count.
-      const submitted = await inventoryService.submitCount(count.id);
+      // APPROVED count. Every call below is unbounded-timeout, same reasoning as the reads above —
+      // this is the step that actually applies stock, so it must not be the one place a network
+      // hiccup silently aborts after everything else already succeeded.
+      setReconcileProgress({ phase: "Applying reconciliation — submitting count", current: 0, total: 1 });
+      const submitted = await inventoryService.submitCount(count.id, { timeout: 0, signal });
       if (submitted.status !== CountStatus.APPROVED) {
-        await inventoryService.approveCount(count.id);
+        setReconcileProgress({ phase: "Applying reconciliation — approving count", current: 0, total: 1 });
+        await inventoryService.approveCount(count.id, { timeout: 0, signal });
       }
 
       setSuccess(
@@ -1541,11 +1598,20 @@ export const ItemMaster: React.FC = () => {
       setReconcilePendingFile(null);
       setReconcileLocationId("");
     } catch (err: any) {
-      setError(extractErrorMessage(err, "Failed to reconcile stock/serials from file"));
-      logger.error("[ItemMaster] Failed to reconcile stock/serials", err);
+      if (isAbortError(err)) {
+        setError(
+          "Reconcile stopped — nothing further ran. Anything already written before you stopped it " +
+            "(a product converted or created, or a Stock Count already created) stays exactly as it was — " +
+            "check Inventory → Stock Counts if one was created, and re-run the file when ready.",
+        );
+      } else {
+        setError(extractErrorMessage(err, "Failed to reconcile stock/serials from file"));
+        logger.error("[ItemMaster] Failed to reconcile stock/serials", err);
+      }
     } finally {
       setReconciling(false);
       setReconcileProgress(null);
+      reconcileAbortRef.current = null;
     }
   }, [reconcilePendingFile, reconcileLocationId]);
 
@@ -4147,13 +4213,20 @@ export const ItemMaster: React.FC = () => {
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
             <Button
               variant="secondary"
-              disabled={reconciling}
               onClick={() => {
+                if (reconciling) {
+                  // No client-side timeout runs anymore (see handleRunReconcile) — this is the
+                  // only way out of a run that's genuinely stuck, not just slow. Aborting rejects
+                  // whatever call is in flight, which the catch block turns into a clear
+                  // "stopped, nothing further applied" message rather than a raw cancel error.
+                  reconcileAbortRef.current?.abort();
+                  return;
+                }
                 setReconcilePendingFile(null);
                 setReconcileLocationId("");
               }}
             >
-              Cancel
+              {reconciling ? "Stop" : "Cancel"}
             </Button>
             <Button
               variant="primary"

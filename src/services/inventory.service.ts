@@ -626,7 +626,7 @@ class InventoryService {
     search?: string;
     excludeNonStock?: boolean;
     itemType?: ItemType;
-  }, options?: { timeout?: number }): Promise<InventoryItem[]> {
+  }, options?: { timeout?: number; signal?: AbortSignal }): Promise<InventoryItem[]> {
     const params = new URLSearchParams();
     if (filters?.branchId) {
       params.append('branchId', filters.branchId);
@@ -647,7 +647,8 @@ class InventoryService {
       params.append('itemType', filters.itemType);
     }
     const response = await api.get(`/inventory/items?${params.toString()}`, {
-      ...(options?.timeout ? { timeout: options.timeout } : {}),
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
     return extractApiData<InventoryItem[]>(response);
   }
@@ -706,8 +707,11 @@ class InventoryService {
     return extractApiData<{ available: boolean }>(response);
   }
 
-  async createItem(data: CreateInventoryItemRequest): Promise<InventoryItem> {
-    const response = await api.post('/inventory/items', data);
+  async createItem(data: CreateInventoryItemRequest, options?: { timeout?: number; signal?: AbortSignal }): Promise<InventoryItem> {
+    const response = await api.post('/inventory/items', data, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<InventoryItem>(response);
   }
 
@@ -744,8 +748,11 @@ class InventoryService {
     return extractApiData<CatalogVariantRow[] | PaginatedCatalogResponse>(response);
   }
 
-  async updateItem(id: string, data: UpdateInventoryItemRequest): Promise<InventoryItem> {
-    const response = await api.put(`/inventory/items/${id}`, data);
+  async updateItem(id: string, data: UpdateInventoryItemRequest, options?: { timeout?: number; signal?: AbortSignal }): Promise<InventoryItem> {
+    const response = await api.put(`/inventory/items/${id}`, data, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<InventoryItem>(response);
   }
 
@@ -1113,7 +1120,8 @@ class InventoryService {
     status?: string,
     variantId?: string,
     page = 1,
-    limit = 100
+    limit = 100,
+    options?: { timeout?: number; signal?: AbortSignal },
   ): Promise<SerialResponse[]> {
     const params = new URLSearchParams();
     if (locationId) params.append('locationId', locationId);
@@ -1121,7 +1129,10 @@ class InventoryService {
     if (variantId) params.append('variantId', variantId);
     params.set('page', String(page));
     params.set('limit', String(limit));
-    const response = await api.get(`/inventory/serials/item/${itemId}?${params.toString()}`);
+    const response = await api.get(`/inventory/serials/item/${itemId}?${params.toString()}`, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     const data = extractApiData<SerialResponse[] | PaginatedListResult<SerialResponse>>(response);
     if (Array.isArray(data)) return data;
     return data.items;
@@ -1215,8 +1226,11 @@ class InventoryService {
     return extractApiData<CountDocumentResponse>(response);
   }
 
-  async createCount(data: CreateCountRequest): Promise<CountDocumentResponse> {
-    const response = await api.post('/inventory/counts', data);
+  async createCount(data: CreateCountRequest, options?: { timeout?: number; signal?: AbortSignal }): Promise<CountDocumentResponse> {
+    const response = await api.post('/inventory/counts', data, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<CountDocumentResponse>(response);
   }
 
@@ -1234,9 +1248,13 @@ class InventoryService {
         expiryDate?: string;
         expectedVersion?: number;
       }>;
-    }
+    },
+    options?: { timeout?: number; signal?: AbortSignal },
   ): Promise<CountDocumentResponse> {
-    const response = await api.put(`/inventory/counts/${id}/lines`, body);
+    const response = await api.put(`/inventory/counts/${id}/lines`, body, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<CountDocumentResponse>(response);
   }
 
@@ -1254,13 +1272,19 @@ class InventoryService {
     return extractApiData<CountDocumentResponse>(response);
   }
 
-  async submitCount(countId: string): Promise<CountDocumentResponse> {
-    const response = await api.post(`/inventory/counts/${countId}/submit`, {});
+  async submitCount(countId: string, options?: { timeout?: number; signal?: AbortSignal }): Promise<CountDocumentResponse> {
+    const response = await api.post(`/inventory/counts/${countId}/submit`, {}, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<CountDocumentResponse>(response);
   }
 
-  async approveCount(countId: string): Promise<CountDocumentResponse> {
-    const response = await api.post(`/inventory/counts/${countId}/approve`);
+  async approveCount(countId: string, options?: { timeout?: number; signal?: AbortSignal }): Promise<CountDocumentResponse> {
+    const response = await api.post(`/inventory/counts/${countId}/approve`, undefined, {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<CountDocumentResponse>(response);
   }
 
@@ -1304,8 +1328,11 @@ class InventoryService {
     return extractApiData<StockSummaryReport[]>(response);
   }
 
-  async getVariantStockReport(): Promise<VariantStockReport[]> {
-    const response = await api.get('/inventory/reports/variant-stock');
+  async getVariantStockReport(options?: { timeout?: number; signal?: AbortSignal }): Promise<VariantStockReport[]> {
+    const response = await api.get('/inventory/reports/variant-stock', {
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
+    });
     return extractApiData<VariantStockReport[]>(response);
   }
 
@@ -1347,14 +1374,15 @@ class InventoryService {
   async getVariantsByItem(
     itemId: string,
     includeInactive = false,
-    options?: { timeout?: number },
+    options?: { timeout?: number; signal?: AbortSignal },
   ): Promise<InventoryVariant[]> {
     const params = new URLSearchParams();
     if (includeInactive) {
       params.append('includeInactive', 'true');
     }
     const response = await api.get(`/inventory/items/${itemId}/variants?${params.toString()}`, {
-      ...(options?.timeout ? { timeout: options.timeout } : {}),
+      ...(options?.timeout != null ? { timeout: options.timeout } : {}),
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
     return extractApiData<InventoryVariant[]>(response);
   }
