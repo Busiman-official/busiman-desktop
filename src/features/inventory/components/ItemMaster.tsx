@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
+import ExcelJS from "exceljs";
 import {
   inventoryService,
   InventoryItem,
@@ -22,10 +23,15 @@ import {
   IndustryFlags,
   IndustryType,
   ItemType,
+  ProductType,
   MovementType,
   SerialResponse,
   UpdateVariantRequest,
   CreateVariantRequest,
+  VariantStockReport,
+  CountType,
+  CountStatus,
+  type Location,
 } from "@/services/inventory.service";
 import { getDefaultReason, getMovementTypeLabel } from "../constants/movementReasonMapping";
 import {
@@ -38,7 +44,7 @@ import { LoadingState, EmptyState } from "@/shared/components/data-display";
 import { extractErrorMessage } from "@/utils/error";
 import { movementTransactionIso } from "@/utils/commercialDates";
 import { logger } from "@/shared/utils/logger";
-import { ConfirmDialog } from "@/shared/components/modals";
+import { ConfirmDialog, Modal } from "@/shared/components/modals";
 import { ResizableSplitPane } from "@/shared/components/layout";
 import { SerialGrid } from "./SerialGrid";
 import { SerialDetailPanel } from "./SerialDetailPanel";
@@ -58,12 +64,15 @@ import { buildVariantUnitOptions } from "./ProductCreationWizard/variantGridUnit
 import { computeVariantSuffixForName } from "./ProductCreationWizard/variantSuffix";
 import { EditMasterDrawer } from "./EditMasterDrawer";
 import { resolveInventoryBehavior } from "../constants/productCatalog";
-import { buildProductsWorkbook, downloadProductsWorkbook } from "../utils/exportProductsExcel";
+import { buildProductsWorkbook, downloadProductsWorkbook, isVariantSerialTracked } from "../utils/exportProductsExcel";
 import {
   parseProductsWorkbook,
   buildImportPlan,
   type ProductImportResult,
 } from "../utils/importProductsExcel";
+import { parseStockReconcileWorkbook } from "../utils/buildCountFromExcel";
+import { authStore } from "@/store/authStore";
+import { UserRole } from "@/types";
 import "./ItemMaster.css";
 import "./ProductCreationWizard/ProductCreationWizard.css";
 
@@ -333,6 +342,18 @@ export const ItemMaster: React.FC = () => {
   const [importingProducts, setImportingProducts] = useState(false);
   const [importSummary, setImportSummary] = useState<ProductImportResult | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reconcile stock/serials from an exported (and edited) .xlsx — see buildCountFromExcel.ts.
+  // Two-step: pick a file, then pick which location the edited numbers apply to, before anything
+  // is actually built — nothing is written until the user reviews the resulting Stock Count.
+  const reconcileFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [reconcilePendingFile, setReconcilePendingFile] = useState<File | null>(null);
+  const [reconcileLocations, setReconcileLocations] = useState<Location[]>([]);
+  const [reconcileLocationId, setReconcileLocationId] = useState("");
+  const [reconciling, setReconciling] = useState(false);
+  // Reconcile now creates products and auto-approves stock/serial changes with no manual review
+  // step — restricted to admins only, same bar as who can self-approve a Stock Count server-side.
+  const isAdmin = authStore((s) => s.user)?.role === UserRole.ADMIN;
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dropTargetItemId, setDropTargetItemId] = useState<string | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
@@ -863,9 +884,47 @@ export const ItemMaster: React.FC = () => {
           variantsByItemId.set(item.id, []);
         }
       }
-      const workbook = await buildProductsWorkbook(allItems, variantsByItemId);
+
+      // One call covers stock for every variant company-wide — unlike variants above, there's no
+      // per-item report to loop.
+      let variantStockByVariantId = new Map<string, VariantStockReport>();
+      try {
+        const stockReport = await inventoryService.getVariantStockReport();
+        variantStockByVariantId = new Map(stockReport.map((r) => [r.variantId, r]));
+      } catch {
+        // Export still proceeds without stock figures rather than failing the whole thing.
+      }
+
+      // Serials are still fetched per item (no bulk endpoint), but only for items that actually
+      // have a serial-tracked variant — most of the catalog never touches this loop at all.
+      const serialsByItemId = new Map<string, SerialResponse[]>();
+      for (const item of allItems) {
+        const itemVariants = variantsByItemId.get(item.id) ?? [];
+        const hasSerialTrackedVariant = itemVariants.some((v) => isVariantSerialTracked(item, v));
+        if (!hasSerialTrackedVariant) continue;
+        try {
+          const all: SerialResponse[] = [];
+          let page = 1;
+          // The server caps `limit` at 500 regardless of what's requested — loop pages so an
+          // item with more serials than that still gets every one of them, not just the first 500.
+          for (;;) {
+            const batch = await inventoryService.getSerialsByItem(item.id, undefined, undefined, undefined, page, 500);
+            all.push(...batch);
+            if (batch.length < 500) break;
+            page += 1;
+          }
+          serialsByItemId.set(item.id, all);
+        } catch {
+          serialsByItemId.set(item.id, []);
+        }
+      }
+
+      const workbook = await buildProductsWorkbook(allItems, variantsByItemId, variantStockByVariantId, serialsByItemId);
       await downloadProductsWorkbook(workbook);
-      setSuccess(`Exported ${allItems.length} products (${Array.from(variantsByItemId.values()).reduce((n, v) => n + v.length, 0)} variants).`);
+      const totalSerials = Array.from(serialsByItemId.values()).reduce((n, s) => n + s.length, 0);
+      setSuccess(
+        `Exported ${allItems.length} products (${Array.from(variantsByItemId.values()).reduce((n, v) => n + v.length, 0)} variants, ${totalSerials} serial numbers).`,
+      );
     } catch (err: any) {
       setError(extractErrorMessage(err, "Failed to export products"));
       logger.error("[ItemMaster] Failed to export products", err);
@@ -970,6 +1029,464 @@ export const ItemMaster: React.FC = () => {
     },
     [loadItems],
   );
+
+  // ── Reconcile stock/serials from file ──────────────────────────────────────────────
+  // Step 1: pick the file, then fetch locations so the modal below can ask which one the edited
+  // numbers apply to (the exported "Stock (On Hand)" is a company-wide total — see
+  // buildCountFromExcel.ts for why this can't be inferred).
+  const handleReconcileFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setReconcilePendingFile(file);
+    setReconcileLocationId("");
+    try {
+      const locs = await inventoryService.getAllLocations();
+      setReconcileLocations(locs);
+    } catch {
+      setReconcileLocations([]);
+    }
+  }, []);
+
+  // Step 2: location confirmed — resolve the file's SKUs against the live catalog (only items the
+  // file actually mentions), pull each one's current on-hand at the chosen location plus its
+  // existing serials, then build a draft Stock Count with the differences. Nothing is applied to
+  // real stock here — the count still needs the normal Submit → Approve review.
+  const handleRunReconcile = useCallback(async () => {
+    if (!reconcilePendingFile || !reconcileLocationId) return;
+    setReconciling(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const buffer = await reconcilePendingFile.arrayBuffer();
+
+      const skusInFile = new Set<string>();
+      const preloadWb = new ExcelJS.Workbook();
+      await preloadWb.xlsx.load(buffer);
+      for (const sheetName of ["Variants", "Serial Numbers"]) {
+        const sheet = preloadWb.getWorksheet(sheetName);
+        if (!sheet) continue;
+        const headerRow = sheet.getRow(1);
+        let skuCol = -1;
+        headerRow.eachCell((cell, colNumber) => {
+          if (String(cell.value ?? "").trim() === "Variant SKU") skuCol = colNumber;
+        });
+        if (skuCol === -1) continue;
+        sheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const sku = String(row.getCell(skuCol).value ?? "").trim().toUpperCase();
+          if (sku && sku !== "(NO VARIANTS)") skusInFile.add(sku);
+        });
+      }
+
+      if (skusInFile.size === 0) {
+        setError("No Variant SKU rows with Stock or Serial Number data found in this file.");
+        return;
+      }
+
+      // ── PHASE A — validate everything, write nothing ──────────────────────────────
+      // Every check below runs against reads/parsed data only. Nothing is created, converted,
+      // counted, submitted, or approved until every row in the file passes — a partial failure
+      // used to leave newly-created products behind with no stock applied; this can't happen
+      // anymore because no writes happen until the whole file is known-good.
+
+      // Resolve those SKUs against the live catalog — sequential per item, same discipline as
+      // export/import above, so this doesn't hammer the API even on a large catalog. A Stock
+      // Count only ever exists for physical, stock-managed inventory — a matching SKU whose
+      // master item is currently marked service/non-stock (Service Charge, MISC_NON_STOCK,
+      // ASSET, ...) is set aside for a convert-and-include prompt rather than sent to the server.
+      const allItems = await inventoryService.getAllItems();
+      const skuToItemVariant = new Map<string, { item: InventoryItem; variant: InventoryVariant }>();
+      const relevantItemIds = new Set<string>();
+      const nonStockMatches = new Map<string, { item: InventoryItem; variants: Map<string, InventoryVariant> }>(); // itemId -> item + its matched SKU->variant
+      const convertedItemIds = new Set<string>();
+      const matchedSkus = new Set<string>(); // every SKU found on SOME existing item, stock-managed or not
+      const existingVariantsByItemId = new Map<string, InventoryVariant[]>(); // reused below to create brand-new products safely
+      for (const item of allItems) {
+        const stockManaged = resolveInventoryBehavior({
+          productType: item.productType,
+          isMisc: item.isMisc,
+          itemType: item.itemType,
+        }).stockManaged;
+        const itemVariants = await inventoryService.getVariantsByItem(item.id, true).catch(() => []);
+        existingVariantsByItemId.set(item.id, itemVariants);
+        for (const v of itemVariants) {
+          const sku = (v.code || v.sku || "").trim().toUpperCase();
+          if (!sku || !skusInFile.has(sku)) continue;
+          matchedSkus.add(sku);
+          if (!stockManaged) {
+            const entry = nonStockMatches.get(item.id) ?? { item, variants: new Map<string, InventoryVariant>() };
+            entry.variants.set(sku, v);
+            nonStockMatches.set(item.id, entry);
+            continue;
+          }
+          skuToItemVariant.set(sku, { item, variant: v });
+          relevantItemIds.add(item.id);
+        }
+      }
+
+      // Any SKU that matched nothing above — not even a non-stock item — has no product in the
+      // catalog at all. Read this same file's "Products" sheet (it's the same export re-uploaded,
+      // so the full product master data is right there) and resolve a create-plan for these —
+      // exactly what "Upload products" already does for a brand-new row — WITHOUT creating
+      // anything yet; that only happens once every row in the file has passed validation.
+      const unmatchedSkus = new Set(Array.from(skusInFile).filter((sku) => !matchedSkus.has(sku)));
+      type CreatePlan = Extract<Awaited<ReturnType<typeof buildImportPlan>>["plans"][number], { action: "create" }>;
+      let createPlans: CreatePlan[] = [];
+      const blockingErrors: Array<{ row: number; product: string; sku: string; message: string }> = [];
+      if (unmatchedSkus.size > 0 && preloadWb.getWorksheet("Products") && preloadWb.getWorksheet("Variants")) {
+        const parsedProducts = await parseProductsWorkbook(buffer);
+        for (const e of parsedProducts.errors) {
+          blockingErrors.push({ row: e.row, product: e.productName || "(unknown product)", sku: "", message: e.message });
+        }
+        const { plans: importPlans, errors: planErrors } = buildImportPlan(parsedProducts, allItems, existingVariantsByItemId);
+        for (const e of planErrors) {
+          blockingErrors.push({ row: e.row, product: e.productName, sku: "", message: e.message });
+        }
+        createPlans = importPlans.filter(
+          (p): p is CreatePlan =>
+            p.action === "create" && p.request.variants.some((v) => unmatchedSkus.has(v.sku.trim().toUpperCase())),
+        );
+      }
+
+      // Per-SKU tracking metadata, gathered from wherever the SKU actually lives (an existing
+      // stock-managed item, an existing non-stock item awaiting the convert prompt, or a brand-new
+      // product not yet created) — used below to check the file's numbers BEFORE anything is sent
+      // to the server, instead of finding out only when Submit rejects it.
+      const skuMeta = new Map<
+        string,
+        { productName: string; isSerialTracked: boolean; isSerialOptional: boolean; isBatchTracked: boolean }
+      >();
+      for (const [sku, pair] of skuToItemVariant) {
+        skuMeta.set(sku, {
+          productName: pair.item.name,
+          isSerialTracked: isVariantSerialTracked(pair.item, pair.variant),
+          isSerialOptional: pair.variant.serialOptionalOverride ?? pair.item.industryFlags?.serialOptional ?? false,
+          isBatchTracked: pair.variant.trackBatchOverride ?? pair.item.industryFlags?.requiresBatchTracking ?? false,
+        });
+      }
+      for (const { item, variants } of nonStockMatches.values()) {
+        for (const [sku, v] of variants) {
+          skuMeta.set(sku, {
+            productName: item.name,
+            isSerialTracked: isVariantSerialTracked(item, v),
+            isSerialOptional: v.serialOptionalOverride ?? item.industryFlags?.serialOptional ?? false,
+            isBatchTracked: v.trackBatchOverride ?? item.industryFlags?.requiresBatchTracking ?? false,
+          });
+        }
+      }
+      for (const plan of createPlans) {
+        for (const v of plan.request.variants) {
+          const sku = v.sku.trim().toUpperCase();
+          if (!unmatchedSkus.has(sku)) continue;
+          skuMeta.set(sku, {
+            productName: plan.productName,
+            isSerialTracked: v.trackSerialOverride ?? plan.request.industryFlags?.requiresSerialTracking ?? false,
+            isSerialOptional: v.serialOptionalOverride ?? plan.request.industryFlags?.serialOptional ?? false,
+            isBatchTracked: v.trackBatchOverride ?? plan.request.industryFlags?.requiresBatchTracking ?? false,
+          });
+        }
+      }
+
+      // Current on-hand at the chosen location, and existing serials — for every SKU that already
+      // has a real item (stock-managed or not), so a small edited file stays cheap regardless of
+      // total catalog size. Brand-new SKUs have no entry here on purpose — parseStockReconcileWorkbook
+      // and the validation below both treat "no current quantity known" as "starts at zero".
+      const existingItemIdsToCheck = new Set<string>([...relevantItemIds, ...nonStockMatches.keys()]);
+      const currentQtyBySku = new Map<string, number>();
+      const existingSerials = new Set<string>();
+      for (const itemId of existingItemIdsToCheck) {
+        const pairsForItem = [
+          ...Array.from(skuToItemVariant.entries()).filter(([, p]) => p.item.id === itemId),
+          ...Array.from(nonStockMatches.get(itemId)?.variants.entries() ?? []).map(
+            ([sku, variant]) => [sku, { item: nonStockMatches.get(itemId)!.item, variant }] as const,
+          ),
+        ];
+        try {
+          const stockRows = await inventoryService.getVariantStock(itemId);
+          for (const [sku, pair] of pairsForItem) {
+            const row = stockRows.find((r) => r.variantId === pair.variant.id);
+            const atLocation = row?.locations.find((l) => l.locationId === reconcileLocationId);
+            currentQtyBySku.set(sku, atLocation?.quantity ?? 0);
+          }
+        } catch {
+          // Leave unset — treated as "starts at zero" below, same as a brand-new SKU.
+        }
+        try {
+          const all: SerialResponse[] = [];
+          let page = 1;
+          for (;;) {
+            const batch = await inventoryService.getSerialsByItem(itemId, undefined, undefined, undefined, page, 500);
+            all.push(...batch);
+            if (batch.length < 500) break;
+            page += 1;
+          }
+          all.forEach((s) => existingSerials.add(s.serialNumber.toUpperCase()));
+        } catch {
+          // Worst case a genuinely-existing serial gets treated as "new" and validation below (or
+          // the server) surfaces the real conflict — never silently dropped.
+        }
+      }
+
+      const { lines } = await parseStockReconcileWorkbook(
+        buffer,
+        (sku) => currentQtyBySku.get(sku.toUpperCase()),
+        existingSerials,
+      );
+
+      if (lines.length === 0) {
+        setSuccess("No stock or serial number changes found in this file — nothing to reconcile.");
+        return;
+      }
+
+      // Validate every line against the tracking rules its product actually has — a serial-tracked
+      // item needs exactly one serial per unit of increase, a batch-tracked item can't be adjusted
+      // by this tool at all, negative stock is never valid — so a bad row is caught here, with its
+      // exact row/product/SKU, instead of failing the whole Submit with a bare line number.
+      for (const l of lines) {
+        const skuUpper = l.sku.toUpperCase();
+        const meta = skuMeta.get(skuUpper);
+        if (!meta) {
+          blockingErrors.push({
+            row: l.row,
+            product: l.productName || "(unknown product)",
+            sku: l.sku,
+            message: 'No matching product in the catalog, and no row for it on this file\'s "Products" sheet to create one from.',
+          });
+          continue;
+        }
+        const currentQty = currentQtyBySku.get(skuUpper) ?? 0;
+        const physicalQty = l.physicalQuantity ?? currentQty;
+        const variance = physicalQty - currentQty;
+        if (physicalQty < 0) {
+          blockingErrors.push({ row: l.row, product: meta.productName, sku: l.sku, message: `Stock (On Hand) cannot be negative (got ${physicalQty}).` });
+          continue;
+        }
+        if (variance !== 0 && meta.isBatchTracked) {
+          blockingErrors.push({
+            row: l.row,
+            product: meta.productName,
+            sku: l.sku,
+            message: 'This product is batch-tracked — this tool can\'t record a batch number, so its stock can\'t be changed here. Adjust it manually via Inventory → Stock Counts.',
+          });
+          continue;
+        }
+        if (meta.isSerialTracked && !meta.isSerialOptional) {
+          if (variance < 0) {
+            blockingErrors.push({
+              row: l.row,
+              product: meta.productName,
+              sku: l.sku,
+              message: `Serial-tracked and decreasing by ${Math.abs(variance)} — this tool can only add new serial numbers, not remove specific ones. Adjust it manually via Inventory → Stock Counts.`,
+            });
+            continue;
+          }
+          const required = Math.abs(variance);
+          if (l.newSerialNumbers.length !== required) {
+            blockingErrors.push({
+              row: l.row,
+              product: meta.productName,
+              sku: l.sku,
+              message: `Needs exactly ${required} serial number(s) for a stock change of +${variance}, but ${l.newSerialNumbers.length} were listed in "Serial Numbers".`,
+            });
+            continue;
+          }
+        } else if (meta.isSerialTracked && meta.isSerialOptional) {
+          const cap = Math.abs(variance);
+          if (l.newSerialNumbers.length > cap) {
+            blockingErrors.push({
+              row: l.row,
+              product: meta.productName,
+              sku: l.sku,
+              message: `Lists ${l.newSerialNumbers.length} serial number(s), more than the stock change of ${variance} allows.`,
+            });
+            continue;
+          }
+        }
+        const dedupedSerials = new Set(l.newSerialNumbers.map((s) => s.toUpperCase()));
+        if (dedupedSerials.size !== l.newSerialNumbers.length) {
+          blockingErrors.push({ row: l.row, product: meta.productName, sku: l.sku, message: "Duplicate serial numbers listed for this SKU." });
+        }
+      }
+
+      if (blockingErrors.length > 0) {
+        const sorted = [...blockingErrors].sort((a, b) => a.row - b.row);
+        const report = sorted.map((e) => `Row ${e.row} — ${e.product}${e.sku ? ` (${e.sku})` : ""}: ${e.message}`).join("\n");
+        setError(`${sorted.length} issue(s) found in this file — fix these and re-upload. Nothing was changed.\n${report}`);
+        return;
+      }
+
+      // ── PHASE B — every row passed; now actually write ────────────────────────────
+
+      // Rather than silently skip a non-stock match (or hard-fail), ask once — the user may have
+      // just meant that item to be real stock all along and never noticed the master item was
+      // still flagged Non-Stock/Misc. A "yes" fixes the master item's classification right here
+      // and folds its variants into this same reconciliation; a "no" proceeds without them.
+      if (nonStockMatches.size > 0) {
+        const itemNames = Array.from(nonStockMatches.values()).map((e) => e.item.name).join(", ");
+        const wantsConvert = window.confirm(
+          `${nonStockMatches.size} matching item(s) are currently marked Non-Stock/Service, so they can't carry a physical Stock Count: ${itemNames}.\n\n` +
+            `Convert them to regular stock-managed items now and include them in this reconciliation?`,
+        );
+        if (wantsConvert) {
+          for (const { item } of nonStockMatches.values()) {
+            try {
+              await inventoryService.updateItem(item.id, {
+                productType: ProductType.STOCK_ITEM,
+                itemType: ItemType.STOCK,
+                isMisc: false,
+              });
+            } catch (err: any) {
+              setError((prev) => {
+                const line = `Could not convert "${item.name}" to stock-managed: ${extractErrorMessage(err, "unknown error")}`;
+                return prev ? `${prev}\n${line}` : line;
+              });
+              continue;
+            }
+            convertedItemIds.add(item.id);
+            const itemVariants = await inventoryService.getVariantsByItem(item.id, true).catch(() => []);
+            for (const v of itemVariants) {
+              const sku = (v.code || v.sku || "").trim().toUpperCase();
+              if (sku && skusInFile.has(sku)) {
+                skuToItemVariant.set(sku, { item, variant: v });
+                relevantItemIds.add(item.id);
+              }
+            }
+          }
+        }
+      }
+
+      const stillNonStock = Array.from(nonStockMatches.values()).filter((e) => !convertedItemIds.has(e.item.id));
+
+      const createdProductNames: string[] = [];
+      const failedToCreateSkus: string[] = [];
+      for (const plan of createPlans) {
+        let created: InventoryItem;
+        try {
+          created = await inventoryService.createItem(plan.request);
+        } catch (err: any) {
+          for (const v of plan.request.variants) failedToCreateSkus.push(v.sku);
+          setError((prev) => {
+            const line = `Could not create "${plan.productName}": ${extractErrorMessage(err, "unknown error")}`;
+            return prev ? `${prev}\n${line}` : line;
+          });
+          continue;
+        }
+        createdProductNames.push(plan.productName);
+        const newVariants = await inventoryService.getVariantsByItem(created.id, true).catch(() => []);
+        for (const v of newVariants) {
+          const sku = (v.code || v.sku || "").trim().toUpperCase();
+          if (sku && unmatchedSkus.has(sku)) {
+            skuToItemVariant.set(sku, { item: created, variant: v });
+            relevantItemIds.add(created.id);
+          }
+        }
+      }
+
+      // Lines whose item ended up excluded after all (a decline on the convert prompt, or a
+      // creation that failed against the live server despite passing file-level validation) are
+      // dropped here rather than sent — everything else validated clean, so this is the one place
+      // a live write can still fall short of what the file asked for.
+      const finalLines = lines.filter((l) => skuToItemVariant.has(l.sku.toUpperCase()));
+
+      if (finalLines.length === 0) {
+        const reason =
+          stillNonStock.length > 0
+            ? `${stillNonStock.length} matching item(s) are service/non-stock, which don't carry a physical stock count — ${stillNonStock.map((e) => e.item.name).join(", ")}.`
+            : failedToCreateSkus.length > 0
+              ? `Could not create the product(s) for ${failedToCreateSkus.length} unmatched SKU(s) — see error(s) above.`
+              : "None of this file's SKUs match a product in the catalog.";
+        setError((prev) => (prev ? `${prev}\n${reason}` : reason));
+        return;
+      }
+
+      const itemIdsForCount = Array.from(
+        new Set(
+          finalLines
+            .map((l) => skuToItemVariant.get(l.sku.toUpperCase())?.item.id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+      const count = await inventoryService.createCount({
+        countType: CountType.CYCLE_COUNT,
+        locationId: reconcileLocationId,
+        itemIds: itemIdsForCount,
+      });
+
+      const editedLineNos = new Set<number>();
+      const editedLineUpdates = finalLines
+        .map((l) => {
+          const match = skuToItemVariant.get(l.sku.toUpperCase());
+          if (!match) return null;
+          const countLine = count.lines.find(
+            (cl) => cl.itemId === match.item.id && cl.variantId === match.variant.id,
+          );
+          if (!countLine) return null;
+          editedLineNos.add(countLine.lineNo);
+          // Submitting requires a reason whenever physical differs from system — since this line
+          // only exists because the file's Stock value differed (see parseStockReconcileWorkbook),
+          // a real quantity change here always needs one; a serial-only line (no quantity change)
+          // doesn't, since its variance is 0.
+          return {
+            lineNo: countLine.lineNo,
+            physicalQuantity: l.physicalQuantity ?? countLine.systemQuantity,
+            varianceReason: l.physicalQuantity != null ? "Reconciled from Excel upload" : undefined,
+            serialNumbers:
+              l.newSerialNumbers.length > 0
+                ? [...(countLine.serialNumbers ?? []), ...l.newSerialNumbers]
+                : undefined,
+          };
+        })
+        .filter((u): u is NonNullable<typeof u> => u != null);
+
+      // Submitting requires EVERY line on the count to have a physical quantity entered, not just
+      // the ones this file touched — a multi-variant item pulls in all its siblings when the count
+      // is created. Default every untouched line to its own system quantity (no variance, nothing
+      // to explain) so Submit never rejects the whole count over a line the file never mentioned.
+      const untouchedLineUpdates = count.lines
+        .filter((cl) => !editedLineNos.has(cl.lineNo))
+        .map((cl) => ({ lineNo: cl.lineNo, physicalQuantity: cl.systemQuantity }));
+      const lineUpdates = [...editedLineUpdates, ...untouchedLineUpdates];
+
+      if (lineUpdates.length > 0) {
+        await inventoryService.updateCountLines(count.id, { lines: lineUpdates });
+      }
+
+      // Reconcile is an admin-only, file-driven action (see the button's gating below) — rather
+      // than leaving a draft for a second manual review pass, submit and approve it right here so
+      // the stock/serial changes take effect immediately, same as ticking every box by hand would.
+      // submitCount already auto-approves in-policy variances for a role that can approve — only
+      // call approveCount ourselves when that didn't already happen, or it 400s on an already-
+      // APPROVED count.
+      const submitted = await inventoryService.submitCount(count.id);
+      if (submitted.status !== CountStatus.APPROVED) {
+        await inventoryService.approveCount(count.id);
+      }
+
+      setSuccess(
+        `Stock Count ${count.countNumber} created and approved from this file — ${editedLineUpdates.length} line(s) applied to live stock.` +
+          (createdProductNames.length > 0
+            ? ` (${createdProductNames.length} new product(s) created and included: ${createdProductNames.join(", ")}.)`
+            : "") +
+          (convertedItemIds.size > 0
+            ? ` (${convertedItemIds.size} item(s) were converted to stock-managed and included.)`
+            : "") +
+          (stillNonStock.length > 0
+            ? ` (${stillNonStock.length} service/non-stock item(s) were left as-is and skipped.)`
+            : "") +
+          (failedToCreateSkus.length > 0
+            ? ` (${failedToCreateSkus.length} SKU(s) could not be created — see error above.)`
+            : ""),
+      );
+      setReconcilePendingFile(null);
+      setReconcileLocationId("");
+    } catch (err: any) {
+      setError(extractErrorMessage(err, "Failed to reconcile stock/serials from file"));
+      logger.error("[ItemMaster] Failed to reconcile stock/serials", err);
+    } finally {
+      setReconciling(false);
+    }
+  }, [reconcilePendingFile, reconcileLocationId]);
 
   useEffect(() => {
     if (viewMode === "list") {
@@ -1710,6 +2227,25 @@ export const ItemMaster: React.FC = () => {
           >
             {exportingProducts ? "⏳ Exporting…" : "⬇️ Export to Excel"}
           </Button>
+          {isAdmin && (
+            <>
+              <input
+                ref={reconcileFileInputRef}
+                type="file"
+                accept=".xlsx"
+                style={{ display: "none" }}
+                onChange={(e) => void handleReconcileFileSelected(e)}
+              />
+              <Button
+                variant="secondary"
+                disabled={reconciling}
+                onClick={() => reconcileFileInputRef.current?.click()}
+                title="Read the Stock (On Hand) column and Serial Numbers sheet from an edited export and apply the differences immediately as an approved Stock Count — admin only, no manual review step"
+              >
+                🔄 Reconcile stock & serials
+              </Button>
+            </>
+          )}
         </div>
 
         {error && <div className="error-message">{error}</div>}
@@ -3493,6 +4029,58 @@ export const ItemMaster: React.FC = () => {
         }}
         variant="warning"
       />
+
+      <Modal
+        isOpen={Boolean(reconcilePendingFile)}
+        onClose={() => {
+          if (reconciling) return;
+          setReconcilePendingFile(null);
+          setReconcileLocationId("");
+        }}
+        title="Reconcile stock & serials"
+        size="sm"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <p style={{ margin: 0, color: "var(--text-secondary, #666)" }}>
+            The "Stock (On Hand)" and "Serial Numbers" data in <strong>{reconcilePendingFile?.name}</strong> will
+            be checked against one location. A blank Stock cell counts as zero. A SKU with no matching product in
+            the catalog is created fresh from this file's "Products" sheet. The resulting Stock Count is submitted
+            and approved automatically — changes apply to live stock immediately, with no separate review step.
+          </p>
+          <Select
+            label="Location"
+            value={reconcileLocationId}
+            onChange={(e) => setReconcileLocationId(e.target.value)}
+            disabled={reconciling}
+          >
+            <option value="">Select a location…</option>
+            {reconcileLocations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name} ({loc.code})
+              </option>
+            ))}
+          </Select>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+            <Button
+              variant="secondary"
+              disabled={reconciling}
+              onClick={() => {
+                setReconcilePendingFile(null);
+                setReconcileLocationId("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={reconciling || !reconcileLocationId}
+              onClick={() => void handleRunReconcile()}
+            >
+              {reconciling ? "⏳ Reconciling…" : "Build Stock Count"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

@@ -4,12 +4,31 @@
  *   - "Products" sheet: one row per product, master-level fields only.
  *   - "Variants" sheet: one row per variant, linked back to its product via "Product Name" +
  *     "Product ID" columns, variant-level fields only.
+ *   - "Serial Numbers" sheet: one row per serial number on a serial-tracked variant (plus a
+ *     zero-row for a serial-tracked variant that currently has none), so every unit is visible
+ *     without cross-referencing a separate report.
  * This mirrors the actual data model (a product has many variants) instead of repeating every
  * master field on every variant row. Column layout matches importProductsExcel.ts's expectations
  * so a lightly-edited export can be re-uploaded.
  */
 import ExcelJS from 'exceljs';
-import { IndustryType, ItemType, ProductType, type InventoryItem, type InventoryVariant } from '@/services/inventory.service';
+import {
+  IndustryType,
+  ItemType,
+  ProductType,
+  type InventoryItem,
+  type InventoryVariant,
+  type SerialResponse,
+  type VariantStockReport,
+} from '@/services/inventory.service';
+
+/** Variant override wins over the item default — same precedence the server uses
+ * (resolveEffectiveTrackingType) to decide whether a variant is serial-tracked. Exported so
+ * ItemMaster.tsx's export handler can decide which items are even worth fetching serials for,
+ * using the exact same rule this file uses to build the Serial Numbers sheet. */
+export function isVariantSerialTracked(item: InventoryItem, variant: InventoryVariant): boolean {
+  return variant.trackSerialOverride ?? item.industryFlags?.requiresSerialTracking ?? false;
+}
 
 const BRAND_HEADER_FILL = 'FF1F4E78'; // dark blue
 const BRAND_HEADER_FONT = 'FFFFFFFF'; // white
@@ -74,6 +93,13 @@ function autoFitColumns(sheet: ExcelJS.Worksheet, minWidth = 10, maxWidth = 40):
 export async function buildProductsWorkbook(
   items: InventoryItem[],
   variantsByItemId: Map<string, InventoryVariant[]>,
+  /** Company-wide stock per variant, keyed by variantId — one report call covers every variant,
+   * so this is always fully populated regardless of how many products there are. */
+  variantStockByVariantId: Map<string, VariantStockReport>,
+  /** Every serial number for a serial-tracked item, keyed by itemId — only fetched for items that
+   * are actually serial-tracked (see ItemMaster.tsx's export handler), so most items have no entry
+   * here at all. */
+  serialsByItemId: Map<string, SerialResponse[]>,
 ): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Busiman';
@@ -89,21 +115,32 @@ export async function buildProductsWorkbook(
   summary.getRow(1).height = 28;
 
   const totalVariants = Array.from(variantsByItemId.values()).reduce((n, v) => n + v.length, 0);
+  let serialTrackedVariantCount = 0;
+  let totalSerialNumberCount = 0;
+  for (const item of items) {
+    for (const v of variantsByItemId.get(item.id) ?? []) {
+      if (isVariantSerialTracked(item, v)) serialTrackedVariantCount += 1;
+    }
+  }
+  for (const serials of serialsByItemId.values()) totalSerialNumberCount += serials.length;
   const summaryRows: Array<[string, string | number]> = [
     ['Exported', new Date().toLocaleString()],
     ['Products', items.length],
     ['Variants', totalVariants],
+    ['Serial-tracked variants', serialTrackedVariantCount],
+    ['Total serial numbers', totalSerialNumberCount],
     ['', ''],
     ['How to read this file', ''],
     ['Products sheet', 'One row per product — name, category, tracking rules, defaults.'],
-    ['Variants sheet', 'One row per sellable SKU — pricing, stock limits, HSN, etc. "Product Name" links it back to its product.'],
+    ['Variants sheet', 'One row per sellable SKU — pricing, stock limits, HSN, current stock, etc. "Product Name" links it back to its product.'],
+    ['Serial Numbers sheet', 'One row per serial number on a serial-tracked variant (a variant with none yet still gets one row, showing 0). "Serial Count" repeats the variant\'s total on every one of its rows.'],
     ['Re-uploading', 'Matched by Product Name and Variant SKU (no ID needed). A name that already exists is updated in place; its variants are matched by SKU and updated, or added if the SKU is new. A name with no match is created fresh.'],
   ];
   summaryRows.forEach(([label, value], i) => {
     const r = summary.getRow(i + 3);
     r.getCell(1).value = label;
     r.getCell(2).value = value;
-    r.getCell(1).font = { bold: i < 3 || label === 'How to read this file' };
+    r.getCell(1).font = { bold: i < 5 || label === 'How to read this file' };
     if (label === 'How to read this file') {
       r.getCell(1).font = { bold: true, italic: true };
       r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SUMMARY_FILL } };
@@ -215,6 +252,7 @@ export async function buildProductsWorkbook(
     { header: 'Selling Price', key: 'sellingPrice' },
     { header: 'MRP', key: 'mrp' },
     { header: 'Tax %', key: 'tax' },
+    { header: 'Stock (On Hand)', key: 'stock' },
     { header: 'Reorder Level', key: 'reorderLevel' },
     { header: 'Min Stock', key: 'minStock' },
     { header: 'Max Stock', key: 'maxStock' },
@@ -252,6 +290,7 @@ export async function buildProductsWorkbook(
         sellingPrice: v.sellingPriceOverride ?? '',
         mrp: v.mrpOverride ?? '',
         tax: v.taxOverride ?? '',
+        stock: variantStockByVariantId.get(v.id)?.totalOnHand ?? 0,
         reorderLevel: v.reorderLevel ?? '',
         minStock: v.minStock ?? '',
         maxStock: v.maxStock ?? '',
@@ -295,6 +334,92 @@ export async function buildProductsWorkbook(
     applyListValidation(variantsSheet, key, YES_NO, variantsSheet.rowCount);
   }
   autoFitColumns(variantsSheet);
+
+  // ── Serial Numbers sheet ─────────────────────────────────────────────────────────
+  // One row per serial number on a serial-tracked variant. A variant that's serial-tracked but
+  // currently holds none still gets exactly one row (Serial Count 0, Serial Number blank) so it's
+  // never silently absent — "does this variant even have any serials yet" is answerable by
+  // scanning this sheet alone, not by cross-checking against the Variants sheet.
+  const serialSheet = workbook.addWorksheet('Serial Numbers', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+    properties: { tabColor: { argb: 'B8860B' } },
+  });
+  serialSheet.columns = [
+    { header: 'Product Name', key: 'productName' },
+    { header: 'Variant SKU', key: 'sku' },
+    { header: 'Variant Name', key: 'variantName' },
+    // Repeated on every row for this variant on purpose — filtering/sorting to any one row still
+    // shows the variant's total without having to also pull up a separate summary.
+    { header: 'Serial Count', key: 'serialCount' },
+    { header: 'Serial Number', key: 'serialNumber' },
+    { header: 'Status', key: 'status' },
+    { header: 'Current Location', key: 'location' },
+    { header: 'Batch Number', key: 'batchNumber' },
+    { header: 'Manufacturing Date', key: 'mfgDate' },
+    { header: 'Expiry Date', key: 'expiryDate' },
+    { header: 'Warranty Expiry', key: 'warrantyExpiry' },
+    { header: 'First Received', key: 'firstReceived' },
+  ];
+  styleHeaderRow(serialSheet.getRow(1));
+
+  let serialProductStripe = false;
+  for (const item of items) {
+    const itemVariants = variantsByItemId.get(item.id) ?? [];
+    const serialTrackedVariants = itemVariants.filter((v) => isVariantSerialTracked(item, v));
+    if (serialTrackedVariants.length === 0) continue;
+
+    // Serials come back per-item (not per-variant) from the API — split them out here.
+    const serialsByVariantId = new Map<string, SerialResponse[]>();
+    for (const s of serialsByItemId.get(item.id) ?? []) {
+      const key = s.variantId ?? '';
+      const list = serialsByVariantId.get(key);
+      if (list) list.push(s);
+      else serialsByVariantId.set(key, [s]);
+    }
+
+    serialProductStripe = !serialProductStripe;
+    for (const v of serialTrackedVariants) {
+      const vSerials = serialsByVariantId.get(v.id) ?? [];
+      const baseFields = {
+        productName: item.name ?? '',
+        sku: v.code ?? v.sku ?? '',
+        variantName: v.name ?? '',
+        serialCount: vSerials.length,
+      };
+      const rowsToAdd =
+        vSerials.length > 0
+          ? vSerials.map((s) => ({
+              ...baseFields,
+              serialNumber: s.serialNumber,
+              status: s.currentStatus ?? '',
+              location: s.currentLocation?.name ?? '',
+              batchNumber: s.batchNumber ?? '',
+              mfgDate: s.manufacturingDate ? new Date(s.manufacturingDate).toLocaleDateString() : '',
+              expiryDate: s.expiryDate ? new Date(s.expiryDate).toLocaleDateString() : '',
+              warrantyExpiry: s.warrantyExpiryDate ? new Date(s.warrantyExpiryDate).toLocaleDateString() : '',
+              firstReceived: s.firstReceivedDate ? new Date(s.firstReceivedDate).toLocaleDateString() : '',
+            }))
+          : [{ ...baseFields, serialNumber: '', status: '', location: '', batchNumber: '', mfgDate: '', expiryDate: '', warrantyExpiry: '', firstReceived: '' }];
+
+      for (const fields of rowsToAdd) {
+        const row = serialSheet.addRow(fields);
+        if (vSerials.length === 0) {
+          row.getCell('serialNumber').font = { italic: true, color: { argb: 'FF999999' } };
+        }
+        // Stripe by VARIANT (every serial of the same variant shares a shade) — same reasoning as
+        // the Variants sheet's per-product stripe: makes each variant's block of serials obvious
+        // at a glance in what can otherwise be a very long, repetitive list.
+        if (serialProductStripe) {
+          row.eachCell((cell) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: STRIPE_FILL } };
+          });
+        }
+      }
+      serialProductStripe = !serialProductStripe;
+    }
+  }
+  serialSheet.autoFilter = { from: 'A1', to: { row: 1, column: serialSheet.columns.length } };
+  autoFitColumns(serialSheet);
 
   return workbook;
 }
