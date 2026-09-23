@@ -58,6 +58,7 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
     name: string;
     status: AttendanceSessionStatus;
   } | null>(null);
+  const [clearingEmployeeId, setClearingEmployeeId] = useState<string | null>(null);
 
   const canMarkForOthers = canMarkAttendanceForOthers(role, user?.branchDepartments);
 
@@ -209,6 +210,41 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
     setDialogOpen(true);
   };
 
+  const handleClearAttendance = async (record: (typeof rows)[0]) => {
+    if (!canMarkForOthers || !canMarkRow(record) || clearingEmployeeId) return;
+
+    const employeeId = record.employeeId;
+    if (!isValidObjectId(employeeId)) {
+      setError(
+        `Unable to clear attendance for ${record.employeeName || 'this employee'}. Please refresh the page.`
+      );
+      setTimeout(() => setError(null), 5000);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Clear today's attendance for ${record.employeeName || 'this employee'}? This resets them to Not Started and cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setClearingEmployeeId(employeeId);
+    setError(null);
+    try {
+      await attendanceService.clearForEmployee(employeeId, { date: selectedDate });
+      await loadAttendanceList();
+    } catch (err: unknown) {
+      const apiMessage =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { message?: string; error?: string } } }).response?.data
+              ?.error ??
+            (err as { response?: { data?: { message?: string } } }).response?.data?.message
+          : undefined;
+      setError(apiMessage ?? 'Failed to clear attendance');
+    } finally {
+      setClearingEmployeeId(null);
+    }
+  };
+
   const openEmployeeDetails = (record: (typeof rows)[0]) => {
     if (!isValidObjectId(record.employeeId)) return;
     navigate(`/attendance/employees/${record.employeeId}?date=${selectedDate}`);
@@ -358,20 +394,34 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
                   </td>
                   <td className="department-cell">{record.department || '--'}</td>
                   <td>
-                    {canMarkForOthers && canMarkRow(record) ? (
-                      <button
-                        type="button"
-                        className={`status-toggle ${getStatusClass(record.status)}`}
-                        onClick={() => handleStatusToggle(record)}
-                        title="Click to mark attendance"
-                      >
-                        {getStatusBadge(record.status, record)}
-                      </button>
-                    ) : (
-                      <span className={`status-badge ${getStatusClass(record.status)}`}>
-                        {getStatusBadge(record.status, record)}
-                      </span>
-                    )}
+                    <div className="status-cell">
+                      {canMarkForOthers && canMarkRow(record) ? (
+                        <button
+                          type="button"
+                          className={`status-toggle ${getStatusClass(record.status)}`}
+                          onClick={() => handleStatusToggle(record)}
+                          title="Click to mark attendance"
+                        >
+                          {getStatusBadge(record.status, record)}
+                        </button>
+                      ) : (
+                        <span className={`status-badge ${getStatusClass(record.status)}`}>
+                          {getStatusBadge(record.status, record)}
+                        </span>
+                      )}
+                      {canMarkForOthers && canMarkRow(record) && (
+                        <button
+                          type="button"
+                          className="attendance-clear-btn"
+                          onClick={() => void handleClearAttendance(record)}
+                          disabled={clearingEmployeeId === record.employeeId}
+                          title="Clear today's attendance for this employee (resets to Not Started)"
+                          aria-label={`Clear attendance for ${record.employeeName || 'employee'}`}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="time-cell">
                     {record.checkInTime ? formatTime(record.checkInTime) : '--'}

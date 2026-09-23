@@ -215,6 +215,40 @@
   border-color: #10b981;
 }
 
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.attendance-clear-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.attendance-clear-btn:hover:not(:disabled) {
+  color: #991b1b;
+  background-color: #fee2e2;
+  border-color: #fecaca;
+}
+
+.attendance-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .attendance-list-pagination {
   display: flex;
   flex-wrap: wrap;

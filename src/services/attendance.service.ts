@@ -261,6 +261,23 @@ class AttendanceService {
     };
   }
 
+  /**
+   * Clear (delete) a completed day's attendance record for an employee, resetting them back to
+   * Not Started. HR/Admin only. The server only allows this once the record is checked out (and
+   * has no pending approval) — an in-progress checked-in session can't be wiped this way.
+   */
+  async clearForEmployee(
+    employeeId: string,
+    options?: { date?: string; reason?: string }
+  ): Promise<{ message: string }> {
+    const response = await api.post('/attendance/clear-for-employee', {
+      employeeId,
+      date: options?.date,
+      reason: options?.reason,
+    });
+    return { message: (response.data as any).message || 'Attendance cleared successfully' };
+  }
+
   async getPendingApprovals(params?: {
     page?: number;
     limit?: number;
