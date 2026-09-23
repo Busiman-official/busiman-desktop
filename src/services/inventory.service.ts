@@ -626,7 +626,7 @@ class InventoryService {
     search?: string;
     excludeNonStock?: boolean;
     itemType?: ItemType;
-  }): Promise<InventoryItem[]> {
+  }, options?: { timeout?: number }): Promise<InventoryItem[]> {
     const params = new URLSearchParams();
     if (filters?.branchId) {
       params.append('branchId', filters.branchId);
@@ -646,7 +646,9 @@ class InventoryService {
     if (filters?.itemType) {
       params.append('itemType', filters.itemType);
     }
-    const response = await api.get(`/inventory/items?${params.toString()}`);
+    const response = await api.get(`/inventory/items?${params.toString()}`, {
+      ...(options?.timeout ? { timeout: options.timeout } : {}),
+    });
     return extractApiData<InventoryItem[]>(response);
   }
 
@@ -1342,12 +1344,18 @@ class InventoryService {
   }
 
   // Variants
-  async getVariantsByItem(itemId: string, includeInactive = false): Promise<InventoryVariant[]> {
+  async getVariantsByItem(
+    itemId: string,
+    includeInactive = false,
+    options?: { timeout?: number },
+  ): Promise<InventoryVariant[]> {
     const params = new URLSearchParams();
     if (includeInactive) {
       params.append('includeInactive', 'true');
     }
-    const response = await api.get(`/inventory/items/${itemId}/variants?${params.toString()}`);
+    const response = await api.get(`/inventory/items/${itemId}/variants?${params.toString()}`, {
+      ...(options?.timeout ? { timeout: options.timeout } : {}),
+    });
     return extractApiData<InventoryVariant[]>(response);
   }
 

@@ -97,6 +97,35 @@ function stripItemMasterSelectionFromParams(
   return p;
 }
 
+/** Runs `fn` over `items` with at most `concurrency` in flight at once, calling `onProgress` after
+ * each one finishes (in completion order, not input order) — the throughput of Promise.all without
+ * flooding the server with hundreds of simultaneous requests for a large catalog, and with real
+ * per-item progress instead of an opaque wait. Order of `results` matches `items`. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  let completed = 0;
+  const total = items.length;
+
+  async function worker(): Promise<void> {
+    for (;;) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+      completed += 1;
+      onProgress?.(completed, total);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return results;
+}
+
 function rowIndustryType(item: InventoryItem): string {
   return (
     item.industryClassification?.industryType ??
@@ -351,6 +380,7 @@ export const ItemMaster: React.FC = () => {
   const [reconcileLocations, setReconcileLocations] = useState<Location[]>([]);
   const [reconcileLocationId, setReconcileLocationId] = useState("");
   const [reconciling, setReconciling] = useState(false);
+  const [reconcileProgress, setReconcileProgress] = useState<{ phase: string; current: number; total: number } | null>(null);
   // Reconcile now creates products and auto-approves stock/serial changes with no manual review
   // step — restricted to admins only, same bar as who can self-approve a Stock Count server-side.
   const isAdmin = authStore((s) => s.user)?.role === UserRole.ADMIN;
@@ -1057,6 +1087,7 @@ export const ItemMaster: React.FC = () => {
     setReconciling(true);
     setError(null);
     setSuccess(null);
+    setReconcileProgress({ phase: "Loading catalog", current: 0, total: 1 });
     try {
       const buffer = await reconcilePendingFile.arrayBuffer();
 
@@ -1090,40 +1121,51 @@ export const ItemMaster: React.FC = () => {
       // used to leave newly-created products behind with no stock applied; this can't happen
       // anymore because no writes happen until the whole file is known-good.
 
-      // Resolve those SKUs against the live catalog — sequential per item, same discipline as
-      // export/import above, so this doesn't hammer the API even on a large catalog. A Stock
-      // Count only ever exists for physical, stock-managed inventory — a matching SKU whose
-      // master item is currently marked service/non-stock (Service Charge, MISC_NON_STOCK,
-      // ASSET, ...) is set aside for a convert-and-include prompt rather than sent to the server.
-      const allItems = await inventoryService.getAllItems();
+      // Resolve those SKUs against the live catalog. A large catalog's own load easily clears the
+      // API client's default 30s timeout on this one bulk call, so it gets a generous override
+      // here — the progress bar below is what makes that wait tolerable, not a shorter deadline.
+      const allItems = await inventoryService.getAllItems(undefined, { timeout: 120000 });
+
       const skuToItemVariant = new Map<string, { item: InventoryItem; variant: InventoryVariant }>();
       const relevantItemIds = new Set<string>();
       const nonStockMatches = new Map<string, { item: InventoryItem; variants: Map<string, InventoryVariant> }>(); // itemId -> item + its matched SKU->variant
       const convertedItemIds = new Set<string>();
       const matchedSkus = new Set<string>(); // every SKU found on SOME existing item, stock-managed or not
       const existingVariantsByItemId = new Map<string, InventoryVariant[]>(); // reused below to create brand-new products safely
-      for (const item of allItems) {
-        const stockManaged = resolveInventoryBehavior({
-          productType: item.productType,
-          isMisc: item.isMisc,
-          itemType: item.itemType,
-        }).stockManaged;
-        const itemVariants = await inventoryService.getVariantsByItem(item.id, true).catch(() => []);
-        existingVariantsByItemId.set(item.id, itemVariants);
-        for (const v of itemVariants) {
-          const sku = (v.code || v.sku || "").trim().toUpperCase();
-          if (!sku || !skusInFile.has(sku)) continue;
-          matchedSkus.add(sku);
-          if (!stockManaged) {
-            const entry = nonStockMatches.get(item.id) ?? { item, variants: new Map<string, InventoryVariant>() };
-            entry.variants.set(sku, v);
-            nonStockMatches.set(item.id, entry);
-            continue;
+
+      // A Stock Count only ever exists for physical, stock-managed inventory — a matching SKU
+      // whose master item is currently marked service/non-stock (Service Charge, MISC_NON_STOCK,
+      // ASSET, ...) is set aside for a convert-and-include prompt rather than sent to the server.
+      // Up to 8 items' variants are fetched at once — real throughput on a large catalog instead
+      // of one slow round trip after another — with the progress bar tracking real completions.
+      setReconcileProgress({ phase: "Matching products against catalog", current: 0, total: allItems.length });
+      await mapWithConcurrency(
+        allItems,
+        8,
+        async (item) => {
+          const stockManaged = resolveInventoryBehavior({
+            productType: item.productType,
+            isMisc: item.isMisc,
+            itemType: item.itemType,
+          }).stockManaged;
+          const itemVariants = await inventoryService.getVariantsByItem(item.id, true, { timeout: 60000 }).catch(() => []);
+          existingVariantsByItemId.set(item.id, itemVariants);
+          for (const v of itemVariants) {
+            const sku = (v.code || v.sku || "").trim().toUpperCase();
+            if (!sku || !skusInFile.has(sku)) continue;
+            matchedSkus.add(sku);
+            if (!stockManaged) {
+              const entry = nonStockMatches.get(item.id) ?? { item, variants: new Map<string, InventoryVariant>() };
+              entry.variants.set(sku, v);
+              nonStockMatches.set(item.id, entry);
+              continue;
+            }
+            skuToItemVariant.set(sku, { item, variant: v });
+            relevantItemIds.add(item.id);
           }
-          skuToItemVariant.set(sku, { item, variant: v });
-          relevantItemIds.add(item.id);
-        }
-      }
+        },
+        (completed, total) => setReconcileProgress({ phase: "Matching products against catalog", current: completed, total }),
+      );
 
       // Any SKU that matched nothing above — not even a non-stock item — has no product in the
       // catalog at all. Read this same file's "Products" sheet (it's the same export re-uploaded,
@@ -1192,40 +1234,48 @@ export const ItemMaster: React.FC = () => {
       // has a real item (stock-managed or not), so a small edited file stays cheap regardless of
       // total catalog size. Brand-new SKUs have no entry here on purpose — parseStockReconcileWorkbook
       // and the validation below both treat "no current quantity known" as "starts at zero".
-      const existingItemIdsToCheck = new Set<string>([...relevantItemIds, ...nonStockMatches.keys()]);
+      const existingItemIdsToCheck = Array.from(new Set<string>([...relevantItemIds, ...nonStockMatches.keys()]));
       const currentQtyBySku = new Map<string, number>();
       const existingSerials = new Set<string>();
-      for (const itemId of existingItemIdsToCheck) {
-        const pairsForItem = [
-          ...Array.from(skuToItemVariant.entries()).filter(([, p]) => p.item.id === itemId),
-          ...Array.from(nonStockMatches.get(itemId)?.variants.entries() ?? []).map(
-            ([sku, variant]) => [sku, { item: nonStockMatches.get(itemId)!.item, variant }] as const,
-          ),
-        ];
-        try {
-          const stockRows = await inventoryService.getVariantStock(itemId);
-          for (const [sku, pair] of pairsForItem) {
-            const row = stockRows.find((r) => r.variantId === pair.variant.id);
-            const atLocation = row?.locations.find((l) => l.locationId === reconcileLocationId);
-            currentQtyBySku.set(sku, atLocation?.quantity ?? 0);
-          }
-        } catch {
-          // Leave unset — treated as "starts at zero" below, same as a brand-new SKU.
-        }
-        try {
-          const all: SerialResponse[] = [];
-          let page = 1;
-          for (;;) {
-            const batch = await inventoryService.getSerialsByItem(itemId, undefined, undefined, undefined, page, 500);
-            all.push(...batch);
-            if (batch.length < 500) break;
-            page += 1;
-          }
-          all.forEach((s) => existingSerials.add(s.serialNumber.toUpperCase()));
-        } catch {
-          // Worst case a genuinely-existing serial gets treated as "new" and validation below (or
-          // the server) surfaces the real conflict — never silently dropped.
-        }
+      if (existingItemIdsToCheck.length > 0) {
+        setReconcileProgress({ phase: "Fetching current stock levels", current: 0, total: existingItemIdsToCheck.length });
+        await mapWithConcurrency(
+          existingItemIdsToCheck,
+          8,
+          async (itemId) => {
+            const pairsForItem = [
+              ...Array.from(skuToItemVariant.entries()).filter(([, p]) => p.item.id === itemId),
+              ...Array.from(nonStockMatches.get(itemId)?.variants.entries() ?? []).map(
+                ([sku, variant]) => [sku, { item: nonStockMatches.get(itemId)!.item, variant }] as const,
+              ),
+            ];
+            try {
+              const stockRows = await inventoryService.getVariantStock(itemId);
+              for (const [sku, pair] of pairsForItem) {
+                const row = stockRows.find((r) => r.variantId === pair.variant.id);
+                const atLocation = row?.locations.find((l) => l.locationId === reconcileLocationId);
+                currentQtyBySku.set(sku, atLocation?.quantity ?? 0);
+              }
+            } catch {
+              // Leave unset — treated as "starts at zero" below, same as a brand-new SKU.
+            }
+            try {
+              const all: SerialResponse[] = [];
+              let page = 1;
+              for (;;) {
+                const batch = await inventoryService.getSerialsByItem(itemId, undefined, undefined, undefined, page, 500);
+                all.push(...batch);
+                if (batch.length < 500) break;
+                page += 1;
+              }
+              all.forEach((s) => existingSerials.add(s.serialNumber.toUpperCase()));
+            } catch {
+              // Worst case a genuinely-existing serial gets treated as "new" and validation below
+              // (or the server) surfaces the real conflict — never silently dropped.
+            }
+          },
+          (completed, total) => setReconcileProgress({ phase: "Fetching current stock levels", current: completed, total }),
+        );
       }
 
       const { lines } = await parseStockReconcileWorkbook(
@@ -1329,7 +1379,11 @@ export const ItemMaster: React.FC = () => {
             `Convert them to regular stock-managed items now and include them in this reconciliation?`,
         );
         if (wantsConvert) {
-          for (const { item } of nonStockMatches.values()) {
+          const toConvert = Array.from(nonStockMatches.values());
+          setReconcileProgress({ phase: "Converting non-stock items", current: 0, total: toConvert.length });
+          for (let ci = 0; ci < toConvert.length; ci++) {
+            const { item } = toConvert[ci];
+            setReconcileProgress({ phase: "Converting non-stock items", current: ci + 1, total: toConvert.length });
             try {
               await inventoryService.updateItem(item.id, {
                 productType: ProductType.STOCK_ITEM,
@@ -1360,7 +1414,12 @@ export const ItemMaster: React.FC = () => {
 
       const createdProductNames: string[] = [];
       const failedToCreateSkus: string[] = [];
-      for (const plan of createPlans) {
+      if (createPlans.length > 0) {
+        setReconcileProgress({ phase: "Creating new products", current: 0, total: createPlans.length });
+      }
+      for (let pi = 0; pi < createPlans.length; pi++) {
+        const plan = createPlans[pi];
+        setReconcileProgress({ phase: "Creating new products", current: pi + 1, total: createPlans.length });
         let created: InventoryItem;
         try {
           created = await inventoryService.createItem(plan.request);
@@ -1400,6 +1459,7 @@ export const ItemMaster: React.FC = () => {
         return;
       }
 
+      setReconcileProgress({ phase: "Applying reconciliation", current: 0, total: 1 });
       const itemIdsForCount = Array.from(
         new Set(
           finalLines
@@ -1485,6 +1545,7 @@ export const ItemMaster: React.FC = () => {
       logger.error("[ItemMaster] Failed to reconcile stock/serials", err);
     } finally {
       setReconciling(false);
+      setReconcileProgress(null);
     }
   }, [reconcilePendingFile, reconcileLocationId]);
 
@@ -4060,6 +4121,29 @@ export const ItemMaster: React.FC = () => {
               </option>
             ))}
           </Select>
+          {reconciling && reconcileProgress ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", color: "var(--text-secondary, #666)" }}>
+                <span>{reconcileProgress.phase}…</span>
+                <span>
+                  {reconcileProgress.total > 1
+                    ? `${reconcileProgress.current} / ${reconcileProgress.total}`
+                    : ""}
+                </span>
+              </div>
+              <div style={{ height: "8px", borderRadius: "4px", background: "var(--border-light, #e5e7eb)", overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    borderRadius: "4px",
+                    background: "var(--primary-500, #2563eb)",
+                    width: `${Math.min(100, Math.round((reconcileProgress.current / Math.max(1, reconcileProgress.total)) * 100))}%`,
+                    transition: "width 150ms ease-out",
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
             <Button
               variant="secondary"
@@ -4076,7 +4160,7 @@ export const ItemMaster: React.FC = () => {
               disabled={reconciling || !reconcileLocationId}
               onClick={() => void handleRunReconcile()}
             >
-              {reconciling ? "⏳ Reconciling…" : "Build Stock Count"}
+              {reconciling ? `⏳ ${reconcileProgress?.phase ?? "Reconciling"}…` : "Build Stock Count"}
             </Button>
           </div>
         </div>
