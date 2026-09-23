@@ -53,6 +53,14 @@ class SocketService {
         this.disconnect();
       }
     });
+
+    // Server-pushed "your profile changed" signal (role/name/branch/permissions edited by an
+    // admin elsewhere) — react immediately by refreshing tokens, which also re-fetches the live
+    // user in the same call (see authStore.trySilentRefresh). A global listener here, not a
+    // component subscription, so this self-heals regardless of which screen happens to be open.
+    this.socket.on('profile:updated', () => {
+      void authStore.getState().trySilentRefresh();
+    });
   }
 
   disconnect(): void {

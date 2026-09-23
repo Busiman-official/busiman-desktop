@@ -63,6 +63,9 @@ export interface RefreshTokenResponse {
   accessToken: string;
   refreshToken: string;
   sessionId?: string;
+  /** The live profile as of this refresh — lets the store pick up a role/name/branch change made
+   * elsewhere without a manual logout-login. Optional only for safety against an older server. */
+  user?: User;
 }
 
 // Proxy types

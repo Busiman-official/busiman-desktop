@@ -75,6 +75,7 @@ export const authStore = create<AuthStore>()(
           
           logger.info('[AuthStore] Token refreshed successfully');
           set({
+            ...(tokenData.user ? { user: tokenData.user } : {}),
             accessToken: tokenData.accessToken,
             refreshToken: tokenData.refreshToken,
             isAuthenticated: true,
@@ -126,6 +127,7 @@ export const authStore = create<AuthStore>()(
         try {
           const tokenData = await authService.refreshToken(refreshToken);
           set({
+            ...(tokenData.user ? { user: tokenData.user } : {}),
             accessToken: tokenData.accessToken,
             refreshToken: tokenData.refreshToken,
             isAuthenticated: true,
