@@ -1,5 +1,7 @@
-// Production API URL — hardcoded so packaged builds always hit Fly.io regardless of .env at build time.
-const PRODUCTION_API_BASE_URL = 'https://busiman-server-2.fly.dev/api/v1';
+// Production API URL — hardcoded so packaged builds always hit the real backend regardless of
+// .env at build time. Production moved from Fly.io to AWS (api.busiman.org) — every packaged
+// build before this fix was still pointed at the old, abandoned Fly.io app.
+const PRODUCTION_API_BASE_URL = 'https://api.busiman.org/api/v1';
 
 export const config = {
   api: {
