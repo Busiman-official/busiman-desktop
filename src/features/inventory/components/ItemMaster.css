@@ -5,6 +5,17 @@
   overflow: hidden;
 }
 
+/* Wraps a real <Button> as a DropdownMenu trigger — strip the generic kebab-menu chrome
+   (padding/hover background) so the Button supplies all the visible styling. */
+.item-master-manage-trigger {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+.item-master-manage-trigger:hover {
+  background: transparent;
+}
+
 /* Container for list and details */
 .item-master-container {
   display: flex;

@@ -39,6 +39,7 @@ import {
   Input,
   Card,
   Select,
+  DropdownMenu,
 } from "@/shared/components/ui";
 import { LoadingState, EmptyState } from "@/shared/components/data-display";
 import { extractErrorMessage } from "@/utils/error";
@@ -108,6 +109,33 @@ function stripItemMasterSelectionFromParams(
 function isAbortError(err: unknown): boolean {
   const e = err as { code?: string; name?: string } | null | undefined;
   return e?.code === "ERR_CANCELED" || e?.name === "CanceledError" || e?.name === "AbortError";
+}
+
+/** Quick yes/no check: does this workbook's "Variants"/"Serial Numbers" sheets carry any real SKU
+ * data worth reconciling? Used right after a product upload to decide whether to offer the
+ * stock/serial follow-up automatically, without redoing parseStockReconcileWorkbook's full
+ * line-building just to answer yes/no. */
+async function workbookHasStockOrSerialData(buffer: ArrayBuffer): Promise<boolean> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  for (const sheetName of ["Variants", "Serial Numbers"]) {
+    const sheet = wb.getWorksheet(sheetName);
+    if (!sheet) continue;
+    const headerRow = sheet.getRow(1);
+    let skuCol = -1;
+    headerRow.eachCell((cell, colNumber) => {
+      if (String(cell.value ?? "").trim() === "Variant SKU") skuCol = colNumber;
+    });
+    if (skuCol === -1) continue;
+    let found = false;
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || found) return;
+      const sku = String(row.getCell(skuCol).value ?? "").trim().toUpperCase();
+      if (sku && sku !== "(NO VARIANTS)") found = true;
+    });
+    if (found) return true;
+  }
+  return false;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -381,10 +409,10 @@ export const ItemMaster: React.FC = () => {
   const [importSummary, setImportSummary] = useState<ProductImportResult | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reconcile stock/serials from an exported (and edited) .xlsx — see buildCountFromExcel.ts.
-  // Two-step: pick a file, then pick which location the edited numbers apply to, before anything
-  // is actually built — nothing is written until the user reviews the resulting Stock Count.
-  const reconcileFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Reconcile stock/serials — offered automatically as a follow-up right after "Upload products"
+  // when the same file also carries Stock (On Hand)/Serial Numbers data (see
+  // handleImportFileSelected and buildCountFromExcel.ts) — no separate entry point/file picker of
+  // its own. Nothing is applied until the location is confirmed and Build Stock Count is clicked.
   const [reconcilePendingFile, setReconcilePendingFile] = useState<File | null>(null);
   const [reconcileLocations, setReconcileLocations] = useState<Location[]>([]);
   const [reconcileLocationId, setReconcileLocationId] = useState("");
@@ -1063,6 +1091,23 @@ export const ItemMaster: React.FC = () => {
           setError(`No products imported — ${result.errors.length} row(s) had errors, see details below.`);
         }
         await loadItems();
+
+        // The same file may also carry Stock (On Hand)/Serial Numbers data — offer the reconcile
+        // follow-up right here instead of making that a separate menu action. Admin-only, same as
+        // the reconcile flow always was, since it auto-applies live stock with no review step.
+        if (isAdmin) {
+          const hasStockData = await workbookHasStockOrSerialData(buffer).catch(() => false);
+          if (hasStockData) {
+            const locs = await inventoryService.getAllLocations().catch(() => []);
+            // No location to pick from means there's nothing to offer — the modal would just show
+            // a permanently-disabled "Build Stock Count" with no way to proceed.
+            if (locs.length > 0) {
+              setReconcileLocations(locs);
+              setReconcileLocationId(locs.length === 1 ? locs[0].id : "");
+              setReconcilePendingFile(file);
+            }
+          }
+        }
       } catch (err: any) {
         setError(extractErrorMessage(err, "Failed to read/import file"));
         logger.error("[ItemMaster] Failed to import products", err);
@@ -1070,31 +1115,16 @@ export const ItemMaster: React.FC = () => {
         setImportingProducts(false);
       }
     },
-    [loadItems],
+    [loadItems, isAdmin],
   );
 
   // ── Reconcile stock/serials from file ──────────────────────────────────────────────
-  // Step 1: pick the file, then fetch locations so the modal below can ask which one the edited
-  // numbers apply to (the exported "Stock (On Hand)" is a company-wide total — see
-  // buildCountFromExcel.ts for why this can't be inferred).
-  const handleReconcileFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setReconcilePendingFile(file);
-    setReconcileLocationId("");
-    try {
-      const locs = await inventoryService.getAllLocations();
-      setReconcileLocations(locs);
-    } catch {
-      setReconcileLocations([]);
-    }
-  }, []);
-
-  // Step 2: location confirmed — resolve the file's SKUs against the live catalog (only items the
-  // file actually mentions), pull each one's current on-hand at the chosen location plus its
-  // existing serials, then build a draft Stock Count with the differences. Nothing is applied to
-  // real stock here — the count still needs the normal Submit → Approve review.
+  // reconcilePendingFile/reconcileLocations are populated right after a successful upload (see
+  // handleImportFileSelected), not from a separate file picker — this runs once the location is
+  // confirmed: resolve the file's SKUs against the live catalog (only items the file actually
+  // mentions), pull each one's current on-hand at the chosen location plus its existing serials,
+  // then build a Stock Count from the differences and apply it (see handleRunReconcile's own
+  // comments below for the full validate-then-commit flow).
   const handleRunReconcile = useCallback(async () => {
     if (!reconcilePendingFile || !reconcileLocationId) return;
     setReconciling(true);
@@ -2338,41 +2368,43 @@ export const ItemMaster: React.FC = () => {
             style={{ display: "none" }}
             onChange={(e) => void handleImportFileSelected(e)}
           />
-          <Button
-            variant="secondary"
-            disabled={importingProducts}
-            onClick={() => importFileInputRef.current?.click()}
-            title="Upload a .xlsx (Products + Variants sheets) — new product names are created, existing ones are updated by name/SKU"
-          >
-            {importingProducts ? "⏳ Uploading…" : "⬆️ Upload products"}
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={exportingProducts}
-            onClick={() => void handleExportProducts()}
-            title="Export the full catalog to a formatted .xlsx (Products + Variants sheets)"
-          >
-            {exportingProducts ? "⏳ Exporting…" : "⬇️ Export to Excel"}
-          </Button>
-          {isAdmin && (
-            <>
-              <input
-                ref={reconcileFileInputRef}
-                type="file"
-                accept=".xlsx"
-                style={{ display: "none" }}
-                onChange={(e) => void handleReconcileFileSelected(e)}
-              />
+          <DropdownMenu
+            align="right"
+            className="item-master-manage-trigger"
+            trigger={
               <Button
                 variant="secondary"
-                disabled={reconciling}
-                onClick={() => reconcileFileInputRef.current?.click()}
-                title="Read the Stock (On Hand) column and Serial Numbers sheet from an edited export and apply the differences immediately as an approved Stock Count — admin only, no manual review step"
+                disabled={importingProducts || exportingProducts || reconciling}
+                title={
+                  isAdmin
+                    ? "Upload a catalog file to create/update products, variants and prices — the same file's Stock (On Hand)/Serial Numbers data (if any) is offered as a follow-up reconcile step. Export downloads the full catalog."
+                    : "Upload a catalog file to create/update products, variants and prices, or export the full catalog"
+                }
               >
-                🔄 Reconcile stock & serials
+                {importingProducts
+                  ? "⏳ Uploading…"
+                  : exportingProducts
+                    ? "⏳ Exporting…"
+                    : reconciling
+                      ? `⏳ ${reconcileProgress?.phase ?? "Reconciling"}…`
+                      : "📦 Manage products ▾"}
               </Button>
-            </>
-          )}
+            }
+            items={[
+              {
+                id: "upload",
+                label: "⬆️ Upload products",
+                disabled: importingProducts,
+                onClick: () => importFileInputRef.current?.click(),
+              },
+              {
+                id: "export",
+                label: "⬇️ Export to Excel",
+                disabled: exportingProducts,
+                onClick: () => void handleExportProducts(),
+              },
+            ]}
+          />
         </div>
 
         {error && <div className="error-message">{error}</div>}
@@ -4164,15 +4196,15 @@ export const ItemMaster: React.FC = () => {
           setReconcilePendingFile(null);
           setReconcileLocationId("");
         }}
-        title="Reconcile stock & serials"
+        title="Apply stock & serials from this upload?"
         size="sm"
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           <p style={{ margin: 0, color: "var(--text-secondary, #666)" }}>
-            The "Stock (On Hand)" and "Serial Numbers" data in <strong>{reconcilePendingFile?.name}</strong> will
-            be checked against one location. A blank Stock cell counts as zero. A SKU with no matching product in
-            the catalog is created fresh from this file's "Products" sheet. The resulting Stock Count is submitted
-            and approved automatically — changes apply to live stock immediately, with no separate review step.
+            <strong>{reconcilePendingFile?.name}</strong> also has "Stock (On Hand)"/"Serial Numbers" data. Pick a
+            location and it'll be checked against what's currently there — a blank Stock cell counts as zero. The
+            resulting Stock Count is submitted and approved automatically — changes apply to live stock immediately,
+            with no separate review step.
           </p>
           <Select
             label="Location"
@@ -4226,7 +4258,7 @@ export const ItemMaster: React.FC = () => {
                 setReconcileLocationId("");
               }}
             >
-              {reconciling ? "Stop" : "Cancel"}
+              {reconciling ? "Stop" : "Skip"}
             </Button>
             <Button
               variant="primary"
