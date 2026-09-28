@@ -17,6 +17,8 @@ export interface SerialHistoryEntry {
   quantity: number;
   status: string;
   user?: { id: string; name: string; email: string };
+  /** SERIAL_CORRECTED entries only — what changed, in plain English. */
+  note?: string;
 }
 
 export interface SerialTimelineProps {
@@ -39,6 +41,7 @@ const getMovementTypeLabel = (type: string): string => {
     COUNT_ADJUSTMENT: 'Count Adjusted',
     REVERSAL: 'Reversed',
     STOCK_MIGRATION: 'Stock Migration',
+    SERIAL_CORRECTED: 'Serial Corrected',
   };
   return labels[type] || type;
 };
@@ -57,6 +60,7 @@ const getMovementTypeIcon = (type: string): string => {
     COUNT_ADJUSTMENT: '📊',
     REVERSAL: '↩️',
     STOCK_MIGRATION: '📦',
+    SERIAL_CORRECTED: '✏️',
   };
   return icons[type] || '📋';
 };
@@ -75,6 +79,7 @@ const getMovementTypeColor = (type: string): string => {
     COUNT_ADJUSTMENT: '#7c3aed',
     REVERSAL: '#ea580c',
     STOCK_MIGRATION: '#0d9488',
+    SERIAL_CORRECTED: '#9333ea',
   };
   return colors[type] || '#6b7280';
 };
@@ -159,23 +164,35 @@ export const SerialTimeline: React.FC<SerialTimelineProps> = ({ history, loading
                     </div>
                   )}
                   
+                  {entry.note && (
+                    <div className="timeline-card-location">
+                      <span>{entry.note}</span>
+                    </div>
+                  )}
+
                   {entry.user && (
                     <div className="timeline-card-user">
                       By: {entry.user.name}
                     </div>
                   )}
                 </div>
-                
+
                 <div className="timeline-card-footer">
-                  <button
-                    className="timeline-movement-link"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleMovementClickInternal(entry.movementId, entry.movementNumber);
-                    }}
-                  >
-                    {entry.movementNumber}
-                  </button>
+                  {entry.movementType === 'SERIAL_CORRECTED' ? (
+                    <span className="timeline-movement-link" style={{ cursor: 'default' }}>
+                      {entry.movementNumber}
+                    </span>
+                  ) : (
+                    <button
+                      className="timeline-movement-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMovementClickInternal(entry.movementId, entry.movementNumber);
+                      }}
+                    >
+                      {entry.movementNumber}
+                    </button>
+                  )}
                   {entry.status && (
                     <span className="timeline-card-status">Status: {entry.status}</span>
                   )}

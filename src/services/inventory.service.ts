@@ -1153,6 +1153,8 @@ class InventoryService {
     quantity: number;
     status: string;
     user?: { id: string; name: string; email: string };
+    /** SERIAL_CORRECTED entries only — what changed, in plain English. */
+    note?: string;
   }>> {
     const response = await api.get(`/inventory/serials/${serialNumber}/history`);
     return extractApiData(response);

@@ -35,6 +35,7 @@ import {
   snapFocusToVisibleTree,
 } from '../utils/locationTreeKeyboard';
 import { Button, Input, Card, Select } from '@/shared/components/ui';
+import { branchService } from '@/services/branch.service';
 import { LoadingState, EmptyState, ErrorState } from '@/shared/components/data-display';
 import { DataTable, ColumnDef } from '@/shared/components/data-display';
 import { extractErrorMessage } from '@/utils/error';
@@ -140,6 +141,11 @@ export const LocationManagement = forwardRef<LocationManagementHandle, LocationM
   const [focusedLocationId, setFocusedLocationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // The selected location's own branch's current default — refetched whenever the branch changes,
+  // not just once, since switching between locations in different branches (multi-branch admins)
+  // must not keep showing a stale "is this the default" answer from the previously viewed branch.
+  const [branchDefaultLocationId, setBranchDefaultLocationId] = useState<string | null>(null);
+  const [settingDefaultLocation, setSettingDefaultLocation] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [locationToDelete, setLocationToDelete] = useState<string | null>(null);
   const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
@@ -403,6 +409,44 @@ export const LocationManagement = forwardRef<LocationManagementHandle, LocationM
       loadingDetailsRef.current = false;
     }
   }, [selectedLocationId, startDetailLoading, stopDetailLoading]);
+
+  useEffect(() => {
+    const branchId = selectedLocation?.branchId;
+    if (!branchId) {
+      setBranchDefaultLocationId(null);
+      return;
+    }
+    let cancelled = false;
+    branchService
+      .getBranch(branchId)
+      .then((branch) => {
+        if (!cancelled) setBranchDefaultLocationId(branch.defaultLocationId ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setBranchDefaultLocationId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLocation?.branchId]);
+
+  const handleSetDefaultLocation = useCallback(async () => {
+    if (!selectedLocation) return;
+    const isCurrentDefault = branchDefaultLocationId === selectedLocation.id;
+    setSettingDefaultLocation(true);
+    setError(null);
+    try {
+      await branchService.updateBranch(selectedLocation.branchId, {
+        defaultLocationId: isCurrentDefault ? null : selectedLocation.id,
+      });
+      setBranchDefaultLocationId(isCurrentDefault ? null : selectedLocation.id);
+      setSuccess(isCurrentDefault ? 'Default location cleared' : `${selectedLocation.name} set as this branch's default location`);
+    } catch (err: any) {
+      setError(extractErrorMessage(err, 'Failed to update default location'));
+    } finally {
+      setSettingDefaultLocation(false);
+    }
+  }, [selectedLocation, branchDefaultLocationId]);
 
   const loadLocationPath = useCallback(async () => {
     if (!selectedLocationId) return;
@@ -1301,6 +1345,11 @@ export const LocationManagement = forwardRef<LocationManagementHandle, LocationM
             <span className={`status-badge ${selectedLocation.isActive ? 'status-active' : 'status-inactive'}`}>
               {selectedLocation.isActive ? 'Active' : 'Inactive'}
             </span>
+            {branchDefaultLocationId === selectedLocation.id && (
+              <span className="status-badge status-active" title="Pre-selected wherever this branch needs a location">
+                Default
+              </span>
+            )}
           </div>
           <div className="detail-header-meta">
             <span className="detail-code">{selectedLocation.code}</span>
@@ -1399,6 +1448,21 @@ export const LocationManagement = forwardRef<LocationManagementHandle, LocationM
             >
               Edit
             </Button>
+            {selectedLocation.isActive && (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={settingDefaultLocation}
+                onClick={() => void handleSetDefaultLocation()}
+                title={
+                  branchDefaultLocationId === selectedLocation.id
+                    ? "Clear this branch's default location"
+                    : 'Pre-select this location wherever this branch needs one (reconcile, quick receipts, etc.)'
+                }
+              >
+                {branchDefaultLocationId === selectedLocation.id ? 'Unset default' : 'Set as default'}
+              </Button>
+            )}
             <Button
               variant={selectedLocation.isActive ? 'secondary' : 'primary'}
               size="sm"

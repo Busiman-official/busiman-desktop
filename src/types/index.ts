@@ -306,6 +306,8 @@ export interface Branch {
   };
   departments: string[];
   isActive: boolean;
+  defaultLocationId?: string;
+  defaultLocationName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -329,6 +331,8 @@ export interface UpdateBranchRequest {
   branchManager?: string; // User ID
   departments?: string[];
   isActive?: boolean;
+  /** Location ID to set as this branch's default, or null to clear it. */
+  defaultLocationId?: string | null;
 }
 
 // Employee Details enums and types
