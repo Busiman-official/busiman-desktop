@@ -20,14 +20,19 @@ export const VALID_TABS = new Set<string>(ALL_TAB_DEFS.map((t) => t.id));
 
 export function tabsForRole(
   role: UserRole,
-  branchDepartments?: string[]
+  branchDepartments?: string[],
+  isAttendanceOfficer?: boolean
 ): readonly SalesTabDef[] {
   if (!branchHasAttendance(branchDepartments, role)) {
     return role === UserRole.EMPLOYEE ? ALL_TAB_DEFS.filter((t) => t.id === TAB_MY) : [];
   }
   switch (role) {
     case UserRole.EMPLOYEE:
-      return ALL_TAB_DEFS.filter((t) => t.id === TAB_MY);
+      // A delegated Attendance Officer is still role 'employee' — gets My attendance plus
+      // Overview/Approvals scoped to whoever they're assigned, same shape as a manager's tabs.
+      return isAttendanceOfficer
+        ? ALL_TAB_DEFS.filter((t) => t.id !== TAB_SETUP)
+        : ALL_TAB_DEFS.filter((t) => t.id === TAB_MY);
     case UserRole.MANAGER:
       return ALL_TAB_DEFS.filter((t) => t.id !== TAB_SETUP && t.id !== TAB_MY);
     case UserRole.HR:
@@ -43,7 +48,16 @@ export function defaultTabForRole(role: UserRole): AttendanceTab {
   return TAB_OVERVIEW;
 }
 
-export function roleShowsOverview(role: UserRole, branchDepartments?: string[]): boolean {
+export function roleShowsOverview(
+  role: UserRole,
+  branchDepartments?: string[],
+  isAttendanceOfficer?: boolean
+): boolean {
   if (!branchHasAttendance(branchDepartments, role)) return false;
-  return role === UserRole.MANAGER || role === UserRole.HR || role === UserRole.ADMIN;
+  return (
+    role === UserRole.MANAGER ||
+    role === UserRole.HR ||
+    role === UserRole.ADMIN ||
+    Boolean(isAttendanceOfficer)
+  );
 }

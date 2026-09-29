@@ -33,8 +33,8 @@ export const AttendancePage: React.FC = () => {
     : defaultTabForRole(role);
 
   const showOverview = useMemo(
-    () => roleShowsOverview(role, user?.branchDepartments),
-    [role, user?.branchDepartments]
+    () => roleShowsOverview(role, user?.branchDepartments, user?.isAttendanceOfficer),
+    [role, user?.branchDepartments, user?.isAttendanceOfficer]
   );
 
   if (!user) {

@@ -248,6 +248,7 @@ export const EmployeeDetailsPage: React.FC = () => {
         <PermissionsSection
           employee={employee}
           onUpdate={handleUpdate}
+          onRefresh={loadEmployeeDetails}
           canEdit={canEdit}
           isExpanded={sectionsExpanded.permissions}
           onToggle={() => handleSectionToggle('permissions')}

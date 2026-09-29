@@ -103,7 +103,11 @@ export const EmployeeAttendanceDetailsPage: React.FC = () => {
   const canMark =
     !!currentUser &&
     !!employee &&
-    canMarkAttendanceForOthers(currentUser.role, currentUser.branchDepartments) &&
+    canMarkAttendanceForOthers(
+      currentUser.role,
+      currentUser.branchDepartments,
+      currentUser.isAttendanceOfficer
+    ) &&
     canManualOverrideAttendance(
       { id: currentUser.id, role: currentUser.role },
       employee

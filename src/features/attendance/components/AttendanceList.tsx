@@ -60,7 +60,7 @@ export const AttendanceList: React.FC<AttendanceListProps> = ({ role }) => {
   } | null>(null);
   const [clearingEmployeeId, setClearingEmployeeId] = useState<string | null>(null);
 
-  const canMarkForOthers = canMarkAttendanceForOthers(role, user?.branchDepartments);
+  const canMarkForOthers = canMarkAttendanceForOthers(role, user?.branchDepartments, user?.isAttendanceOfficer);
 
   const loadAttendanceList = useCallback(async () => {
     setLoading(true);

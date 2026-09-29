@@ -982,6 +982,7 @@ export const EmployeeManagement = forwardRef<EmployeeManagementHandle>(function 
                   <PermissionsSection
                     employee={employeeDetails}
                     onUpdate={handleUpdate}
+                    onRefresh={loadEmployeeDetails}
                     canEdit={canEdit}
                     isExpanded={sectionsExpanded.permissions}
                     onToggle={() => handleSectionToggle('permissions')}

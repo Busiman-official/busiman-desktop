@@ -37,6 +37,9 @@ export interface User {
   sipPasswordGenerated?: string;
   /** Fine-grained feature flags within modules (e.g. 'canBackdateSale'). */
   featurePermissions?: string[];
+  /** True when this user has been delegated Attendance Officer responsibility for at least one
+   * other employee — independent of role. See EmployeeDetails.attendanceOfficerIds. */
+  isAttendanceOfficer?: boolean;
 }
 
 // Auth types
@@ -390,6 +393,10 @@ export interface EmployeeDetails {
   attendanceMode?: AttendanceMode;
   allowManualAttendanceOverride?: boolean;
   manualAttendanceOverrideAllowedUserIds?: string[];
+  /** Other employees this person is delegated as an Attendance Officer for — mark/clear their
+   * attendance, approve/reject their remote check-ins, see them in the dashboard/approvals inbox,
+   * independent of the org chart. Set via the dedicated bulk-assign endpoint, not this PATCH. */
+  attendanceOfficerIds?: string[];
   locationRestrictionOverride?: boolean;
   deviceRestrictionOverride?: boolean;
   allowCheckoutWithoutWifi?: boolean;

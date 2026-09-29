@@ -33,10 +33,10 @@ export const AttendanceLayout: React.FC = () => {
 
   const role = user?.role ?? UserRole.EMPLOYEE;
   const visibleTabs = useMemo(
-    () => tabsForRole(role, user?.branchDepartments),
-    [role, user?.branchDepartments]
+    () => tabsForRole(role, user?.branchDepartments, user?.isAttendanceOfficer),
+    [role, user?.branchDepartments, user?.isAttendanceOfficer]
   );
-  const canApprove = canApproveAttendance(role, user?.branchDepartments);
+  const canApprove = canApproveAttendance(role, user?.branchDepartments, user?.isAttendanceOfficer);
   const { hasPending } = usePendingApprovalsCount(canApprove);
 
   const headerTabs = useMemo(() => {

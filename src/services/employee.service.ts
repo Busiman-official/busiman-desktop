@@ -177,6 +177,26 @@ class EmployeeDetailsService {
     const response = await api.patch(`/employees/${employeeId}/details`, request);
     return extractApiData<EmployeeDetails>(response);
   }
+
+  /** Which employees currently list `officerId` as their delegated Attendance Officer. */
+  async getAttendanceOfficerFor(officerId: string): Promise<string[]> {
+    const response = await api.get(`/employees/${officerId}/attendance-officer-for`);
+    return extractApiData<string[]>(response);
+  }
+
+  /**
+   * Bulk-assigns/unassigns `officerId` as a delegated Attendance Officer for the given employees —
+   * replaces the full set (diffed server-side), not an incremental add.
+   */
+  async setAttendanceOfficerFor(
+    officerId: string,
+    employeeIds: string[]
+  ): Promise<{ added: number; removed: number }> {
+    const response = await api.patch(`/employees/${officerId}/attendance-officer-for`, {
+      employeeIds,
+    });
+    return extractApiData<{ added: number; removed: number }>(response);
+  }
 }
 
 export const employeeDetailsService = new EmployeeDetailsService();
